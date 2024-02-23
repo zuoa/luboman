@@ -43,7 +43,7 @@ def fun():
 
 
 async def main(args):
-    Douyu("刘嘉俊Sylar", "https://www.douyu.com/762484").start()
+    Douyu("刘嘉俊Sylar", "https://www.douyu.com/110").start()
 
     # Bilibili("刘嘉俊Sylar", "https://live.bilibili.com/5446931?visit_id=1da5m1aitt34").start()
 

@@ -15,7 +15,7 @@ class Douyu(LiveBase):
         super().__init__(room_name, room_url, suffix)
         self.room_platform = 'douyu'
 
-    def check_live(self):
+    def check_live(self, is_check_status=False):
         if len(self.room_url.split("douyu.com/")) < 2:
             logger.warning(f"{Douyu.__name__}: {self.room_url}: 直播间地址错误")
             return False
@@ -52,6 +52,9 @@ class Douyu(LiveBase):
         except:
             logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取直播间信息错误")
             return False
+
+        if is_check_status:
+            return True
 
         try:
             import jsengine

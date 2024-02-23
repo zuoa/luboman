@@ -133,7 +133,7 @@ class LiveBase(object):
         pass
 
     @abc.abstractmethod
-    def check_live(self):
+    def check_live(self, is_check_status=False):
         raise NotImplementedError()
 
     def record(self):

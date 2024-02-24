@@ -1,6 +1,19 @@
+import functools
+import logging
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
+from typing import Generator
+
+logger = logging.getLogger('ajrec')
+
+EVENT_CHECK_STATUS = "check-status"
+EVENT_PRE_RECORD = "pre-record"
+EVENT_RECORD = "record"
+EVENT_RECORD_COMPLETED = "record-completed"
+EVENT_NOTIFY = "notify-event"
+EVENT_UPLOAD = "upload"
+EVENT_UPLOAD_COMPLETED = "upload-completed"
 
 
 class EventManager(Thread):
@@ -26,7 +39,8 @@ class EventManager(Thread):
             try:
                 event = self.__queue.get(block=True, timeout=1)
                 self.__event_process(event)
-            except:
+            except Exception as e:
+                # logger.error(e)
                 pass
 
     def __event_process(self, event):
@@ -35,19 +49,65 @@ class EventManager(Thread):
                 for handler in self.__handlers[event.type_]:
                     handler(event)
 
-    def add_event_handler(self, event, handler):
-        if event.type_ not in self.__handlers:
-            self.__handlers[event.type_] = []
-        self.__handlers[event.type_].append(handler)
+    def add_event_handler(self, type_, handler):
+        if type_ not in self.__handlers:
+            self.__handlers[type_] = []
+        self.__handlers[type_].append(handler)
 
-    def remove_event_handler(self, event, handler):
-        if event.type_ in self.__handlers:
-            self.__handlers[event.type_].remove(handler)
+    def remove_event_handler(self, type_, handler):
+        if type_ in self.__handlers:
+            self.__handlers[type_].remove(handler)
 
-    def fire(self, event, *args, **kwargs):
-        if event.type_ in self.__handlers:
-            for handler in self.__handlers[event.type_]:
+    def fire(self, type_, *args, **kwargs):
+        if type_ in self.__handlers:
+            for handler in self.__handlers[type_]:
                 handler(*args, **kwargs)
+
+    def send(self, event):
+        """发送事件，向事件队列中存入事件"""
+        self.__queue.put(event)
+
+    def register(self, type_, block=False):
+        def callback(result):
+            if not result:
+                pass
+            elif isinstance(result, (tuple, Generator)):
+                for event in result:
+                    self.send(event)
+            else:
+                self.send(result)
+
+        # def appendblock(fc, blk):
+        #     if blk:
+        #         self.__block.append(fc.__qualname__)
+
+        def decorator(func):
+            # appendblock(func, block)
+
+            @functools.wraps(func)
+            def wrapper(event):
+                _event = func(*event.args)
+                callback(_event)
+                return _event
+
+            wrapper.pool = block
+            self.add_event_handler(type_, wrapper)
+            return wrapper
+
+        return decorator
+
+    def serve(self):
+        def decorator(cls):
+            sig = inspect.signature(cls)
+            kwargs = {}
+            for k in sig.parameters:
+                kwargs[k] = self.context[k]
+            instance = cls(**kwargs)
+            self.context[cls.__name__] = instance
+
+            return cls
+
+        return decorator
 
 
 @dataclass

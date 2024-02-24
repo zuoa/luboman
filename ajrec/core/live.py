@@ -1,9 +1,13 @@
 import abc
+import asyncio
 import logging
 import os
+import threading
 import time
 import requests
 
+from ajrec.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
+    EVENT_RECORD_COMPLETED
 from ajrec.core.utils import random_user_agent, get_valid_filename
 
 logger = logging.getLogger('ajrec')
@@ -25,6 +29,8 @@ class LiveBase(object):
         self.room_cover_frame_url = None
         self.raw_stream_url = None
         self.live_state = None
+
+        self.is_recording = False
         self.fake_headers = {
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'accept-encoding': 'gzip, deflate',
@@ -36,6 +42,8 @@ class LiveBase(object):
 
         # 暂时只支持flv
         self.suffix = suffix
+        self.event_manager = self.create_event_manager()
+        self.record_thread = self.start_record_thread()
 
     @property
     def live_context(self):
@@ -55,8 +63,20 @@ class LiveBase(object):
             "live_state": self.live_state,
         }
 
+    async def async_check_status(self):
+        while True:
+            self.send_event(Event(EVENT_CHECK_STATUS, (1,)))
+            await asyncio.sleep(30)
+
     def start(self):
-        logger.info(f'开始下载：{self.__class__.__name__} - {self.room_name}')
+        asyncio.create_task(self.async_check_status())
+
+    def start_record_thread(self):
+        record_thread = threading.Thread(target=self.start_record)
+        record_thread.start()
+        return record_thread
+
+    def start_record(self):
         date = time.localtime()
         end_time = None
         delay = 0  # int(config.get('delay', 0))
@@ -68,6 +88,11 @@ class LiveBase(object):
         delay_all_retry_count = -(-delay // 60)
 
         while True:
+            if not self.is_recording:
+                time.sleep(2)
+                continue
+
+            logger.info(f'开始下载：{self.__class__.__name__} - {self.room_name}')
             # 流没中断，会一直录制
             ret = False
             try:
@@ -111,23 +136,8 @@ class LiveBase(object):
                     end_time = time.localtime()
                     break
 
-        if end_time is None:
-            end_time = time.localtime()
-        # self.download_cover(time.strftime(self.get_filename().encode("unicode-escape").decode(), date).encode().decode("unicode-escape"))
-        # 更新数据库中封面存储路径
-        # db.update_cover_path(self.database_row_id, self.live_cover_path)
-        logger.info(f'退出下载：{self.__class__.__name__} - {self.room_name}')
-        stream_info = {
-            # 'name': self.fname,
-            # 'url': self.url,
-            # 'title': self.room_title,
-            # 'date': date,
-            # 'live_cover_path': self.live_cover_path,
-            # 'is_download': self.is_download,
-            # # 内部使用时间戳传递
-            # 'end_time': end_time,
-        }
-        return stream_info
+        stream_record_info = {}
+        self.send_event(Event(EVENT_RECORD_COMPLETED, (stream_record_info,)))
 
     def stop(self):
         pass
@@ -172,6 +182,10 @@ class LiveBase(object):
 
         return f'{file_dir}/{filename}.{self.suffix}'
 
+    def send_event(self, event):
+        logger.info(f'Sending event {event}')
+        self.event_manager.send(event)
+
     @staticmethod
     def rename(filepath):
         try:
@@ -182,3 +196,30 @@ class LiveBase(object):
         except FileExistsError:
             os.rename(filepath + '.part', filepath)
             logger.info(f'更名 {filepath + ".part"} 为 {filepath} 失败, {filepath} 已存在')
+
+    def create_event_manager(self):
+        event_manager = EventManager()
+
+        @event_manager.register(EVENT_CHECK_STATUS)
+        def check_status(event):
+            logger.info(self.room_name + "Checking status")
+
+            is_living = self.check_live(is_check_status=True)
+            logger.info(is_living)
+            if is_living:
+                self.send_event(Event(EVENT_PRE_RECORD))
+
+        @event_manager.register(EVENT_PRE_RECORD)
+        def process_pre_record():
+            self.send_event(Event(EVENT_RECORD))
+
+        @event_manager.register(EVENT_RECORD)
+        def record():
+            self.is_recording = True
+
+        @event_manager.register(EVENT_RECORD_COMPLETED)
+        def process_record_complete(event):
+            pass
+
+        event_manager.start()
+        return event_manager

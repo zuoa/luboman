@@ -38,20 +38,20 @@ def arg_parser():
     args.func()
 
 
-def fun():
+async def check_func():
     print("!")
 
 
 async def main(args):
-    Douyu("刘嘉俊Sylar", "https://www.douyu.com/110").start()
+    Douyu("刘嘉俊Sylar", "https://www.douyu.com/10011").start()
 
     # Bilibili("刘嘉俊Sylar", "https://live.bilibili.com/5446931?visit_id=1da5m1aitt34").start()
 
-    # timer = Timer(fun)
-    # await asyncio.gather(timer.async_start())
-
-    while True:
-        await asyncio.sleep(1)
+    checker = Timer(check_func, interval=3)
+    await asyncio.gather(checker.async_start())
+    #
+    # while True:
+    #     await asyncio.gather(detector.astart(), site.start())
 
 
 if __name__ == '__main__':

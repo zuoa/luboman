@@ -2,10 +2,15 @@ import abc
 import asyncio
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
+from urllib.parse import urlparse
+
 import requests
 
+from ajrec.config import config
 from ajrec.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
     EVENT_RECORD_COMPLETED
 from ajrec.core.utils import random_user_agent, get_valid_filename
@@ -44,6 +49,15 @@ class LiveBase(object):
         self.suffix = suffix
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
+
+        self.ffmpeg_opt_args = []
+        self.default_ffmpeg_output_args = [
+            '-bsf:a', 'aac_adtstoasc',
+        ]
+        if config.get('segment_duration', '00:01:00'):
+            self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '00:01:00')}"]
+        else:
+            self.default_ffmpeg_output_args += ['-fs', f"{config.get('segment_file_size', '2621440000')}"]
 
     @property
     def live_context(self):
@@ -123,7 +137,8 @@ class LiveBase(object):
             else:
                 if retry_count < 3:
                     retry_count += 1
-                    logger.info(f'获取流失败：{self.__class__.__name__} - {self.room_name}，重试次数 {retry_count} / 3，等待 3 秒')
+                    logger.info(
+                        f'获取流失败：{self.__class__.__name__} - {self.room_name}，重试次数 {retry_count} / 3，等待 3 秒')
                     time.sleep(3)
                     continue
 
@@ -163,7 +178,7 @@ class LiveBase(object):
             return False, None
         logger.info(self.live_context)
         filepath = self.get_filepath()
-        self.raw_download(filepath)
+        self.ffmpeg_download(filepath)
         self.rename(filepath)
         return True, filepath
 
@@ -176,7 +191,38 @@ class LiveBase(object):
                     f.flush()
 
     def ffmpeg_download(self, filepath):
-        pass
+        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout',
+                              '20000000']
+        parsed_url = urlparse(self.raw_stream_url)
+        path = parsed_url.path
+        if '.m3u8' in path:
+            default_input_args += ['-max_reload', '1000']
+        args = ['/Users/yujian/Downloads/ffmpeg', '-y', *default_input_args,
+                '-i', self.raw_stream_url, *self.default_ffmpeg_output_args, *self.ffmpeg_opt_args,
+                '-c', 'copy', '-f', self.suffix]
+        # if config.get('segment_time'):
+        #     args += ['-f', 'segment',
+        #              f'{filename} part-%03d.{self.suffix}']
+        # else:
+        #     args += [
+        #         f'{filename}.{self.suffix}.part']
+        args += [f'{filepath}.part']
+
+        proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            with proc.stdout as stdout:
+                for line in iter(stdout.readline, b''):  # b'\n'-separated lines
+                    decode_line = line.decode(errors='ignore')
+                    print(decode_line, end='', file=sys.stderr)
+                    logger.debug(decode_line.rstrip())
+            retval = proc.wait()
+        except KeyboardInterrupt:
+            if sys.platform != 'win32':
+                proc.communicate(b'q')
+            raise
+        if retval != 0:
+            return False
+        return True
 
     def get_filepath(self):
         file_dir = f'video/{self.room_platform}/{self.room_id}-{self.room_name}'
@@ -218,7 +264,7 @@ class LiveBase(object):
 
             is_living = self.check_live(is_check_status=True)
             logger.info(is_living)
-            if is_living:
+            if is_living and not self.is_recording:
                 self.send_event(Event(EVENT_PRE_RECORD))
 
         @event_manager.register(EVENT_PRE_RECORD)

@@ -5,6 +5,7 @@ import logging.config
 from ajrec.core.daemon import Daemon
 from ajrec.core.timer import Timer
 from ajrec import __version__, LOG_CONF
+from ajrec.plugins.bilibili import Bilibili
 from ajrec.plugins.douyu import Douyu
 
 
@@ -43,9 +44,10 @@ async def check_func():
 
 
 async def main(args):
-    Douyu("刘嘉俊Sylar", "https://www.douyu.com/10011").start()
+    Douyu("谢彬DD", "https://www.douyu.com/110").start()
+    Douyu("Azheng", "https://www.douyu.com/73965").start()
 
-    # Bilibili("刘嘉俊Sylar", "https://live.bilibili.com/5446931?visit_id=1da5m1aitt34").start()
+    Bilibili("测试2", "https://live.bilibili.com/21727410").start()
 
     checker = Timer(check_func, interval=3)
     await asyncio.gather(checker.async_start())

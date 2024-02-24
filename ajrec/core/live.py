@@ -12,7 +12,7 @@ import requests
 
 from ajrec.config import config
 from ajrec.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
-    EVENT_RECORD_COMPLETED
+    EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD, EVENT_UPLOAD_COMPLETED
 from ajrec.core.utils import random_user_agent, get_valid_filename
 
 logger = logging.getLogger('ajrec')
@@ -33,7 +33,7 @@ class LiveBase(object):
         self.room_cover_url = None
         self.room_cover_frame_url = None
         self.raw_stream_url = None
-        self.live_state = None
+        self.is_living = False
 
         self.is_recording = False
         self.fake_headers = {
@@ -53,8 +53,9 @@ class LiveBase(object):
         self.ffmpeg_opt_args = []
         self.default_ffmpeg_output_args = [
             '-bsf:a', 'aac_adtstoasc',
+            '-loglevel', 'quiet'
         ]
-        if config.get('segment_duration', '00:01:00'):
+        if config.get('segment_duration', '01:00:00'):
             self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '00:01:00')}"]
         else:
             self.default_ffmpeg_output_args += ['-fs', f"{config.get('segment_file_size', '2621440000')}"]
@@ -241,7 +242,6 @@ class LiveBase(object):
         return f'{file_dir}/{filename}.{self.suffix}'
 
     def send_event(self, event):
-        logger.info(f'Sending event {event}')
         self.event_manager.send(event)
 
     @staticmethod
@@ -261,10 +261,12 @@ class LiveBase(object):
         @event_manager.register(EVENT_CHECK_STATUS)
         def check_status(event):
             logger.info(self.room_name + "Checking status")
+            last_living = self.is_living
+            self.is_living = self.check_live(is_check_status=True)
+            if not last_living and self.is_living:
+                self.send_event(Event(EVENT_NOTIFY, (f'开播通知:{self.room_name}', f'{self.room_name}[{self.room_id}]开播了')))
 
-            is_living = self.check_live(is_check_status=True)
-            logger.info(is_living)
-            if is_living and not self.is_recording:
+            if self.is_living and not self.is_recording:
                 self.send_event(Event(EVENT_PRE_RECORD))
 
         @event_manager.register(EVENT_PRE_RECORD)
@@ -272,11 +274,29 @@ class LiveBase(object):
             self.send_event(Event(EVENT_RECORD))
 
         @event_manager.register(EVENT_RECORD)
-        def record():
+        def process_record():
             self.is_recording = True
 
         @event_manager.register(EVENT_RECORD_COMPLETED)
-        def process_record_complete(file_list):
+        def process_record_completed(file_list):
+
+            # 未开播状态
+            self.is_recording = False
+            self.is_living = False
+
+            logger.info(file_list)
+
+        @event_manager.register(EVENT_NOTIFY)
+        def process_notify(title, content):
+            from ajrec.messager import push
+            push(title, content)
+
+        @event_manager.register(EVENT_UPLOAD)
+        def process_upload(file_list):
+            pass
+
+        @event_manager.register(EVENT_UPLOAD_COMPLETED)
+        def process_upload_completed(file_list):
             pass
 
         event_manager.start()

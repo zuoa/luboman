@@ -87,16 +87,26 @@ class LiveBase(object):
         # delay 总重试次数 向上取整
         delay_all_retry_count = -(-delay // 60)
 
+        record_file_list = []
+
         while True:
+            # 未启动录制
             if not self.is_recording:
-                time.sleep(2)
+                time.sleep(3)
                 continue
 
-            logger.info(f'开始下载：{self.__class__.__name__} - {self.room_name}')
-            # 流没中断，会一直录制
+            recording_context = {
+                "begin_time": time.localtime(),
+            }
+
+            logger.info(f'开始录制：{self.__class__.__name__} - {self.room_name}')
+
             ret = False
+            filepath = None
+
             try:
-                ret = self.record()
+                # 阻塞下载，流没中断，会一直录制
+                ret, filepath = self.record()
             except Exception as e:
                 logger.exception(f'Uncaught exception:{e}')
             finally:
@@ -106,11 +116,14 @@ class LiveBase(object):
                 # 成功下载重置重试次数
                 retry_count = 0
                 retry_count_delay = 0
+
+                recording_context["end_time"] = time.localtime()
+                recording_context["filepath"] = filepath
+                record_file_list.append(recording_context)
             else:
                 if retry_count < 3:
                     retry_count += 1
-                    logger.info(
-                        f'获取流失败：{self.__class__.__name__} - {self.room_name}，重试次数 {retry_count} / 3，等待 3 秒')
+                    logger.info(f'获取流失败：{self.__class__.__name__} - {self.room_name}，重试次数 {retry_count} / 3，等待 3 秒')
                     time.sleep(3)
                     continue
 
@@ -136,8 +149,7 @@ class LiveBase(object):
                     end_time = time.localtime()
                     break
 
-        stream_record_info = {}
-        self.send_event(Event(EVENT_RECORD_COMPLETED, (stream_record_info,)))
+        self.send_event(Event(EVENT_RECORD_COMPLETED, (record_file_list,)))
 
     def stop(self):
         pass
@@ -148,12 +160,12 @@ class LiveBase(object):
 
     def record(self):
         if not self.check_live():
-            return False
+            return False, None
         logger.info(self.live_context)
         filepath = self.get_filepath()
         self.raw_download(filepath)
         self.rename(filepath)
-        return True
+        return True, filepath
 
     def raw_download(self, filepath):
         resp = requests.get(self.raw_stream_url, stream=True, headers=self.fake_headers, timeout=60)
@@ -218,7 +230,7 @@ class LiveBase(object):
             self.is_recording = True
 
         @event_manager.register(EVENT_RECORD_COMPLETED)
-        def process_record_complete(event):
+        def process_record_complete(file_list):
             pass
 
         event_manager.start()

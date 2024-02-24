@@ -56,7 +56,7 @@ class LiveBase(object):
             '-loglevel', 'quiet'
         ]
         if config.get('segment_duration', '01:00:00'):
-            self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '00:01:00')}"]
+            self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '01:00:00')}"]
         else:
             self.default_ffmpeg_output_args += ['-fs', f"{config.get('segment_file_size', '2621440000')}"]
 
@@ -177,7 +177,6 @@ class LiveBase(object):
     def record(self):
         if not self.check_live():
             return False, None
-        logger.info(self.live_context)
         filepath = self.get_filepath()
         self.ffmpeg_download(filepath)
         self.rename(filepath)

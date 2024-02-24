@@ -3,3 +3,6 @@ quickjs
 jieba
 jsengine
 peewee
+Pillow
+rsa
+aiohttp

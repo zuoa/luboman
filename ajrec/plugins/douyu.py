@@ -34,7 +34,9 @@ class Douyu(LiveBase):
             return False
 
         try:
-            room_info = requests.get(f"https://www.douyu.com/betard/{self.room_id}", headers=self.fake_headers, timeout=5).json()['room']
+            room_info = \
+            requests.get(f"https://www.douyu.com/betard/{self.room_id}", headers=self.fake_headers, timeout=5).json()[
+                'room']
             if room_info['show_status'] != 1:
                 logger.debug(f"{Douyu.__name__}: {self.room_url}: 未开播")
                 return False
@@ -59,7 +61,9 @@ class Douyu(LiveBase):
         try:
             import jsengine
             ctx = jsengine.jsengine()
-            js_enc = requests.get(f'https://www.douyu.com/swf_api/homeH5Enc?rids={self.room_id}', headers=self.fake_headers, timeout=5).json()['data'][f'room{self.room_id}']
+            js_enc = requests.get(f'https://www.douyu.com/swf_api/homeH5Enc?rids={self.room_id}',
+                                  headers=self.fake_headers,
+                                  timeout=5).json()['data'][f'room{self.room_id}']
             js_enc = js_enc.replace('return eval', 'return [strc, vdwdae325w_64we];')
 
             sign_fun, sign_v = ctx.eval(f'{js_enc};ub98484234();')
@@ -74,8 +78,8 @@ class Douyu(LiveBase):
         except TypeError:
             logger.error(f"{Douyu.__name__}: {self.room_url}: 请安装至少一个 Javascript 解释器，如 pip install quickjs")
             return False
-        except:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取签名参数异常")
+        except Exception as e:
+            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取签名参数异常({e})")
             return False
 
         params['cdn'] = 'tct-h5'  # config.get('douyucdn', 'tct-h5')

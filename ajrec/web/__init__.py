@@ -1,4 +1,5 @@
 import asyncio
+
 from aiohttp import web
 
 routes = web.RouteTableDef()
@@ -13,10 +14,8 @@ app = web.Application()
 app.add_routes(routes)
 
 
-# 手动启动事件循环
-async def setup():
+async def serve():
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '127.0.0.1', 5001)
-
-    return site
+    await site.start()

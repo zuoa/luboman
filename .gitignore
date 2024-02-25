@@ -132,3 +132,4 @@ dmypy.json
 *.flv
 *.iml
 .idea
+*.part

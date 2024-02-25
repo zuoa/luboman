@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging.config
 
+import ajrec.web
 from ajrec.core.daemon import Daemon
 from ajrec.core.timer import Timer
 from ajrec import __version__, LOG_CONF
@@ -47,13 +48,15 @@ async def main(args):
     Douyu("谢彬DD", "https://www.douyu.com/110").start()
     Douyu("Azheng", "https://www.douyu.com/73965").start()
 
-    Bilibili("测试2", "https://live.bilibili.com/21727410").start()
+    Bilibili("舞见", "https://live.bilibili.com/26357031").start()
 
-    checker = Timer(check_func, interval=3)
-    await asyncio.gather(checker.async_start())
-    #
-    # while True:
-    #     await asyncio.gather(detector.astart(), site.start())
+    # site = await ajrec.web.setup()
+    # await asyncio.gather(site.start())
+    loop = asyncio.new_event_loop()
+
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(ajrec.web.setup())
+
 
 
 if __name__ == '__main__':

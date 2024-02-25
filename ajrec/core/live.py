@@ -263,7 +263,8 @@ class LiveBase(object):
             last_living = self.is_living
             self.is_living = self.check_live(is_check_status=True)
             if not last_living and self.is_living:
-                self.send_event(Event(EVENT_NOTIFY, (f'开播通知:{self.room_name}', f'{self.room_name}[{self.room_id}]开播了')))
+                self.send_event(Event(EVENT_NOTIFY, (f'开播通知:{self.room_name}',
+                                                     f'### {self.room_name}[{self.room_id}]开播了\n\n{self.room_title}\n\n{self.room_url}')))
 
             if self.is_living and not self.is_recording:
                 self.send_event(Event(EVENT_PRE_RECORD))

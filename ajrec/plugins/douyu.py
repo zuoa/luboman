@@ -5,10 +5,12 @@ from urllib.parse import parse_qs
 import requests
 
 from ajrec.core.live import LiveBase
+from ..core.decorators import PluginTool
 from ..core.utils import match1
 from ..plugins import logger
 
 
+@PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m)\.)?douyu\.com')
 class Douyu(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):

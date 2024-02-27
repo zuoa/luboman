@@ -2,15 +2,20 @@ import argparse
 import asyncio
 import functools
 import logging.config
+import re
 
 import ajrec.web
 from ajrec.core.daemon import Daemon
+from ajrec.core.decorators import PluginTool
 from ajrec.core.timer import Timer
 from ajrec import __version__, LOG_CONF
+from ajrec.database.models import LiveRoom
 from ajrec.plugins.bilibili import Bilibili
 from ajrec.plugins.douyu import Douyu
 from ajrec.database.db import DB
 from ajrec.plugins.huya import Huya
+
+from ajrec import plugins
 
 
 def arg_parser():
@@ -44,16 +49,32 @@ def arg_parser():
     # asyncio.run(main(args))
 
 
-async def check_func():
-    print("!")
+def start_room(room_name, url, **kwargs):
+    pg = None
+
+    for plugin in PluginTool.live_plugins:
+        if re.match(plugin.VALID_URL_BASE, url):
+            pg = plugin(room_name, url)
+            for k in pg.__dict__:
+                if kwargs.get(k):
+                    pg.__dict__[k] = kwargs.get(k)
+            break
+
+    if pg:
+        return pg.start()
 
 
 async def start_all_record():
+    for room in LiveRoom.select().where(LiveRoom.active_state == 1):
+        start_room(room.room_name, room.room_url)
+
     # Douyu("谢彬DD", "https://www.douyu.com/110").start()
     # Douyu("Azheng", "https://www.douyu.com/73965").start()
 
     # Bilibili("舞见", "https://live.bilibili.com/26357031").start()
-    Huya('测试', 'https://www.huya.com/924898').start()
+    # start_room('测试', 'https://www.huya.com/924898')
+    # start_room("Azheng", "https://www.douyu.com/73965")
+
 
 def do_exit(lp):
     lp.stop()
@@ -61,6 +82,7 @@ def do_exit(lp):
 
 if __name__ == '__main__':
     DB.init()
+    PluginTool(plugins)
 
     # arg_parser()
     logging.config.dictConfig(LOG_CONF)

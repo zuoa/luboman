@@ -5,8 +5,10 @@ from ajrec.core.live import LiveBase
 from ajrec.core.utils import match1
 from ..config import config
 from . import logger
+from ..core.decorators import PluginTool
 
 
+@PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m|live)\.)?bilibili\.com')
 class Bilibili(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):

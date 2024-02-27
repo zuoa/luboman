@@ -9,10 +9,12 @@ import requests
 
 from ajrec.core.live import LiveBase
 from ..config import config
+from ..core.decorators import PluginTool
 from ..core.utils import match1
 from ..plugins import logger
 
 
+@PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m)\.)?huya\.com')
 class Huya(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):

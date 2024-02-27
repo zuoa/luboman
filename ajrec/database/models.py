@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from sqlite3 import IntegrityError
 
-from peewee import Model, AutoField, CharField, IntegerField, TextField, ForeignKeyField, CompositeKey
+from peewee import Model, AutoField, CharField, IntegerField, TextField, ForeignKeyField, CompositeKey, DateTimeField
 from playhouse.shortcuts import ReconnectMixin, model_to_dict
 from playhouse.sqlite_ext import SqliteExtDatabase, JSONField
 
@@ -120,7 +120,12 @@ class LiveRoom(BaseModel):
     room_cover_frame_url = CharField(null=True)  # 直播间封面帧地址
     custom_filename = CharField(null=True)  # 文件名配置
     # 外键, 对应 UploadStreamers, 且启用级联删除
-    upload_template_id = IntegerField(null=True)
+    bili_upload_template_id = IntegerField(null=True)
+    upload_storage_type = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True)  # 视频格式
     live_state = IntegerField(default=0)  # 直播状态, 0为未开播, 1为开播
     status = CharField(default='IDLE')  # 状态, IDLE为空闲, WORKING为忙碌
+    gmt_created = DateTimeField(null=True, default='now()')  # 创建时间
+    active_begin = DateTimeField(null=True)  # 活跃开始时间
+    active_end = DateTimeField(null=True)  # 活跃结束时间
+    active_state = IntegerField(default=1)  # 活跃状态, 0为未活跃, 1为活跃

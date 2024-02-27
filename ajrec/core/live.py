@@ -12,8 +12,9 @@ import requests
 
 from ajrec.config import config
 from ajrec.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
-    EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD, EVENT_UPLOAD_COMPLETED
+    EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD_BILI, EVENT_UPLOAD_BILI_COMPLETED, EVENT_UPLOAD_STORAGE, EVENT_UPLOAD_STORAGE_COMPLETED
 from ajrec.core.utils import random_user_agent, get_valid_filename
+from ajrec.core.upload import upload
 
 logger = logging.getLogger('ajrec')
 
@@ -292,11 +293,24 @@ class LiveBase(object):
             from ajrec.messager import push
             push(title, content)
 
-        @event_manager.register(EVENT_UPLOAD)
-        def process_upload(file_list):
+        @event_manager.register(EVENT_UPLOAD_BILI)
+        def process_upload_bili(file_list):
+            upload_info = {}
+            upload('biliweb', file_list, **upload_info)
+
+        @event_manager.register(EVENT_UPLOAD_BILI_COMPLETED)
+        def process_upload_bili_completed(file_list):
             pass
 
-        @event_manager.register(EVENT_UPLOAD_COMPLETED)
+        @event_manager.register(EVENT_UPLOAD_STORAGE)
+        def process_upload(file_list):
+            platform = 'alipan'
+
+            # TODO: 加载房间配置
+
+            upload(platform, file_list)
+
+        @event_manager.register(EVENT_UPLOAD_STORAGE_COMPLETED)
         def process_upload_completed(file_list):
             pass
 

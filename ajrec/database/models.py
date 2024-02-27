@@ -121,7 +121,7 @@ class LiveRoom(BaseModel):
     custom_filename = CharField(null=True)  # 文件名配置
     # 外键, 对应 UploadStreamers, 且启用级联删除
     bili_upload_template_id = IntegerField(null=True)
-    upload_storage_type = CharField(null=True)  # 上传网盘类型
+    upload_storage_platform = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True)  # 视频格式
     live_state = IntegerField(default=0)  # 直播状态, 0为未开播, 1为开播
     status = CharField(default='IDLE')  # 状态, IDLE为空闲, WORKING为忙碌

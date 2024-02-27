@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -24,32 +25,30 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
+from ajrec.core.decorators import PluginTool
+
 logger = logging.getLogger("ajrec")
 
 
 class Uploader:
-    class FileInfo:
-        video: str
-        barrage: str
-
-    def __init__(self, file_list: List[FileInfo]):
+    def __init__(self, file_list):
         self.file_list = file_list
 
     def start(self):
         if not self.file_list:
             return
 
-        self.upload(self.file_list)
+        self.upload()
 
-    def upload(self, file_list):
-        pass
+    def upload(self):
+        raise NotImplementedError
 
     @staticmethod
-    def remove_filelist(file_list: List[FileInfo]):
+    def remove_filelist(file_list):
         for f in file_list:
-            Uploader.remove_file(f.video)
+            Uploader.remove_file(f['video'])
             if f.barrage is not None:
-                Uploader.remove_file(f.barrage)
+                Uploader.remove_file(f['barrage'])
 
     @staticmethod
     def remove_file(file: str):
@@ -711,3 +710,32 @@ class Data:
 
     def append(self, video):
         self.videos.append(video)
+
+
+def upload(platform, file_list, **kwargs):
+    """
+    上传入口
+    :param platform:
+    :param file_list:
+    :param kwargs: 其他参数
+    :return:
+    """
+    try:
+        # context = {**config, **config['streamers'][index]}
+        context = {}
+        cls = PluginTool.upload_plugins.get(platform)
+        if cls is None:
+            return logger.error(f"No such uploader: {platform}")
+        # data, context = fmt_title_and_desc(data)
+        # data['dolby'] = config.get('dolby', 0)
+        # data['hires'] = config.get('hires', 0)
+        # data['no_reprint'] = config.get('no_reprint', 0)
+        # data['open_elec'] = config.get('open_elec', 0)
+        sig = inspect.signature(cls)
+        for k in sig.parameters:
+            v = context.get(k)
+            if v:
+                kwargs[k] = v
+        return cls(file_list, **kwargs).start()
+    except:
+        logger.exception("Uncaught exception:")

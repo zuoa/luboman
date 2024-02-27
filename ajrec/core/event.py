@@ -12,8 +12,10 @@ EVENT_PRE_RECORD = "pre-record"
 EVENT_RECORD = "record"
 EVENT_RECORD_COMPLETED = "record-completed"
 EVENT_NOTIFY = "notify-event"
-EVENT_UPLOAD = "upload"
-EVENT_UPLOAD_COMPLETED = "upload-completed"
+EVENT_UPLOAD_BILI = "upload-bili"
+EVENT_UPLOAD_BILI_COMPLETED = "upload-bili-completed"
+EVENT_UPLOAD_STORAGE = "upload-storage"
+EVENT_UPLOAD_STORAGE_COMPLETED = "upload-storage-completed"
 
 
 class EventManager(Thread):

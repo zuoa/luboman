@@ -1,7 +1,7 @@
 FROM python:3.9-slim as luboman
 ENV TZ=Asia/Shanghai
 EXPOSE 5001/tcp
-VOLUME /opt
+VOLUME /data
 
 RUN \
   set -eux; \

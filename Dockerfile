@@ -8,8 +8,8 @@ RUN \
   mkdir /data && \
   apt-get update; \
   apt-get install -y --no-install-recommends ffmpeg git g++; \
-#  git clone --depth 1 https://github.com/ForgQi/biliup.git && \
-  cd biliup && \
+  git clone --depth 1 https://github.com/zuoa/luboman.git && \
+  cd luboman && \
   pip3 install -r requirements.txt && \
   # Clean up \
   apt-mark auto '.*' > /dev/null; \

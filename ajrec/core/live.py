@@ -34,6 +34,7 @@ class LiveBase(object):
         self.room_cover_frame_url = None
         self.raw_stream_url = None
         self.is_living = False
+        self.live_state = 0
 
         self.is_recording = False
         self.fake_headers = {

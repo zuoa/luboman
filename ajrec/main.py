@@ -9,6 +9,8 @@ from ajrec.core.timer import Timer
 from ajrec import __version__, LOG_CONF
 from ajrec.plugins.bilibili import Bilibili
 from ajrec.plugins.douyu import Douyu
+from ajrec.database.db import DB
+from ajrec.plugins.huya import Huya
 
 
 def arg_parser():
@@ -47,17 +49,19 @@ async def check_func():
 
 
 async def start_all_record():
-    Douyu("谢彬DD", "https://www.douyu.com/110").start()
-    Douyu("Azheng", "https://www.douyu.com/73965").start()
+    # Douyu("谢彬DD", "https://www.douyu.com/110").start()
+    # Douyu("Azheng", "https://www.douyu.com/73965").start()
 
-    Bilibili("舞见", "https://live.bilibili.com/26357031").start()
-
+    # Bilibili("舞见", "https://live.bilibili.com/26357031").start()
+    Huya('测试', 'https://www.huya.com/924898').start()
 
 def do_exit(lp):
     lp.stop()
 
 
 if __name__ == '__main__':
+    DB.init()
+
     # arg_parser()
     logging.config.dictConfig(LOG_CONF)
     loop = asyncio.get_event_loop()

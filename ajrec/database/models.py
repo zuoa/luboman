@@ -6,7 +6,7 @@ from peewee import Model, AutoField, CharField, IntegerField, TextField, Foreign
 from playhouse.shortcuts import ReconnectMixin, model_to_dict
 from playhouse.sqlite_ext import SqliteExtDatabase, JSONField
 
-logger = logging.getLogger('biliup')
+logger = logging.getLogger('ajrec')
 
 
 def get_path(*other):
@@ -34,11 +34,8 @@ class BaseModel(Model):
     def add(cls, **kwargs) -> int:
         """添加行, 返回添加的行的 id 值"""
         with db.atomic():
-            try:
-                dq = cls.create(**kwargs)
-                return dq.id
-            except IntegrityError:
-                return 0
+            dq = cls.create(**kwargs)
+            return dq.id
 
     @classmethod
     def delete_(cls, **kwargs):
@@ -112,18 +109,18 @@ class LiveRoom(BaseModel):
     """每个直播间的配置"""
     id = AutoField(primary_key=True)  # 自增主键
     room_url = CharField(unique=True)  # 直播间地址
-    room_platform = CharField()  # 直播平台
-    room_id = CharField()  # 直播间 id
     room_name = CharField()  # 直播间名称
-    room_owner_id = CharField()  # 主播ID
-    room_owner = CharField()  # 主播名称
-    room_owner_avatar = CharField()  # 主播头像
-    room_title = CharField()  # 直播间标题
+    room_platform = CharField(null=True)  # 直播平台
+    room_id = CharField(null=True)  # 直播间 id
+    room_owner_id = CharField(null=True)  # 主播ID
+    room_owner = CharField(null=True)  # 主播名称
+    room_owner_avatar = CharField(null=True)  # 主播头像
+    room_title = CharField(null=True)  # 直播间标题
     room_cover_url = CharField(null=True)  # 直播间封面地址
     room_cover_frame_url = CharField(null=True)  # 直播间封面帧地址
     custom_filename = CharField(null=True)  # 文件名配置
     # 外键, 对应 UploadStreamers, 且启用级联删除
-    upload_template = ForeignKeyField(BiliUploadTemplate, backref='live_room', on_delete='CASCADE', null=True)
+    upload_template_id = IntegerField(null=True)
     stream_video_format = CharField(null=True)  # 视频格式
-    live_state = IntegerField()
-    status = CharField()
+    live_state = IntegerField(default=0)  # 直播状态, 0为未开播, 1为开播
+    status = CharField(default='IDLE')  # 状态, IDLE为空闲, WORKING为忙碌

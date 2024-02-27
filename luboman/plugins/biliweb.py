@@ -1,12 +1,12 @@
 import logging
 import os
 
-from ajrec.core.upload import BiliBili, Data
+from luboman.core.upload import BiliBili, Data
 
-from ajrec.core.decorators import PluginTool
-from ajrec.core.upload import Uploader
+from luboman.core.decorators import PluginTool
+from luboman.core.upload import Uploader
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 
 @PluginTool.upload(platform="biliweb")
@@ -16,7 +16,7 @@ class BiliWebUploader(Uploader):
         self.title = kwargs.get('title')
         self.description = kwargs.get('description')
         self.tid = kwargs.get('tid')
-        self.tags = kwargs.get('tags', ['ajrec'])
+        self.tags = kwargs.get('tags', ['luboman'])
         self.cover = kwargs.get('cover')
         self.bili_cookie = kwargs.get('bili_cookie', 'bili.cookie')
 

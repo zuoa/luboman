@@ -3,11 +3,11 @@ import os
 import subprocess
 import sys
 
-from ajrec.config import config
-from ajrec.core.decorators import PluginTool
-from ajrec.core.upload import Uploader
+from luboman.config import config
+from luboman.core.decorators import PluginTool
+from luboman.core.upload import Uploader
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 
 @PluginTool.upload(platform="alipan")

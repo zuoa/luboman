@@ -1,8 +1,8 @@
 import time
 import requests
 
-from ajrec.core.live import LiveBase
-from ajrec.core.utils import match1
+from luboman.core.live import LiveBase
+from luboman.core.utils import match1
 from ..config import config
 from . import logger
 from ..core.decorators import PluginTool

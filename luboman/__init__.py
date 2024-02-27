@@ -25,11 +25,11 @@ LOG_CONF = {
         },
         'file': {
             'level': logging.DEBUG,
-            'class': 'ajrec.core.log.SafeRotatingFileHandler',
+            'class': 'luboman.core.log.SafeRotatingFileHandler',
             'when': 'W0',
             'interval': 1,
             'backupCount': 1,
-            'filename': 'ajrec.log',
+            'filename': 'luboman.log',
             'formatter': 'verbose'
         }
     },
@@ -38,7 +38,7 @@ LOG_CONF = {
         'level': logging.INFO,
     },
     'loggers': {
-        'ajrec': {
+        'luboman': {
             'handlers': ['file'],
             'level': logging.INFO,
         },

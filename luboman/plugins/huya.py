@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, unquote
 
 import requests
 
-from ajrec.core.live import LiveBase
+from luboman.core.live import LiveBase
 from ..config import config
 from ..core.decorators import PluginTool
 from ..core.utils import match1

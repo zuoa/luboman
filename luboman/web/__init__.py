@@ -4,9 +4,9 @@ import logging
 from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
-from ajrec.database.models import LiveRoom
+from luboman.database.models import LiveRoom
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 routes = web.RouteTableDef()
 
 

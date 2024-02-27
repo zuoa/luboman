@@ -6,7 +6,7 @@ import os
 import time
 import atexit
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 
 # python模拟linux的守护进程

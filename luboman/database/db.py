@@ -9,7 +9,7 @@ from playhouse.shortcuts import model_to_dict
 
 from .models import db, LiveRoom, GlobalConfig
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 
 def struct_time_to_datetime(date: time.struct_time):

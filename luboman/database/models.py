@@ -6,7 +6,7 @@ from peewee import Model, AutoField, CharField, IntegerField, TextField, Foreign
 from playhouse.shortcuts import ReconnectMixin, model_to_dict
 from playhouse.sqlite_ext import SqliteExtDatabase, JSONField
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 
 def get_path(*other):

@@ -2,7 +2,7 @@ import logging
 
 import requests
 
-from ajrec.config import config
+from luboman.config import config
 
 logger = logging.getLogger(__name__)
 

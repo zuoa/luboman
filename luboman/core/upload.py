@@ -25,9 +25,9 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
-from ajrec.core.decorators import PluginTool
+from luboman.core.decorators import PluginTool
 
-logger = logging.getLogger("ajrec")
+logger = logging.getLogger("luboman")
 
 
 class Uploader:

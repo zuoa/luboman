@@ -10,13 +10,13 @@ from urllib.parse import urlparse
 
 import requests
 
-from ajrec.config import config
-from ajrec.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
+from luboman.config import config
+from luboman.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
     EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD_BILI, EVENT_UPLOAD_BILI_COMPLETED, EVENT_UPLOAD_STORAGE, EVENT_UPLOAD_STORAGE_COMPLETED
-from ajrec.core.utils import random_user_agent, get_valid_filename
-from ajrec.core.upload import upload
+from luboman.core.utils import random_user_agent, get_valid_filename
+from luboman.core.upload import upload
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 
 class LiveBase(object):
@@ -294,7 +294,7 @@ class LiveBase(object):
 
         @event_manager.register(EVENT_NOTIFY)
         def process_notify(title, content):
-            from ajrec.messager import push
+            from luboman.messager import push
             push(title, content)
 
         @event_manager.register(EVENT_UPLOAD_BILI)

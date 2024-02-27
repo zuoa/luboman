@@ -4,18 +4,18 @@ import functools
 import logging.config
 import re
 
-import ajrec.web
-from ajrec.core.daemon import Daemon
-from ajrec.core.decorators import PluginTool
-from ajrec.core.timer import Timer
-from ajrec import __version__, LOG_CONF
-from ajrec.database.models import LiveRoom
-from ajrec.plugins.bilibili import Bilibili
-from ajrec.plugins.douyu import Douyu
-from ajrec.database.db import DB
-from ajrec.plugins.huya import Huya
+import luboman.web
+from luboman.core.daemon import Daemon
+from luboman.core.decorators import PluginTool
+from luboman.core.timer import Timer
+from luboman import __version__, LOG_CONF
+from luboman.database.models import LiveRoom
+from luboman.plugins.bilibili import Bilibili
+from luboman.plugins.douyu import Douyu
+from luboman.database.db import DB
+from luboman.plugins.huya import Huya
 
-from ajrec import plugins
+from luboman import plugins
 
 
 def arg_parser():
@@ -42,7 +42,7 @@ def arg_parser():
     # args = parser.parse_args()
     #
     # if args.verbose:
-    #     LOG_CONF['loggers']['ajrec']['level'] = args.verbose
+    #     LOG_CONF['loggers']['luboman']['level'] = args.verbose
     #     LOG_CONF['root']['level'] = args.verbose
     # logging.config.dictConfig(LOG_CONF)
     # # args.func()
@@ -87,7 +87,7 @@ if __name__ == '__main__':
     # arg_parser()
     logging.config.dictConfig(LOG_CONF)
     loop = asyncio.get_event_loop()
-    future = asyncio.gather(start_all_record(), ajrec.web.serve())
+    future = asyncio.gather(start_all_record(), luboman.web.serve())
     future.add_done_callback(functools.partial(do_exit, loop))
     loop.run_forever()
     loop.close()

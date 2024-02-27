@@ -5,7 +5,7 @@ from queue import Queue
 from threading import Thread
 from typing import Generator
 
-logger = logging.getLogger('ajrec')
+logger = logging.getLogger('luboman')
 
 EVENT_CHECK_STATUS = "check-status"
 EVENT_PRE_RECORD = "pre-record"

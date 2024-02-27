@@ -3,7 +3,7 @@ import pathlib
 import shutil
 from collections import UserDict
 
-from ajrec.database.models import GlobalConfig
+from luboman.database.models import GlobalConfig
 
 
 class Config(UserDict):

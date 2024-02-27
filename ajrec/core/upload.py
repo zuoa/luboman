@@ -15,7 +15,7 @@ import rsa
 from dataclasses import asdict, dataclass, field, InitVar
 from json import JSONDecodeError
 from os.path import splitext, basename
-from typing import Union, Any
+from typing import Union, Any, List
 from urllib import parse
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
@@ -28,8 +28,36 @@ logger = logging.getLogger("ajrec")
 
 
 class Uploader:
-    def __init__(self):
+    class FileInfo:
+        video: str
+        barrage: str
+
+    def __init__(self, file_list: List[FileInfo]):
+        self.file_list = file_list
+
+    def start(self):
+        if not self.file_list:
+            return
+
+        self.upload(self.file_list)
+
+    def upload(self, file_list):
         pass
+
+    @staticmethod
+    def remove_filelist(file_list: List[FileInfo]):
+        for f in file_list:
+            Uploader.remove_file(f.video)
+            if f.barrage is not None:
+                Uploader.remove_file(f.barrage)
+
+    @staticmethod
+    def remove_file(file: str):
+        try:
+            os.remove(file)
+            logger.info(f'删除 - {file}')
+        except:
+            logger.warning(f'删除失败 - {file}')
 
 
 class BiliBili:

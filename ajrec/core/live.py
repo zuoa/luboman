@@ -135,7 +135,7 @@ class LiveBase(object):
                 retry_count_delay = 0
 
                 recording_context["end_time"] = time.localtime()
-                recording_context["filepath"] = filepath
+                recording_context["video"] = filepath
                 record_file_list.append(recording_context)
             else:
                 if retry_count < 3:
@@ -287,6 +287,8 @@ class LiveBase(object):
             self.is_living = False
 
             logger.info(file_list)
+
+            self.send_event(Event(EVENT_UPLOAD_BILI, (file_list,)))
 
         @event_manager.register(EVENT_NOTIFY)
         def process_notify(title, content):

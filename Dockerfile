@@ -17,4 +17,5 @@ COPY . .
 RUN pwd && ls -a
 
 
+WORKDIR /app/luboman
 ENTRYPOINT ["python", "luboman/main.py"]

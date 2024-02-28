@@ -42,6 +42,7 @@ class PluginTool:
 
         plugins = []
 
+        logger.info(f"Loading plugins from {pkg}")
         for loader, name, is_pkg in pkgutil.iter_modules([pkg.__path__[0]]):
             # set the full plugin module name
             module_name = f"{pkg.__name__}.{name}"

@@ -2,7 +2,7 @@ FROM python:3.9-slim as tools
 RUN \
   set -eux; \
   apt-get update; \
-  apt-get install -y --no-install-recommends ffmpeg git g++ curl unzip; \
+  apt-get install -y --no-install-recommends git g++ curl unzip xz-utils; \
   curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o /tmp/aliyunpan.zip && \
   unzip /tmp/aliyunpan.zip -d /opt &&  mv /opt/aliyunpan-v0.2.9-linux-amd64 /opt/aliyunpan && \
   curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && \

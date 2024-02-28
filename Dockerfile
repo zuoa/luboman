@@ -18,5 +18,5 @@ RUN pwd && ls -a
 
 
 WORKDIR /app/luboman
-ENV PYTHONPATH="/app/luboman:$PYTHONPATH"
+ENV PYTHONPATH="/app:$PYTHONPATH"
 ENTRYPOINT ["python", "main.py"]

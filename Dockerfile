@@ -9,7 +9,11 @@ RUN \
   tar -xvf /tmp/ffmpeg.tar.xz -C /opt && mv /opt/ffmpeg-6.1-amd64-static /opt/ffmpeg
 
 FROM python:3.9-slim as webui
-RUN mkdir -p /opt/webui/public/ && cat '<h1>12112</h1>' > /opt/webui/public/index.html
+RUN mkdir -p /opt/webui/public/ && \
+    cat > /opt/webui/public/index.html << EOF \
+     <h1>12112</h1> \
+     EOF
+
 
 
 

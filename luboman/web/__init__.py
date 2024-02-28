@@ -70,5 +70,5 @@ async def serve(host='localhost', port=5001):
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host, port)
+    site = web.TCPSite(runner, port=port)
     await site.start()

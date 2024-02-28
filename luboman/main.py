@@ -80,11 +80,10 @@ def do_exit(lp):
 
 
 if __name__ == '__main__':
+    logging.config.dictConfig(LOG_CONF)
     DB.init()
     PluginTool(plugins)
-
     # arg_parser()
-    logging.config.dictConfig(LOG_CONF)
     loop = asyncio.get_event_loop()
     future = asyncio.gather(start_all_record(), luboman.web.serve())
     future.add_done_callback(functools.partial(do_exit, loop))

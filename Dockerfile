@@ -6,7 +6,7 @@ RUN \
   curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o /tmp/aliyunpan.zip && \
   unzip /tmp/aliyunpan.zip -d /opt &&  mv /opt/aliyunpan-v0.2.9-linux-amd64 /opt/aliyunpan && \
   curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && \
-  tar -xvf /tmp/ffmpeg.tar.xz -C /opt && mv /opt/ffmpeg-4.4-amd64-static /opt/ffmpeg
+  tar -xvf /tmp/ffmpeg.tar.xz -C /opt && mv /opt/ffmpeg-6.1-amd64-static /opt/ffmpeg
 
 
 FROM python:3.9-slim

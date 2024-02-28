@@ -13,7 +13,7 @@ FROM node:21-alpine as webui
 COPY webui ./webui
 RUN \
   set -eux && \
-  ls -a && ls -a webui &&\
+  ls -a && ls -a webui;\
   cd webui && \
   npm install && \
   npm run build &&\

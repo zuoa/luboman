@@ -29,7 +29,7 @@ LOG_CONF = {
             'when': 'W0',
             'interval': 1,
             'backupCount': 1,
-            'filename': 'luboman.log',
+            'filename': '/data/logs/luboman.log',
             'formatter': 'verbose'
         }
     },

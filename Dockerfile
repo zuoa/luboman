@@ -6,7 +6,7 @@ VOLUME /data
 COPY requirements.txt .
 RUN \
   set -eux; \
-  mkdir /data -p && \
+  mkdir /data/logs -p && \
    apt-get update; \
   apt-get install -y --no-install-recommends ffmpeg git g++ curl unzip; \
     curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o /tmp/aliyunpan.zip && \

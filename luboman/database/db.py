@@ -26,7 +26,7 @@ class DB:
     @classmethod
     def init(cls):
         """初始化数据库"""
-        run = not Path.cwd().joinpath("data/data.sqlite3").exists()
+        run = not Path.cwd().joinpath("/data/data.sqlite3").exists()
         GlobalConfig.create_table_()
         LiveRoom.create_table_()
         return run

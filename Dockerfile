@@ -8,6 +8,10 @@ RUN \
   curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && \
   tar -xvf /tmp/ffmpeg.tar.xz -C /opt && mv /opt/ffmpeg-6.1-amd64-static /opt/ffmpeg
 
+FROM python:3.9-slim as webui
+RUN mkdir -p /opt/webui/public/ && cat '<h1>12112</h1>' > /opt/webui/public/index.html
+
+
 
 FROM python:3.9-slim
 WORKDIR /app
@@ -18,6 +22,7 @@ RUN mkdir bin && ls -a
 
 COPY --from=tools /opt/aliyunpan bin/aliyunpan
 COPY --from=tools /opt/ffmpeg bin/ffmpeg
+COPY --from=webui /opt/webui/public/ /app/webui/public/
 
 RUN pwd && ls -a
 

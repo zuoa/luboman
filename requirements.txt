@@ -6,3 +6,4 @@ peewee
 Pillow
 rsa
 aiohttp
+aiohttp_cors

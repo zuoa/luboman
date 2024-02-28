@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+import aiohttp_cors
 from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
@@ -54,11 +55,24 @@ async def add_room(request):
 
 
 app = web.Application()
-app.add_routes(routes)
 
 
-async def serve():
+async def serve(host='localhost', port=5001):
+    app.add_routes(routes)
+    app.add_routes([web.static('/', "/app/web/public", show_index=False)])
+    cors = aiohttp_cors.setup(app, defaults={
+        "*": aiohttp_cors.ResourceOptions(
+            allow_credentials=True,
+            allow_methods="*",
+            expose_headers="*",
+            allow_headers="*"
+        )
+    })
+
+    for route in list(app.router.routes()):
+        cors.add(route)
+
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '127.0.0.1', 5001)
+    site = web.TCPSite(runner, host, port)
     await site.start()

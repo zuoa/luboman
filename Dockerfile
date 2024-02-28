@@ -9,4 +9,4 @@ COPY . .
 RUN pwd && ls -a
 
 
-ENTRYPOINT ["python", "luboman/luboman.py"]
+ENTRYPOINT ["python", "luboman/main.py"]

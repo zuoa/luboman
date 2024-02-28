@@ -13,11 +13,11 @@ FROM python:3.9-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
-COPY luboman .
+COPY luboman ./luboman
 RUN pwd && ls -a
 
-COPY --from=tools /opt/aliyunpan .
-COPY --from=tools /opt/ffmpeg .
+COPY --from=tools /opt/aliyunpan ./aliyunpan
+COPY --from=tools /opt/ffmpeg ./ffmpeg
 
 RUN pwd && ls -a
 

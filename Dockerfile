@@ -14,9 +14,9 @@ COPY webui ./webui
 RUN \
   set -eux && \
   ls -a && ls -a webui;\
-  cd webui && \
-  npm install && \
-  npm run build &&\
+  cd webui; \
+  npm install;  \
+  npm run build; \
     ls -a
 
 

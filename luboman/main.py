@@ -1,9 +1,11 @@
+import sys
+
+sys.path.append('.')
 import argparse
 import asyncio
 import functools
 import logging.config
 import re
-
 import luboman.web
 from luboman.core.daemon import Daemon
 from luboman.core.decorators import PluginTool

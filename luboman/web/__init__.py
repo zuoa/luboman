@@ -53,8 +53,9 @@ app = web.Application()
 
 
 async def serve(host='localhost', port=5001):
+    logger.info(f"Server started at http://{host}:{port}")
     app.add_routes(routes)
-    app.add_routes([web.static('/', "/app/webui/public", show_index=False)])
+    app.add_routes([web.static('/', "/app/webui/public/", show_index=False)])
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
             allow_credentials=True,

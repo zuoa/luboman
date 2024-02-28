@@ -1,7 +1,10 @@
 import functools
 import importlib
+import logging
 import pkgutil
 import re
+
+logger = logging.getLogger('luboman')
 
 
 class PluginTool:
@@ -42,6 +45,7 @@ class PluginTool:
         for loader, name, is_pkg in pkgutil.iter_modules([pkg.__path__[0]]):
             # set the full plugin module name
             module_name = f"{pkg.__name__}.{name}"
+            logger.info(f"Loading plugin: {module_name}")
             module = importlib.import_module(module_name)
             if is_pkg:
                 self.load_plugins(module)

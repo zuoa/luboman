@@ -1,4 +1,4 @@
-FROM python:3.9-slim as luboman
+FROM python:3.9-slim
 ENV TZ=Asia/Shanghai
 EXPOSE 5001/tcp
 VOLUME /app

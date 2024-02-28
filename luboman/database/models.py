@@ -1,4 +1,5 @@
 import logging
+import os.path
 from pathlib import Path
 from sqlite3 import IntegrityError
 
@@ -11,11 +12,12 @@ logger = logging.getLogger('luboman')
 
 def get_path(*other):
     """获取数据文件绝对路径"""
-    dir_path = Path.cwd().joinpath("data")
+    dir_path = "/data/db"
     # 若目录不存在则创建
-    if not dir_path.is_dir():
-        dir_path.mkdir(parents=True)
-    return str(dir_path.joinpath(*other))
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
+    return os.path.join(dir_path, *other)
 
 
 # 自动重连, 避免报错导致连接丢失

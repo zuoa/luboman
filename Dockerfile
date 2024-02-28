@@ -1,11 +1,11 @@
 FROM python:3.9-slim as luboman
 ENV TZ=Asia/Shanghai
 EXPOSE 5001/tcp
-VOLUME /luboman
+VOLUME /data
 
 RUN \
   set -eux; \
-  mkdir /luboman/bin -p && \
+  mkdir /data/bin -p && \
   apt-get update; \
   apt-get install -y --no-install-recommends ffmpeg git g++ curl unzip; \
   curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o bin/aliyunpan.zip && \
@@ -36,6 +36,6 @@ RUN \
   rm -rf /var/log/*
 
 #COPY --from=webui /biliup/biliup/web/public/ /biliup/biliup/web/public/
-WORKDIR /luboman
+WORKDIR /data
 
-ENTRYPOINT ["luboman"]
+ENTRYPOINT ["python3", "luboman/luboman.py"]

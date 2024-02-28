@@ -28,11 +28,6 @@ def error(code, message):
     return web.json_response(wrapper_data)
 
 
-@routes.get('/')
-async def hello(request):
-    return web.Response(text="Hello, world")
-
-
 @routes.post("/v1/room/listAll")
 async def list_room(request):
     res = []
@@ -59,7 +54,7 @@ app = web.Application()
 
 async def serve(host='localhost', port=5001):
     app.add_routes(routes)
-    app.add_routes([web.static('/', "/app/web/public", show_index=False)])
+    app.add_routes([web.static('/', "/app/webui/public", show_index=False)])
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
             allow_credentials=True,

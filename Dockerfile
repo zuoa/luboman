@@ -14,10 +14,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY luboman ./luboman
-RUN pwd && ls -a
+RUN mkdir bin && ls -a
 
-COPY --from=tools /opt/aliyunpan ./aliyunpan
-COPY --from=tools /opt/ffmpeg ./ffmpeg
+COPY --from=tools /opt/aliyunpan bin/aliyunpan
+COPY --from=tools /opt/ffmpeg bin/ffmpeg
 
 RUN pwd && ls -a
 

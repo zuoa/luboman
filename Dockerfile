@@ -5,9 +5,11 @@ VOLUME /data
 
 RUN \
   set -eux; \
-  mkdir /data && \
+  mkdir /data/bin -p && \
   apt-get update; \
-  apt-get install -y --no-install-recommends ffmpeg git g++; \
+  apt-get install -y --no-install-recommends ffmpeg git g++ curl unzip; \
+  curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o bin/aliyunpan.zip && \
+  unzip bin/aliyunpan.zip -d bin/ && \
   git clone --depth 1 https://github.com/zuoa/luboman.git && \
   cd luboman && \
   pip3 install -r requirements.txt && \

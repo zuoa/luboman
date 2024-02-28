@@ -28,6 +28,11 @@ def error(code, message):
     return web.json_response(wrapper_data)
 
 
+@routes.get("/")
+async def root_handler(request):
+    return web.HTTPFound('/index.html')
+
+
 @routes.post("/v1/room/listAll")
 async def list_room(request):
     res = []

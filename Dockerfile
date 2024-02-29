@@ -16,7 +16,8 @@ RUN \
   set -eux && \
   cd webui &&\
   npm install &&  \
-  npm run build &&
+  npm run build && \
+  ls -a dist/
 
 
 

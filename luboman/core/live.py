@@ -2,6 +2,7 @@ import abc
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -11,10 +12,12 @@ from urllib.parse import urlparse
 import requests
 
 from luboman.config import config
+from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
     EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD_BILI, EVENT_UPLOAD_BILI_COMPLETED, EVENT_UPLOAD_STORAGE, EVENT_UPLOAD_STORAGE_COMPLETED
 from luboman.core.utils import random_user_agent, get_valid_filename
 from luboman.core.upload import upload
+from luboman.database.db import DB
 
 logger = logging.getLogger('luboman')
 
@@ -24,6 +27,7 @@ class LiveBase(object):
 
         self.room_name = room_name
         self.room_url = room_url
+        self.room_db_row_id = None
         self.room_platform = None
         self.room_id = None
         self.room_title = None
@@ -65,6 +69,7 @@ class LiveBase(object):
     @property
     def live_context(self):
         return {
+            "room_db_row_id": self.room_db_row_id,
             "room_name": self.room_name,
             "room_url": self.room_url,
             "room_platform": self.room_platform,
@@ -86,6 +91,7 @@ class LiveBase(object):
             await asyncio.sleep(30)
 
     def start(self):
+        logger.info(f'开始直播间任务：{self.__class__.__name__} - {self.room_name}')
         asyncio.create_task(self.async_check_status())
 
     def start_record_thread(self):
@@ -229,7 +235,7 @@ class LiveBase(object):
         return True
 
     def get_filepath(self):
-        file_dir = f'video/{self.room_platform}/{self.room_id}-{self.room_name}'
+        file_dir = f'/data/video/{self.room_platform}/{self.room_id}-{self.room_name}'
         if not os.path.exists(file_dir):
             os.makedirs(file_dir)
 
@@ -272,6 +278,8 @@ class LiveBase(object):
 
             if self.is_living and not self.is_recording:
                 self.send_event(Event(EVENT_PRE_RECORD))
+
+            DB.update_live_room_operation_data(self.live_context)
 
         @event_manager.register(EVENT_PRE_RECORD)
         def process_pre_record():
@@ -320,3 +328,18 @@ class LiveBase(object):
 
         event_manager.start()
         return event_manager
+
+
+def start_room(room_name, url, **kwargs):
+    pg = None
+
+    for plugin in PluginTool.live_plugins:
+        if re.match(plugin.VALID_URL_BASE, url):
+            pg = plugin(room_name, url)
+            for k in pg.__dict__:
+                if kwargs.get(k):
+                    pg.__dict__[k] = kwargs.get(k)
+            break
+
+    if pg:
+        return pg.start()

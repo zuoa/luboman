@@ -6,6 +6,7 @@ import re
 import luboman.web
 from luboman.core.daemon import Daemon
 from luboman.core.decorators import PluginTool
+from luboman.core.live import start_room
 from luboman.core.timer import Timer
 from luboman import __version__, LOG_CONF
 from luboman.database.models import LiveRoom
@@ -48,25 +49,10 @@ def arg_parser():
     # asyncio.run(main(args))
 
 
-def start_room(room_name, url, **kwargs):
-    pg = None
-
-    for plugin in PluginTool.live_plugins:
-        if re.match(plugin.VALID_URL_BASE, url):
-            pg = plugin(room_name, url)
-            for k in pg.__dict__:
-                if kwargs.get(k):
-                    pg.__dict__[k] = kwargs.get(k)
-            break
-
-    if pg:
-        return pg.start()
-
-
 async def start_all_record():
-    for room in LiveRoom.select().where(LiveRoom.active_state == 1):
-        start_room(room.room_name, room.room_url)
-
+    for room in LiveRoom.select():
+        start_room(room.room_name, room.room_url, **{"room_db_row_id": room.id})
+    print("start_all_record")
     # Douyu("谢彬DD", "https://www.douyu.com/110").start()
     # Douyu("Azheng", "https://www.douyu.com/73965").start()
 

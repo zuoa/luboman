@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os.path
 from pathlib import Path
@@ -116,18 +117,19 @@ class LiveRoom(BaseModel):
     room_id = CharField(null=True)  # 直播间 id
     room_owner_id = CharField(null=True)  # 主播ID
     room_owner = CharField(null=True)  # 主播名称
+    room_owner_title = CharField(null=True)  # 主播头衔
     room_owner_avatar = CharField(null=True)  # 主播头像
     room_title = CharField(null=True)  # 直播间标题
     room_cover_url = CharField(null=True)  # 直播间封面地址
     room_cover_frame_url = CharField(null=True)  # 直播间封面帧地址
     custom_filename = CharField(null=True)  # 文件名配置
-    # 外键, 对应 UploadStreamers, 且启用级联删除
     bili_upload_template_id = IntegerField(null=True)
     upload_storage_platform = CharField(null=True)  # 上传网盘类型
-    stream_video_format = CharField(null=True)  # 视频格式
+    stream_video_format = CharField(null=True, default="flv")  # 视频格式
     live_state = IntegerField(default=0)  # 直播状态, 0为未开播, 1为开播
     status = CharField(default='IDLE')  # 状态, IDLE为空闲, WORKING为忙碌
-    gmt_created = DateTimeField(null=True, default='now()')  # 创建时间
+    gmt_created = DateTimeField(null=True, default=datetime.datetime.now)  # 创建时间
+    gmt_updated = DateTimeField(null=True)  # 更新时间
     active_begin = DateTimeField(null=True)  # 活跃开始时间
     active_end = DateTimeField(null=True)  # 活跃结束时间
     active_state = IntegerField(default=1)  # 活跃状态, 0为未活跃, 1为活跃

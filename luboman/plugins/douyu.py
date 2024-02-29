@@ -36,23 +36,23 @@ class Douyu(LiveBase):
             return False
 
         try:
-            room_info = \
-            requests.get(f"https://www.douyu.com/betard/{self.room_id}", headers=self.fake_headers, timeout=5).json()[
-                'room']
+            room_info = requests.get(f"https://www.douyu.com/betard/{self.room_id}", headers=self.fake_headers, timeout=5).json()['room']
+            if room_info:
+                self.room_title = room_info['room_name']
+                self.live_state = 1 if room_info['show_status'] == 1 else 0
+                self.room_cover_url = room_info['room_pic']
+                self.room_cover_frame_url = room_info['room_pic']
+                self.room_owner = room_info['owner_name']
+                self.room_owner_id = room_info['owner_uid']
+                self.room_owner_avatar = room_info['owner_avatar']
+                self.room_owner_title = room_info.get('officialAnchor', {}).get('od', '')
+
             if room_info['show_status'] != 1:
                 logger.debug(f"{Douyu.__name__}: {self.room_url}: 未开播")
                 return False
             if room_info['videoLoop'] != 0:
                 logger.debug(f"{Douyu.__name__}: {self.room_url}: 正在放录播")
                 return False
-            self.room_title = room_info['room_name']
-            self.live_state = 1 if room_info['show_status'] == 1 else 0
-            self.room_cover_url = room_info['room_pic']
-            self.room_cover_frame_url = room_info['room_pic']
-            self.room_owner = room_info['owner_name']
-            self.room_owner_id = room_info['owner_uid']
-            self.room_owner_avatar = room_info['owner_avatar']
-            self.room_owner_title = room_info.get('officialAnchor', {}).get('od', '')
         except:
             logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取直播间信息错误")
             return False

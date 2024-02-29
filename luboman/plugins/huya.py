@@ -57,6 +57,8 @@ class Huya(LiveBase):
             self.room_owner_avatar = live_info['gameLiveInfo']['avatar180']
             self.room_owner_title = live_info['gameLiveInfo']['recommendTagName']
 
+            if is_check_status:
+                return True
             # 最大录制码率
             huya_max_ratio = config.get('huya_max_ratio', 0)
             # 最大码率(不含hdr)

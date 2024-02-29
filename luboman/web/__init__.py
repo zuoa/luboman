@@ -7,6 +7,8 @@ import aiohttp_cors
 from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
+from luboman.core.live import start_room
+from luboman.database.db import DB
 from luboman.database.models import LiveRoom
 
 logger = logging.getLogger('luboman')
@@ -49,34 +51,48 @@ async def add_room(request):
     res = []
     json_data = await request.json()
     try:
-        new_room = LiveRoom.add(**json_data)
-        return success(new_room)
+        new_room_id = LiveRoom.add(**json_data)
+        start_room(json_data.get('room_name'), json_data.get('room_url'), **{'room_db_row_id': new_room_id})
+        return success(new_room_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/room/update")
+async def add_room(request):
+    data = await request.json()
+    if not data.get('id'):
+        return error(1, "id is required")
+    try:
+        row = DB.update_live_room(data)
+        return success(row)
     except Exception as e:
         logger.error(e)
         return error(1, str(e))
 
 
 app = web.Application()
+app.add_routes(routes)
+res = []
+# for dir in pathlib.Path(files('luboman.web').joinpath('public')).glob('*.html'):
+#     file_name = dir.relative_to(files('luboman.web').joinpath('public'))
+#
+#     def _copy(file_name):
+#         async def static_view(request):
+#             return web.FileResponse(files('luboman.web').joinpath('public/' + str(file_name)))
+#
+#         return static_view
+#
+#     res.append(web.get('/' + str(file_name.with_suffix('')), _copy(file_name)))
+#     # res.append(web.static('/'+fdir.replace('\\', '/'), files('biliup.web').joinpath('public/'+fdir)))
+#
+# res.append(web.static('/', files('luboman.web').joinpath('public')))
+app.add_routes(res)
 
 
-async def serve(host='localhost', port=5001):
+async def serve(host='127.0.0.1', port=5001):
     logger.info(f"Server started at http://{host}:{port}")
-    app.add_routes(routes)
-    res = []
-    for dir in pathlib.Path(files('luboman.web').joinpath('public')).glob('*.html'):
-        file_name = dir.relative_to(files('luboman.web').joinpath('public'))
-
-        def _copy(file_name):
-            async def static_view(request):
-                return web.FileResponse(files('luboman.web').joinpath('public/' + str(file_name)))
-
-            return static_view
-
-        res.append(web.get('/' + str(file_name.with_suffix('')), _copy(file_name)))
-        # res.append(web.static('/'+fdir.replace('\\', '/'), files('biliup.web').joinpath('public/'+fdir)))
-
-    res.append(web.static('/', files('luboman.web').joinpath('public')))
-    app.add_routes(res)
 
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
@@ -92,5 +108,5 @@ async def serve(host='localhost', port=5001):
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, port=port)
+    site = web.TCPSite(runner, host=host, port=port)
     await site.start()

@@ -128,42 +128,34 @@ class DB:
         return [file.file for file in file_list]
 
     @classmethod
-    def migrate_streamer_info(cls):
-        """迁移旧版数据库中数据到新版"""
-        logger.info("检测到旧版数据表，正在自动迁移")
-        with db.atomic():
-            # 创建新的临时表格
-            TempStreamerInfo.create_table()
-            # 将数据从原表格拷贝到新表格
-            db.execute_sql(
-                'INSERT INTO temp_streamer_info (name, url, title, date, live_cover_path) SELECT name, url, title, date, live_cover_path FROM streamerinfo')
-            # 删除原表格
-            StreamerInfo.drop_table()
-            # 将新表格重命名为原表格的名字
-            db.execute_sql('ALTER TABLE temp_streamer_info RENAME TO streamerinfo')
+    def update_live_room(cls, data):
+        update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "upload_storage_platform",
+                          "stream_video_format", "active_state", "active_begin", "active_end"]
+        update_data = {
+            key: value for key, value in data.items() if key in update_columns
+        }
+
+        update_data["gmt_updated"] = datetime.now()
+
+        return LiveRoom.update(**update_data).where(LiveRoom.id == data["id"]).execute()
 
     @classmethod
-    def update_live_streamer(
-            cls, id, url, remark,
-            filename_prefix=None,
-            upload_streamers=None,
-            format=None,
-            preprocessor=None,
-            downloaded_processor=None,
-            postprocessor=None,
-            opt_args=None, **kwargs):
-        """ 更新 LiveStreamers 表中的数据, 增加一层包装避免多余参数报错 """
-        LiveStreamers.update(
-            url=url,
-            remark=remark,
-            filename_prefix=filename_prefix,
-            upload_streamers=upload_streamers,
-            format=format,
-            preprocessor=preprocessor,
-            downloaded_processor=downloaded_processor,
-            postprocessor=postprocessor,
-            opt_args=opt_args,
-        ).where(LiveStreamers.id == id).execute()
+    def update_live_room_operation_data(cls, data):
+        row_id = data.pop("room_db_row_id")
+        return LiveRoom.update(
+            room_platform=data["room_platform"],
+            room_id=data["room_id"],
+            room_title=data["room_title"],
+            room_owner_id=data["room_owner_id"],
+            room_owner=data["room_owner"],
+            room_owner_avatar=data["room_owner_avatar"],
+            room_owner_title=data["room_owner_title"],
+            room_cover_url=data["room_cover_url"],
+            room_cover_frame_url=data["room_cover_frame_url"],
+            gmt_updated=datetime.now(),
+            live_state=data["live_state"],
+            status=data["status"],
+        ).where(LiveRoom.id == row_id).execute()
 
     def backup(self):
         """备份数据库"""

@@ -43,9 +43,6 @@ class Bilibili(LiveBase):
                 logger.debug(f"Bililive-{room_id}: 直播间未开播")
                 return False
 
-            if is_check_status:
-                return True
-
             self.live_state = 1 if room_info['data']['room_info']['live_status'] == 1 else 0
             self.room_cover_url = room_info['data']['room_info']['cover']
             self.room_cover_frame_url = room_info['data']['room_info']['keyframe']
@@ -54,6 +51,9 @@ class Bilibili(LiveBase):
             self.room_owner_avatar = room_info['data']['anchor_info']['base_info']['face']
             self.room_owner_title = room_info['data']['anchor_info']['base_info']['official_info']['title']
             self.room_title = room_info['data']['room_info']['title']
+
+            if is_check_status:
+                return True
 
             if live_start_time > self.live_time:
                 self.live_time = live_start_time

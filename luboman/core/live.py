@@ -201,8 +201,7 @@ class LiveBase(object):
     def ffmpeg_download(self, filepath):
         ffmpeg_path = config.get('ffmpeg_path', '/app/bin/ffmpeg/ffmpeg')
 
-        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout',
-                              '20000000']
+        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout', '20000000']
         parsed_url = urlparse(self.raw_stream_url)
         path = parsed_url.path
         if '.m3u8' in path:
@@ -218,13 +217,15 @@ class LiveBase(object):
         #         f'{filename}.{self.suffix}.part']
         args += [f'{filepath}.part']
 
+        logger.info(' '.join(args))
+
         proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             with proc.stdout as stdout:
                 for line in iter(stdout.readline, b''):  # b'\n'-separated lines
                     decode_line = line.decode(errors='ignore')
                     print(decode_line, end='', file=sys.stderr)
-                    logger.debug(decode_line.rstrip())
+                    logger.info(decode_line.rstrip())
             retval = proc.wait()
         except KeyboardInterrupt:
             if sys.platform != 'win32':

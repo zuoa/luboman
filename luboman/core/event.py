@@ -1,5 +1,6 @@
 import functools
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
@@ -14,8 +15,8 @@ EVENT_RECORD_COMPLETED = "record-completed"
 EVENT_NOTIFY = "notify-event"
 EVENT_UPLOAD_BILI = "upload-bili"
 EVENT_UPLOAD_BILI_COMPLETED = "upload-bili-completed"
-EVENT_UPLOAD_STORAGE = "upload-storage"
-EVENT_UPLOAD_STORAGE_COMPLETED = "upload-storage-completed"
+EVENT_UPLOAD = "upload"
+EVENT_UPLOAD_COMPLETED = "upload-completed"
 
 
 class EventManager(Thread):
@@ -30,11 +31,18 @@ class EventManager(Thread):
 
         self.__handlers = {}
 
+        self.__pool_blocks = []
+
+        self.__thread_pool = {
+            'NORMAL': ThreadPoolExecutor(2, thread_name_prefix='NORMAL'),
+            'SLOW': ThreadPoolExecutor(2, thread_name_prefix='SLOW'),
+        }
+
     def stop(self):
         """停止"""
         self.__active = False
-        # for pool in self._pool.values():
-        #     pool.shutdown()
+        for pool in self.__thread_pool.values():
+            pool.shutdown()
 
     def run(self):
         while self.__active:
@@ -42,14 +50,17 @@ class EventManager(Thread):
                 event = self.__queue.get(block=True, timeout=1)
                 self.__event_process(event)
             except Exception as e:
-                # logger.error(e)
-                pass
+                logger.debug(e)
+                # pass
 
     def __event_process(self, event):
         if self.__active:
             if event and event.type_ in self.__handlers:
                 for handler in self.__handlers[event.type_]:
-                    handler(event)
+                    if handler.__qualname__ in self.__pool_blocks:
+                        self.__thread_pool.get(handler.thread_pool).submit(handler, event)
+                    else:
+                        handler(event)
 
     def add_event_handler(self, type_, handler):
         if type_ not in self.__handlers:
@@ -69,7 +80,7 @@ class EventManager(Thread):
         """发送事件，向事件队列中存入事件"""
         self.__queue.put(event)
 
-    def register(self, type_, block=False):
+    def register(self, type_, block="NORMAL"):
         def callback(result):
             if not result:
                 pass
@@ -79,12 +90,12 @@ class EventManager(Thread):
             else:
                 self.send(result)
 
-        # def appendblock(fc, blk):
-        #     if blk:
-        #         self.__block.append(fc.__qualname__)
+        def block_append(fc, blk):
+            if blk:
+                self.__pool_blocks.append(fc.__qualname__)
 
         def decorator(func):
-            # appendblock(func, block)
+            block_append(func, block)
 
             @functools.wraps(func)
             def wrapper(event):
@@ -92,22 +103,9 @@ class EventManager(Thread):
                 callback(_event)
                 return _event
 
-            wrapper.pool = block
+            wrapper.thread_pool = block
             self.add_event_handler(type_, wrapper)
             return wrapper
-
-        return decorator
-
-    def serve(self):
-        def decorator(cls):
-            sig = inspect.signature(cls)
-            kwargs = {}
-            for k in sig.parameters:
-                kwargs[k] = self.context[k]
-            instance = cls(**kwargs)
-            self.context[cls.__name__] = instance
-
-            return cls
 
         return decorator
 

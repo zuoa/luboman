@@ -4,6 +4,7 @@ import functools
 import logging.config
 import re
 import luboman.web
+from luboman.config import config
 from luboman.core.daemon import Daemon
 from luboman.core.decorators import PluginTool
 from luboman.core.live import start_room
@@ -68,7 +69,9 @@ def do_exit(lp):
 if __name__ == '__main__':
     logging.config.dictConfig(LOG_CONF)
     DB.init()
+    config.load_from_db()
     PluginTool(plugins)
+
     # arg_parser()
     loop = asyncio.get_event_loop()
     future = asyncio.gather(start_all_record(), luboman.web.serve())

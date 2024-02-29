@@ -14,7 +14,7 @@ import requests
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
-    EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD_BILI, EVENT_UPLOAD_BILI_COMPLETED, EVENT_UPLOAD_STORAGE, EVENT_UPLOAD_STORAGE_COMPLETED
+    EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD_BILI, EVENT_UPLOAD_BILI_COMPLETED, EVENT_UPLOAD, EVENT_UPLOAD_COMPLETED
 from luboman.core.utils import random_user_agent, get_valid_filename
 from luboman.core.upload import upload
 from luboman.database.db import DB
@@ -268,7 +268,7 @@ class LiveBase(object):
     def create_event_manager(self):
         event_manager = EventManager()
 
-        @event_manager.register(EVENT_CHECK_STATUS)
+        @event_manager.register(EVENT_CHECK_STATUS, "NORMAL")
         def check_status(event):
             logger.info(self.room_name + ": Checking status")
             last_living = self.is_living
@@ -301,13 +301,14 @@ class LiveBase(object):
             logger.info(file_list)
 
             self.send_event(Event(EVENT_UPLOAD_BILI, (file_list,)))
+            self.send_event(Event(EVENT_UPLOAD, (file_list, 'bdpan')))
 
         @event_manager.register(EVENT_NOTIFY)
         def process_notify(title, content):
             from luboman.notifier import notify_message
             notify_message(title, content)
 
-        @event_manager.register(EVENT_UPLOAD_BILI)
+        @event_manager.register(EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
             upload_info = {}
             upload('biliweb', file_list, **upload_info)
@@ -316,16 +317,14 @@ class LiveBase(object):
         def process_upload_bili_completed(file_list):
             pass
 
-        @event_manager.register(EVENT_UPLOAD_STORAGE)
-        def process_upload(file_list):
-            platform = 'alipan'
-
+        @event_manager.register(EVENT_UPLOAD, "SLOW")
+        def process_upload(file_list, platform='alipan'):
             # TODO: 加载房间配置
 
             upload(platform, file_list)
 
-        @event_manager.register(EVENT_UPLOAD_STORAGE_COMPLETED)
-        def process_upload_completed(file_list):
+        @event_manager.register(EVENT_UPLOAD_COMPLETED)
+        def process_upload_completed(file_list, platform='alipan'):
             pass
 
         event_manager.start()

@@ -11,16 +11,12 @@ RUN \
 
 FROM node:21-alpine as webui
 COPY webui ./webui
-RUN ls -a && ls -a webui
 
-
- RUN \
+RUN \
   set -eux && \
   cd webui &&\
-  npm install;  \
-  npm run build;
-
-RUN ls -a && ls -a webui
+  npm install &&  \
+  npm run build
 
 
 

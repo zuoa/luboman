@@ -1,4 +1,5 @@
 import logging
+import os
 import platform
 import sys
 
@@ -29,7 +30,7 @@ LOG_CONF = {
             'when': 'W0',
             'interval': 1,
             'backupCount': 1,
-            'filename': '/data/logs/luboman.log',
+            'filename': '/data/logs/luboman.log' if os.path.exists('/.dockerenv') else 'data/logs/luboman.log',
             'formatter': 'verbose'
         }
     },

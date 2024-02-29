@@ -235,7 +235,8 @@ class LiveBase(object):
         return True
 
     def get_filepath(self):
-        file_dir = f'/data/video/{self.room_platform}/{self.room_id}-{self.room_name}'
+        video_dir = '/data/video' if os.path.exists('/.dockerenv') else 'data/video'
+        file_dir = f'{video_dir}/{self.room_platform}/{self.room_id}-{self.room_name}'
         if not os.path.exists(file_dir):
             os.makedirs(file_dir)
 

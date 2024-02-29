@@ -13,7 +13,7 @@ logger = logging.getLogger('luboman')
 
 def get_path(*other):
     """获取数据文件绝对路径"""
-    dir_path = "/data/db"
+    dir_path = "/data/db" if os.path.exists('/.dockerenv') else 'data/db'
     # 若目录不存在则创建
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)

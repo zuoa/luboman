@@ -37,6 +37,11 @@ async def root_handler(request):
     return web.HTTPFound('/index.html')
 
 
+@routes.get('/ping')
+async def hello(request):
+    return web.Response(text="pong")
+
+
 @routes.post("/v1/room/listAll")
 async def list_room(request):
     res = []
@@ -92,8 +97,6 @@ app.add_routes(res)
 
 
 async def serve(host='127.0.0.1', port=5001):
-    logger.info(f"Server started at http://{host}:{port}")
-
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
             allow_credentials=True,
@@ -110,3 +113,5 @@ async def serve(host='127.0.0.1', port=5001):
     await runner.setup()
     site = web.TCPSite(runner, host=host, port=port)
     await site.start()
+
+    logger.info(f"HttpServer started at http://{host}:{port}")

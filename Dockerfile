@@ -10,11 +10,14 @@ RUN \
 
 
 FROM node:20 as webui
+
 COPY webui ./webui
 
 RUN \
   set -eux && \
   cd webui &&\
+  pwd && \
+  ls -a && \
   npm install &&  \
   npm run build && \
   ls -a dist/

@@ -33,7 +33,7 @@ RUN mkdir bin && ls -a
 
 COPY --from=tools /opt/aliyunpan bin/aliyunpan
 COPY --from=tools /opt/ffmpeg bin/ffmpeg
-COPY --from=webui /webui/dist/ /app/webui/public/
+COPY --from=webui /webui/dist/ /app/luboman/web/public/
 
 RUN pwd && ls -a
 

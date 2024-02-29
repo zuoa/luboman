@@ -3,7 +3,7 @@
 // DO NOT CHANGE IT MANUALLY!
 import './core/polyfill';
 import 'antd/dist/reset.css';
-import { renderClient } from '/Users/yujian/Code/web/ajrec-web/node_modules/@umijs/renderer-react';
+import { renderClient } from '/Users/yujian/Code/py/luboman/webui/node_modules/@umijs/renderer-react';
 import { getRoutes } from './core/route';
 import { createPluginManager } from './core/plugin';
 import { createHistory } from './core/history';

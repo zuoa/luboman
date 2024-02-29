@@ -27,7 +27,7 @@
         "src/.umi/*"
       ],
       "@umijs/max": [
-        "/Users/yujian/Code/web/ajrec-web/node_modules/umi"
+        "/Users/yujian/Code/py/luboman/webui/node_modules/umi"
       ],
       "@umijs/max/typings": [
         "src/.umi/typings"

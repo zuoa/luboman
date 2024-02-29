@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import pathlib
+from importlib.resources import files
 
 import aiohttp_cors
 from aiohttp import web
@@ -60,7 +62,22 @@ app = web.Application()
 async def serve(host='localhost', port=5001):
     logger.info(f"Server started at http://{host}:{port}")
     app.add_routes(routes)
-    app.add_routes([web.static('/', "/app/webui/public/", show_index=False)])
+    res = []
+    for dir in pathlib.Path(files('luboman.web').joinpath('public')).glob('*.html'):
+        file_name = dir.relative_to(files('luboman.web').joinpath('public'))
+
+        def _copy(file_name):
+            async def static_view(request):
+                return web.FileResponse(files('luboman.web').joinpath('public/' + str(file_name)))
+
+            return static_view
+
+        res.append(web.get('/' + str(file_name.with_suffix('')), _copy(file_name)))
+        # res.append(web.static('/'+fdir.replace('\\', '/'), files('biliup.web').joinpath('public/'+fdir)))
+
+    res.append(web.static('/', files('luboman.web').joinpath('public')))
+    app.add_routes(res)
+
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
             allow_credentials=True,

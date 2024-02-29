@@ -17,7 +17,7 @@ class Alipan(Uploader):
 
     def upload(self):
 
-        alipan_path = config.get('ffmpeg_path', '/usr/local/bin/aliyunpan')
+        alipan_path = config.get('ffmpeg_path', '/app/bin/aliyunpan')
 
         for file_info in self.file_list:
             drive_dir = os.path.dirname(file_info['video'])

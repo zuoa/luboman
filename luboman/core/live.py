@@ -199,7 +199,7 @@ class LiveBase(object):
                     f.flush()
 
     def ffmpeg_download(self, filepath):
-        ffmpeg_path = config.get('ffmpeg_path', '/Users/yujian/Downloads/ffmpeg')
+        ffmpeg_path = config.get('ffmpeg_path', '/app/bin/ffmpeg')
 
         default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout',
                               '20000000']
@@ -270,9 +270,10 @@ class LiveBase(object):
 
         @event_manager.register(EVENT_CHECK_STATUS)
         def check_status(event):
-            logger.info(self.room_name + "Checking status")
+            logger.info(self.room_name + ": Checking status")
             last_living = self.is_living
             self.is_living = self.check_live(is_check_status=True)
+            logger.info(self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
             if not last_living and self.is_living:
                 self.send_event(Event(EVENT_NOTIFY, (f'开播通知:{self.room_name}',
                                                      f'### {self.room_name}[{self.room_id}]开播了\n\n{self.room_title}\n\n{self.room_url}')))

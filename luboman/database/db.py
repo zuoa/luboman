@@ -141,21 +141,13 @@ class DB:
 
     @classmethod
     def update_live_room_operation_data(cls, data):
-        row_id = data.pop("room_db_row_id")
-        return LiveRoom.update(
-            room_platform=data["room_platform"],
-            room_id=data["room_id"],
-            room_title=data["room_title"],
-            room_owner_id=data["room_owner_id"],
-            room_owner=data["room_owner"],
-            room_owner_avatar=data["room_owner_avatar"],
-            room_owner_title=data["room_owner_title"],
-            room_cover_url=data["room_cover_url"],
-            room_cover_frame_url=data["room_cover_frame_url"],
-            gmt_updated=datetime.now(),
-            live_state=data["live_state"],
-            status=data["status"],
-        ).where(LiveRoom.id == row_id).execute()
+        update_columns = ["room_platform", "room_id", "room_title", "room_owner_id", "room_owner", "room_owner_avatar",
+                          "room_owner_title", "room_cover_url", "room_cover_frame_url", "live_state", "status"]
+        update_data = {
+            key: value for key, value in data.items() if key in update_columns
+        }
+        row_id = data["room_db_row_id"]
+        return LiveRoom.update(**update_data).where(LiveRoom.id == row_id).execute()
 
     def backup(self):
         """备份数据库"""

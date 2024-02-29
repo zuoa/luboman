@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import pathlib
 from importlib.resources import files
 
@@ -111,7 +112,11 @@ async def serve(host='127.0.0.1', port=5001):
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host=host, port=port)
+    site = None
+    if os.path.exists('/.dockerenv'):
+        site = web.TCPSite(runner, port=port)
+    else:
+        site = web.TCPSite(runner, host=host, port=port)
     await site.start()
 
     logger.info(f"HttpServer started at http://{host}:{port}")

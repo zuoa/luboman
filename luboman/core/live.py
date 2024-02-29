@@ -304,8 +304,8 @@ class LiveBase(object):
 
         @event_manager.register(EVENT_NOTIFY)
         def process_notify(title, content):
-            from luboman.messager import push
-            push(title, content)
+            from luboman.notifier import notify_message
+            notify_message(title, content)
 
         @event_manager.register(EVENT_UPLOAD_BILI)
         def process_upload_bili(file_list):

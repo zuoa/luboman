@@ -5,5 +5,6 @@ jsengine
 peewee
 Pillow
 rsa
+bypy
 aiohttp
 aiohttp_cors

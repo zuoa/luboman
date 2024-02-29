@@ -7,13 +7,13 @@ from luboman.config import config
 logger = logging.getLogger(__name__)
 
 
-def push(title, content):
-    messager = config.get('messager', 'pushplus')
-    messager_token = config.get('messager_token', '01083154c7854191a14ca66dfbf0592c')
-    if messager == 'pushplus':
-        if messager_token:
+def notify_message(title, content):
+    notify_platform = config.get('notify_platform', 'pushplus')
+    notify_token = config.get('notify_token', '01083154c7854191a14ca66dfbf0592c')
+    if notify_platform == 'pushplus':
+        if notify_token:
             resp = requests.post('http://www.pushplus.plus/send', json={
-                'token': messager_token,
+                'token': notify_token,
                 'template': 'markdown',
                 'title': title,
                 'content': content,

@@ -31,8 +31,8 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 COPY luboman ./luboman
 RUN mkdir bin && ls -a
 
-COPY --from=tools /opt/aliyunpan bin/aliyunpan
-COPY --from=tools /opt/ffmpeg bin/ffmpeg
+COPY --from=tools --chmod=777 /opt/aliyunpan bin/aliyunpan
+COPY --from=tools --chmod=777 /opt/ffmpeg bin/ffmpeg
 COPY --from=webui /webui/dist/ /app/luboman/web/public/
 
 RUN pwd && ls -a

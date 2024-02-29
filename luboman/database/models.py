@@ -133,3 +133,4 @@ class LiveRoom(BaseModel):
     active_begin = DateTimeField(null=True)  # 活跃开始时间
     active_end = DateTimeField(null=True)  # 活跃结束时间
     active_state = IntegerField(default=1)  # 活跃状态, 0为未活跃, 1为活跃
+    message_notify_token = CharField(null=True)  # 通知机器人的token

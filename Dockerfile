@@ -9,7 +9,7 @@ RUN \
   tar -xvf /tmp/ffmpeg.tar.xz -C /opt && mv /opt/ffmpeg-6.1-amd64-static /opt/ffmpeg
 
 
-FROM node:21-alpine as webui
+FROM node:20 as webui
 COPY webui ./webui
 
 RUN \

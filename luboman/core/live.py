@@ -216,15 +216,12 @@ class LiveBase(object):
         #         f'{filename}.{self.suffix}.part']
         command_args += [f'{filepath}.part']
 
-        logger.info(' '.join(command_args))
-
         proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             with proc.stdout as stdout:
                 for line in iter(stdout.readline, b''):  # b'\n'-separated lines
                     decode_line = line.decode(errors='ignore')
-                    print(decode_line, end='', file=sys.stderr)
-                    logger.info(decode_line.rstrip())
+                    logger.debug(decode_line.rstrip())
             retval = proc.wait()
         except KeyboardInterrupt:
             if sys.platform != 'win32':

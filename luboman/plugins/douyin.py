@@ -50,6 +50,8 @@ class Douyin(LiveBase):
         if room_id[0] == "+":
             room_id = room_id[1:]
 
+        self.room_id = room_id
+
         try:
             if "ttwid" not in self.fake_headers['cookie']:
                 self.fake_headers['cookie'] = f'ttwid={DouyinUtils.get_ttwid()};{self.fake_headers["cookie"]}'
@@ -59,10 +61,17 @@ class Douyin(LiveBase):
             room_info = json.loads(page)['data']['data']
             if len(room_info) > 0:
                 room_info = room_info[0]
+                self.room_title = room_info['title']
+                self.live_state = 1 if room_info.get('status') == 2 else 0
+                self.room_cover_url = room_info.get('cover', {}).get('url_list', [''])[0]
+                self.room_cover_frame_url = room_info.get('cover', {}).get('url_list', [''])[0]
+                self.room_owner = room_info.get('owner', {}).get('nickname', '')
+                self.room_owner_id = room_info.get('owner', {}).get('id_str')
+                self.room_owner_avatar = room_info.get('owner', {}).get('avatar_thumb', {}).get('url_list', [''])[0]
             else:
                 room_info = {}
-        except:
-            logger.warning(f"{Douyin.__name__}: {self.room_url}: 获取失败")
+        except Exception as e:
+            logger.warning(f"{Douyin.__name__}: {self.room_url}: 获取失败{e}")
             return False
 
         try:

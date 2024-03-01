@@ -7,7 +7,7 @@ from typing import List
 from peewee import OperationalError
 from playhouse.shortcuts import model_to_dict
 
-from .models import db, LiveRoom, GlobalConfig, get_path
+from .models import db, LiveRoom, GlobalConfig, get_path, BiliAccount, BiliUploadTemplate
 
 logger = logging.getLogger('luboman')
 
@@ -29,6 +29,8 @@ class DB:
         run = not Path(get_path('data.sqlite3')).exists()
         GlobalConfig.create_table_()
         LiveRoom.create_table_()
+        BiliAccount.create_table_()
+        BiliUploadTemplate.create_table_()
         return run
 
     @classmethod

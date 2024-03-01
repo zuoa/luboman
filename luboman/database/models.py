@@ -82,12 +82,23 @@ class GlobalConfig(BaseModel):
     id = AutoField(primary_key=True)  # 自增主键
     key = CharField(unique=True)  # 配置名称
     value = TextField()  # 配置值
+    description = TextField(null=True)  # 配置描述
+
+
+class BiliAccount(BaseModel):
+    """B站账号"""
+    id = AutoField(primary_key=True)  # 自增主键
+    account_name = CharField(null=True)  # 账号名称
+    account_avatar = CharField(null=True)  # 头像地址
+    bili_cookies_filepath = CharField(null=True)  # B站cookie文件路径
+    bili_cookies = TextField(null=True)  # B站cookie
 
 
 class BiliUploadTemplate(BaseModel):
     """投稿模板"""
     id = AutoField(primary_key=True)  # 自增主键
     template_name = CharField()  # 模板名称
+    bili_account_id = IntegerField()  # B站账号ID
     title = CharField(null=True)  # 自定义标题的时间格式, {title}代表当场直播间标题 {streamer}代表在本config里面设置的主播名称 {url}代表设置的该主播的第一条直播间链接
     tid = IntegerField(null=True)  # 投稿分区码,171为电子竞技分区
     copyright = IntegerField(null=True)  # 1为自制
@@ -100,7 +111,6 @@ class BiliUploadTemplate(BaseModel):
     hires = IntegerField(null=True)  # 是否开启Hi-Res, 1为开启
     open_elec = IntegerField(null=True)  # 是否开启充电面板, 1为开启
     no_reprint = IntegerField(null=True)  # 自制声明, 1为未经允许禁止转载
-    user_cookie = CharField(null=True)  # 使用指定的账号上传
     tags = JSONField()  # 标签
     credits = JSONField(null=True)  # 简介@模板
     up_selection_reply = IntegerField(null=True)  # 精选评论

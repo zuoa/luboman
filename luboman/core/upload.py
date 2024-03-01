@@ -126,7 +126,9 @@ class BiliBili:
         response = self.__session.get("https://member.bilibili.com/x/vupre/web/archive/pre")
         return response.json()
 
-    def myinfo(self, cookies):
+    def myinfo(self, cookies=None):
+        if cookies is None:
+            cookies = self.cookies
         requests.utils.add_dict_to_cookiejar(self.__session.cookies, cookies)
         response = self.__session.get('http://api.bilibili.com/x/space/myinfo')
         return response.json()
@@ -155,8 +157,18 @@ class BiliBili:
     def load(self):
         try:
             with open(self.persistence_path) as f:
-                self.cookies = json.load(f)
-                self.access_token = self.cookies['access_token']
+                data = json.load(f)
+                if data.get('platform') == 'BiliTV':
+                    if self.cookies is None:
+                        self.cookies = {}
+                    ## biliup生成文件
+                    for ck_item in data.get('cookie_info', {}).get('cookies', []):
+                        self.cookies[ck_item['name']] = ck_item['value']
+                    self.access_token = data.get('token_info', {}).get('access_token')
+                    self.cookies['access_token'] = self.access_token
+                else:
+                    self.cookies = data
+                    self.access_token = self.cookies['access_token']
         except (JSONDecodeError, KeyError):
             logger.exception('加载cookie出错')
 

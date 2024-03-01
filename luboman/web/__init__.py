@@ -9,8 +9,10 @@ from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
 from luboman.core.live import start_room
+from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
-from luboman.database.models import LiveRoom
+from luboman.database.models import LiveRoom, BiliAccount
+from luboman.plugins.bilibili import Bilibili
 
 logger = logging.getLogger('luboman')
 routes = web.RouteTableDef()
@@ -54,7 +56,6 @@ async def list_room(request):
 
 @routes.post("/v1/room/add")
 async def add_room(request):
-    res = []
     json_data = await request.json()
     try:
         new_room_id = LiveRoom.add(**json_data)
@@ -73,6 +74,46 @@ async def add_room(request):
     try:
         row = DB.update_live_room(data)
         return success(row)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/biliaccount/add")
+async def add_bili_account(request):
+    data = await request.json()
+    if data.get('bili_cookies_filepath'):
+        with BiliBili(Data()) as bili:
+            bili.login(data.get('bili_cookies_filepath'), {})
+            account_info = bili.myinfo()
+            if account_info and account_info.get('code') == 0:
+                data['account_name'] = account_info['data']['name']
+                data['account_avatar'] = account_info['data']['face']
+            cookies = bili.cookies
+            cookies_str = ''
+            for k, v in cookies.items():
+                cookies_str += f"{k}={v};"
+            data['bili_cookies'] = cookies_str
+
+    elif data.get('bili_cookies'):
+        # TODO: login by cookie
+        cookies_str = data.get('bili_cookies')
+        cookies = {}
+        for i in cookies_str.split(';'):
+            k, v = i.split('=')
+            cookies[k] = v
+        with BiliBili(Data()) as bili:
+            bili.login_by_cookie(cookies)
+            account_info = bili.myinfo()
+            if account_info and account_info.get('code') == 0:
+                data['account_name'] = account_info['data']['name']
+                data['account_avatar'] = account_info['data']['face']
+    else:
+        return error(1, "bili_cookie or bili_cookie_filepath is required")
+    try:
+
+        bili_account_id = BiliAccount.add(**data)
+        return success(bili_account_id)
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

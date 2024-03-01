@@ -5,6 +5,7 @@ from urllib.parse import parse_qs
 import requests
 
 from luboman.core.live import LiveBase
+from ..config import config
 from ..core.decorators import PluginTool
 from ..core.utils import match1
 from ..plugins import logger
@@ -84,8 +85,8 @@ class Douyu(LiveBase):
             logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取签名参数异常({e})")
             return False
 
-        params['cdn'] = 'tct-h5'  # config.get('douyucdn', 'tct-h5')
-        params['rate'] = 0  # config.get('douyu_rate', 0)
+        params['cdn'] = config.get('douyucdn', 'tct-h5')
+        params['rate'] = config.get('douyu_rate', 0)
 
         try:
             live_data = self.get_play_info(self.room_id, params)

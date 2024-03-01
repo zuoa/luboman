@@ -61,10 +61,10 @@ class LiveBase(object):
             '-bsf:a', 'aac_adtstoasc',
             '-loglevel', 'error'
         ]
-        if config.get('segment_duration', '01:00:00'):
-            self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '01:00:00')}"]
+        if config.get('segment_file_size'):
+            self.default_ffmpeg_output_args += ['-fs', f"{config.get('segment_file_size')}"]
         else:
-            self.default_ffmpeg_output_args += ['-fs', f"{config.get('segment_file_size', '2621440000')}"]
+            self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '01:00:00')}"]
 
     @property
     def live_context(self):
@@ -102,7 +102,7 @@ class LiveBase(object):
     def start_record(self):
         date = time.localtime()
         end_time = None
-        delay = 0  # int(config.get('delay', 0))
+        delay = int(config.get('live_offline_judge_delay', 0))
         # 重试次数
         retry_count = 0
         # delay 重试次数

@@ -20,7 +20,7 @@ class Bilibili(LiveBase):
     def check_live(self, is_check_status=False):
 
         official_api = "https://api.live.bilibili.com"
-        self.room_id = room_id = match1(self.room_url, r'/(\d+)')
+        room_id = match1(self.room_url, r'/(\d+)')
 
         qualityNumber = config.get('bili_qn', 10000)
 
@@ -43,14 +43,19 @@ class Bilibili(LiveBase):
                 logger.debug(f"Bililive-{room_id}: 直播间未开播")
                 return False
 
-            self.live_state = 1 if room_info['data']['room_info']['live_status'] == 1 else 0
-            self.room_cover_url = room_info['data']['room_info']['cover']
-            self.room_cover_frame_url = room_info['data']['room_info']['keyframe']
-            self.room_owner = room_info['data']['anchor_info']['base_info']['uname']
-            self.room_owner_id = room_info['data']['room_info']['uid']
-            self.room_owner_avatar = room_info['data']['anchor_info']['base_info']['face']
-            self.room_owner_title = room_info['data']['anchor_info']['base_info']['official_info']['title']
-            self.room_title = room_info['data']['room_info']['title']
+            room_info_simple = room_info.get('data', {}).get('room_info', {})
+            new_room_data = {
+                'room_id': room_id,
+                'room_title': room_info_simple.get('title', ''),
+                'room_cover_url': room_info_simple.get('cover', ''),
+                'room_cover_frame_url': room_info_simple.get('keyframe', ''),
+                'room_owner': room_info_simple.get('uname', ''),
+                'room_owner_id': room_info_simple.get('uid', ''),
+                'room_owner_avatar': room_info['data']['anchor_info']['base_info']['face'],
+                'room_owner_title': room_info['data']['anchor_info']['base_info']['official_info']['title'],
+                'live_state': 1 if room_info_simple.get('live_status', 0) == 0 else 0,
+            }
+            self.room_data.update(new_room_data)
 
             if is_check_status:
                 return True

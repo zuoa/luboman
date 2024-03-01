@@ -13,8 +13,7 @@ import requests
 
 from luboman.config import config
 from luboman.core.decorators import PluginTool
-from luboman.core.event import EventManager, Event, EVENT_CHECK_STATUS, EVENT_PRE_RECORD, EVENT_RECORD, \
-    EVENT_RECORD_COMPLETED, EVENT_NOTIFY, EVENT_UPLOAD_BILI, EVENT_UPLOAD_BILI_COMPLETED, EVENT_UPLOAD, EVENT_UPLOAD_COMPLETED
+from luboman.core.event import EventManager, Event, EventType
 from luboman.core.utils import random_user_agent, get_valid_filename
 from luboman.core.upload import upload
 from luboman.database.db import DB
@@ -27,32 +26,16 @@ class LiveBase(object):
 
         self.room_name = room_name
         self.room_url = room_url
-        self.room_db_row_id = None
         self.room_platform = None
-        self.room_id = None
-        self.room_title = None
-        self.room_owner_id = None
-        self.room_owner = None
-        self.room_owner_avatar = None
-        self.room_owner_title = None
-        self.room_cover_url = None
-        self.room_cover_frame_url = None
+        self.room_data = None
+
         self.raw_stream_url = None
         self.is_living = False
-        self.live_state = 0
-
         self.is_recording = False
-        self.fake_headers = {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'accept-encoding': 'gzip, deflate',
-            'accept-language': 'zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3',
-            'user-agent': random_user_agent(),
-        }
 
         self.custom_filename = ""
 
-        # 暂时只支持flv
-        self.suffix = suffix
+        self.suffix = suffix.lower()
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
 
@@ -66,28 +49,38 @@ class LiveBase(object):
         else:
             self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '01:00:00')}"]
 
+        self.fake_headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'accept-encoding': 'gzip, deflate',
+            'accept-language': 'zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3',
+            'user-agent': random_user_agent(),
+        }
+
     @property
     def live_context(self):
+        if not self.room_data:
+            return {}
+
         return {
-            "room_db_row_id": self.room_db_row_id,
-            "room_name": self.room_name,
-            "room_url": self.room_url,
-            "room_platform": self.room_platform,
-            "room_id": self.room_id,
-            "room_title": self.room_title,
-            "room_owner_id": self.room_owner_id,
-            "room_owner": self.room_owner,
-            "room_owner_avatar": self.room_owner_avatar,
-            "room_owner_title": self.room_owner_title,
-            "room_cover_url": self.room_cover_url,
-            "room_cover_frame_url": self.room_cover_frame_url,
+            "room_db_row_id": self.room_data.get("id"),
+            "room_name": self.room_data.get("room_name"),
+            "room_url": self.room_data.get("room_url"),
+            "room_platform": self.room_data.get("room_platform"),
+            "room_id": self.room_data.get("room_id"),
+            "room_title": self.room_data.get("room_title"),
+            "room_owner_id": self.room_data.get("room_owner_id"),
+            "room_owner": self.room_data.get("room_owner"),
+            "room_owner_avatar": self.room_data.get("room_owner_avatar"),
+            "room_owner_title": self.room_data.get("room_owner_title"),
+            "room_cover_url": self.room_data.get("room_cover_url"),
+            "room_cover_frame_url": self.room_data.get("room_cover_frame_url"),
             "raw_stream_url": self.raw_stream_url,
-            "live_state": self.live_state,
+            "live_state": self.room_data.get("live_state", 0)
         }
 
     async def async_check_status(self):
         while True:
-            self.send_event(Event(EVENT_CHECK_STATUS, (1,)))
+            self.send_event(Event(EventType.EVENT_CHECK_STATUS, (1,)))
             await asyncio.sleep(30)
 
     def start(self):
@@ -173,7 +166,7 @@ class LiveBase(object):
                     end_time = time.localtime()
                     break
 
-        self.send_event(Event(EVENT_RECORD_COMPLETED, (record_file_list,)))
+        self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
 
     def stop(self):
         pass
@@ -233,7 +226,7 @@ class LiveBase(object):
 
     def get_filepath(self):
         video_dir = '/data/video' if os.path.exists('/.dockerenv') else 'data/video'
-        file_dir = f'{video_dir}/{self.room_platform}/{self.room_id}-{self.room_name}'
+        file_dir = f'{video_dir}/{self.room_platform}/{self.room_data.get("room_id")}-{self.room_name}'
         if not os.path.exists(file_dir):
             os.makedirs(file_dir)
 
@@ -265,30 +258,37 @@ class LiveBase(object):
     def create_event_manager(self):
         event_manager = EventManager()
 
-        @event_manager.register(EVENT_CHECK_STATUS, "NORMAL")
+        @event_manager.register(EventType.EVENT_CHECK_STATUS, "NORMAL")
         def check_status(event):
-            logger.info(self.room_name + ": Checking status")
+            logger.debug(self.room_name + ": Checking status")
             last_living = self.is_living
             self.is_living = self.check_live(is_check_status=True)
-            logger.info(self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
+            if last_living != self.is_living:
+                logger.info(self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
+            self.room_data['live_state'] = 1 if self.is_living else 0
+
             if not last_living and self.is_living:
-                self.send_event(Event(EVENT_NOTIFY, (f'开播通知:{self.room_name}',
-                                                     f'### {self.room_name}[{self.room_id}]开播了\n\n{self.room_title}\n\n{self.room_url}')))
+                self.send_event(Event(EventType.EVENT_NOTIFY, (f'开播通知:{self.room_name}',
+                                                               f'### {self.room_name}[{self.room_data.get("room_id")}]开播了\n\n{self.room_data.get("room_title")}\n\n{self.room_url}')))
 
             if self.is_living and not self.is_recording:
-                self.send_event(Event(EVENT_PRE_RECORD))
+                self.send_event(Event(EventType.EVENT_PRE_RECORD))
 
             DB.update_live_room_operation_data(self.live_context)
 
-        @event_manager.register(EVENT_PRE_RECORD)
-        def process_pre_record():
-            self.send_event(Event(EVENT_RECORD))
+        @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
+        def refresh_room_info(room_info):
+            self.live_context.update(room_info)
 
-        @event_manager.register(EVENT_RECORD)
+        @event_manager.register(EventType.EVENT_PRE_RECORD)
+        def process_pre_record():
+            self.send_event(Event(EventType.EVENT_RECORD))
+
+        @event_manager.register(EventType.EVENT_RECORD)
         def process_record():
             self.is_recording = True
 
-        @event_manager.register(EVENT_RECORD_COMPLETED)
+        @event_manager.register(EventType.EVENT_RECORD_COMPLETED)
         def process_record_completed(file_list):
 
             # 未开播状态
@@ -297,30 +297,30 @@ class LiveBase(object):
 
             logger.info(file_list)
 
-            self.send_event(Event(EVENT_UPLOAD_BILI, (file_list,)))
-            self.send_event(Event(EVENT_UPLOAD, (file_list, 'bdpan')))
+            self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
+            self.send_event(Event(EventType.EVENT_UPLOAD, (file_list, 'bdpan')))
 
-        @event_manager.register(EVENT_NOTIFY)
+        @event_manager.register(EventType.EVENT_NOTIFY)
         def process_notify(title, content):
             from luboman.notifier import notify_message
             notify_message(title, content)
 
-        @event_manager.register(EVENT_UPLOAD_BILI, "SLOW")
+        @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
             upload_info = {}
             upload('biliweb', file_list, **upload_info)
 
-        @event_manager.register(EVENT_UPLOAD_BILI_COMPLETED)
+        @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)
         def process_upload_bili_completed(file_list):
             pass
 
-        @event_manager.register(EVENT_UPLOAD, "SLOW")
+        @event_manager.register(EventType.EVENT_UPLOAD, "SLOW")
         def process_upload(file_list, platform='alipan'):
             # TODO: 加载房间配置
 
             upload(platform, file_list)
 
-        @event_manager.register(EVENT_UPLOAD_COMPLETED)
+        @event_manager.register(EventType.EVENT_UPLOAD_COMPLETED)
         def process_upload_completed(file_list, platform='alipan'):
             pass
 

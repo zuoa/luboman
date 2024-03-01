@@ -3,6 +3,9 @@ import asyncio
 import functools
 import logging.config
 import re
+
+from playhouse.shortcuts import model_to_dict
+
 import luboman.web
 from luboman.config import config
 from luboman.core.daemon import Daemon
@@ -52,8 +55,7 @@ def arg_parser():
 
 async def start_all_record():
     for room in LiveRoom.select():
-        start_room(room.room_name, room.room_url, **{"room_db_row_id": room.id})
-    print("start_all_record")
+        start_room(room.room_name, room.room_url, **{"room_data": model_to_dict(room)})
     # Douyu("谢彬DD", "https://www.douyu.com/110").start()
     # Douyu("Azheng", "https://www.douyu.com/73965").start()
 

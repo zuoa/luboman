@@ -47,15 +47,19 @@ class Huya(LiveBase):
                 # 无流 当做没开播
                 logger.debug(f"{Huya.__name__}: {self.room_url}: 未开播")
                 return False
-            self.room_id = live_info['gameLiveInfo']['profileRoom']
-            self.room_title = live_info['gameLiveInfo']['introduction']
-            self.live_state = 1
-            self.room_cover_url = live_info['gameLiveInfo']['screenshot']
-            self.room_cover_frame_url = live_info['gameLiveInfo']['screenshot']
-            self.room_owner = live_info['gameLiveInfo']['nick']
-            self.room_owner_id = live_info['gameLiveInfo']['uid']
-            self.room_owner_avatar = live_info['gameLiveInfo']['avatar180']
-            self.room_owner_title = live_info['gameLiveInfo']['recommendTagName']
+
+            new_room_data = {
+                'room_id': room_id,
+                'room_title': live_info.get('gameLiveInfo', {}).get('introduction', ''),
+                'room_cover_url': live_info.get('gameLiveInfo', {}).get('screenshot', ''),
+                'room_cover_frame_url': live_info.get('gameLiveInfo', {}).get('screenshot', ''),
+                'room_owner': live_info.get('gameLiveInfo', {}).get('nick', ''),
+                'room_owner_id': live_info.get('gameLiveInfo', {}).get('uid', ''),
+                'room_owner_avatar': live_info.get('gameLiveInfo', {}).get('avatar180', ''),
+                'room_owner_title': live_info.get('gameLiveInfo', {}).get('recommendTagName', ''),
+                'live_state': 1
+            }
+            self.room_data.update(new_room_data)
 
             if is_check_status:
                 return True

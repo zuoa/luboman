@@ -61,13 +61,18 @@ class Douyin(LiveBase):
             room_info = json.loads(page)['data']['data']
             if len(room_info) > 0:
                 room_info = room_info[0]
-                self.room_title = room_info['title']
-                self.live_state = 1 if room_info.get('status') == 2 else 0
-                self.room_cover_url = room_info.get('cover', {}).get('url_list', [''])[0]
-                self.room_cover_frame_url = room_info.get('cover', {}).get('url_list', [''])[0]
-                self.room_owner = room_info.get('owner', {}).get('nickname', '')
-                self.room_owner_id = room_info.get('owner', {}).get('id_str')
-                self.room_owner_avatar = room_info.get('owner', {}).get('avatar_thumb', {}).get('url_list', [''])[0]
+                new_room_data = {
+                    'room_id': room_id,
+                    'room_title': room_info.get('title', ''),
+                    'room_cover_url': room_info.get('cover', {}).get('url_list', [''])[0],
+                    'room_cover_frame_url': room_info.get('cover', {}).get('url_list', [''])[0],
+                    'room_owner': room_info.get('owner', {}).get('nickname', ''),
+                    'room_owner_id': room_info.get('owner', {}).get('id_str', ''),
+                    'room_owner_avatar': room_info.get('owner', {}).get('avatar_thumb', {}).get('url_list', [''])[0],
+                    'live_state': 1
+                }
+                self.room_data.update(new_room_data)
+
             else:
                 room_info = {}
         except Exception as e:
@@ -115,7 +120,6 @@ class Douyin(LiveBase):
                     quality = optional_quality_items[optional_quality_index - 1]
 
             self.raw_stream_url = stream_data[quality]['main']['flv']
-            self.room_title = room_info['title']
         except:
             logger.warning(f"{Douyin.__name__}: {self.room_url}: 解析错误")
             return False

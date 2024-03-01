@@ -25,11 +25,11 @@ class Douyu(LiveBase):
 
         try:
             if 'm.douyu.com' in self.room_url:
-                self.room_id = self.room_url.split('m.douyu.com/')[1].split('/')[0].split('?')[0]
+                room_id = self.room_url.split('m.douyu.com/')[1].split('/')[0].split('?')[0]
             else:
                 html = requests.get(self.room_url, headers=self.fake_headers, timeout=5).text
-                self.room_id = match1(html, r'\$ROOM\.room_id\s*=\s*(\d+)', r'apm_room_id\s*=\s*(\d+)')[0]
-            if not self.room_id:
+                room_id = match1(html, r'\$ROOM\.room_id\s*=\s*(\d+)', r'apm_room_id\s*=\s*(\d+)')[0]
+            if not room_id:
                 logger.warning(f"{Douyu.__name__}: {self.room_url}: 直播间不存在或已关闭")
                 return False
         except:
@@ -37,20 +37,25 @@ class Douyu(LiveBase):
             return False
 
         try:
-            room_info = requests.get(f"https://www.douyu.com/betard/{self.room_id}", headers=self.fake_headers, timeout=5).json()['room']
+            room_info = requests.get(f"https://www.douyu.com/betard/{room_id}", headers=self.fake_headers, timeout=5).json()['room']
             if room_info:
-                self.room_title = room_info['room_name']
-                self.live_state = 1 if room_info['show_status'] == 1 else 0
-                self.room_cover_url = room_info['room_pic']
-                self.room_cover_frame_url = room_info['room_pic']
-                self.room_owner = room_info['owner_name']
-                self.room_owner_id = room_info['owner_uid']
-                self.room_owner_avatar = room_info['owner_avatar']
-                self.room_owner_title = room_info.get('officialAnchor', {}).get('od', '')
+                new_room_data = {
+                    'room_id': room_id,
+                    'room_title': room_info.get('room_name', ''),
+                    'room_cover_url': room_info.get('room_pic', ''),
+                    'room_cover_frame_url': room_info.get('room_pic', ''),
+                    'room_owner': room_info.get('owner_name', ''),
+                    'room_owner_id': room_info.get('owner_uid', ''),
+                    'room_owner_avatar': room_info.get('owner_avatar', ''),
+                    'room_owner_title': room_info.get('officialAnchor', {}).get('od', ''),
+                    'live_state': 1 if room_info.get('show_status', 0) == 1 else 0
+                }
+                self.room_data.update(new_room_data)
 
             if room_info['show_status'] != 1:
                 logger.debug(f"{Douyu.__name__}: {self.room_url}: 未开播")
                 return False
+
             if room_info['videoLoop'] != 0:
                 logger.debug(f"{Douyu.__name__}: {self.room_url}: 正在放录播")
                 return False
@@ -64,18 +69,18 @@ class Douyu(LiveBase):
         try:
             import jsengine
             ctx = jsengine.jsengine()
-            js_enc = requests.get(f'https://www.douyu.com/swf_api/homeH5Enc?rids={self.room_id}',
+            js_enc = requests.get(f'https://www.douyu.com/swf_api/homeH5Enc?rids={room_id}',
                                   headers=self.fake_headers,
-                                  timeout=5).json()['data'][f'room{self.room_id}']
+                                  timeout=5).json()['data'][f'room{room_id}']
             js_enc = js_enc.replace('return eval', 'return [strc, vdwdae325w_64we];')
 
             sign_fun, sign_v = ctx.eval(f'{js_enc};ub98484234();')
 
             tt = str(int(time.time()))
             did = hashlib.md5(tt.encode('utf-8')).hexdigest()
-            rb = hashlib.md5(f"{self.room_id}{did}{tt}{sign_v}".encode('utf-8')).hexdigest()
+            rb = hashlib.md5(f"{room_id}{did}{tt}{sign_v}".encode('utf-8')).hexdigest()
             sign_fun = sign_fun.rstrip(';').replace("CryptoJS.MD5(cb).toString()", f'"{rb}"')
-            sign_fun += f'("{self.room_id}","{did}","{tt}");'
+            sign_fun += f'("{room_id}","{did}","{tt}");'
 
             params = parse_qs(ctx.eval(sign_fun))
         except TypeError:
@@ -89,7 +94,7 @@ class Douyu(LiveBase):
         params['rate'] = config.get('douyu_rate', 0)
 
         try:
-            live_data = self.get_play_info(self.room_id, params)
+            live_data = self.get_play_info(room_id, params)
             if type(live_data) is not dict:
                 return False
         except:

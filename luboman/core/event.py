@@ -8,16 +8,6 @@ from typing import Generator
 
 logger = logging.getLogger('luboman')
 
-EVENT_CHECK_STATUS = "check-status"
-EVENT_PRE_RECORD = "pre-record"
-EVENT_RECORD = "record"
-EVENT_RECORD_COMPLETED = "record-completed"
-EVENT_NOTIFY = "notify-event"
-EVENT_UPLOAD_BILI = "upload-bili"
-EVENT_UPLOAD_BILI_COMPLETED = "upload-bili-completed"
-EVENT_UPLOAD = "upload"
-EVENT_UPLOAD_COMPLETED = "upload-completed"
-
 
 class EventManager(Thread):
     def __init__(self):
@@ -108,6 +98,19 @@ class EventManager(Thread):
             return wrapper
 
         return decorator
+
+
+class EventType:
+    EVENT_CHECK_STATUS = "check-status"
+    EVENT_REFRESH_ROOM_INFO = "refresh-room-info"
+    EVENT_PRE_RECORD = "pre-record"
+    EVENT_RECORD = "record"
+    EVENT_RECORD_COMPLETED = "record-completed"
+    EVENT_NOTIFY = "notify-event"
+    EVENT_UPLOAD_BILI = "upload-bili"
+    EVENT_UPLOAD_BILI_COMPLETED = "upload-bili-completed"
+    EVENT_UPLOAD = "upload"
+    EVENT_UPLOAD_COMPLETED = "upload-completed"
 
 
 @dataclass

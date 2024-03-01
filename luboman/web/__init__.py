@@ -75,7 +75,10 @@ async def add_room(request):
     json_data = await request.json()
     try:
         new_room_id = LiveRoom.add(**json_data)
-        start_room(json_data.get('room_name'), json_data.get('room_url'), **{'room_db_row_id': new_room_id})
+
+        room = LiveRoom.get_by_id(new_room_id)
+        if room:
+            start_room(json_data.get('room_name'), json_data.get('room_url'), **{"room_data": model_to_dict(room)})
         return success(new_room_id)
     except Exception as e:
         logger.error(e)

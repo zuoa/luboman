@@ -12,7 +12,7 @@ from . import logger
 from ..core.decorators import PluginTool
 
 
-@PluginTool.liv(regexp=r'(?:https?://)?(?:(?:www|m|live)\.)?douyin\.com')
+@PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m|live)\.)?douyin\.com')
 class Douyin(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):

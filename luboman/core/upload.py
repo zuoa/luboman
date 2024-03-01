@@ -724,25 +724,16 @@ class Data:
         self.videos.append(video)
 
 
-def upload(platform, file_list, **kwargs):
+def upload(uploader_platform, file_list, **kwargs):
     """
     上传入口
-    :param platform:
-    :param file_list:
-    :param kwargs: 其他参数
-    :return:
     """
     try:
         # context = {**config, **config['streamers'][index]}
         context = {}
-        cls = PluginTool.upload_plugins.get(platform)
+        cls = PluginTool.upload_plugins.get(uploader_platform)
         if cls is None:
-            return logger.error(f"No such uploader: {platform}")
-        # data, context = fmt_title_and_desc(data)
-        # data['dolby'] = config.get('dolby', 0)
-        # data['hires'] = config.get('hires', 0)
-        # data['no_reprint'] = config.get('no_reprint', 0)
-        # data['open_elec'] = config.get('open_elec', 0)
+            return logger.error(f"No such uploader: {uploader_platform}")
         sig = inspect.signature(cls)
         for k in sig.parameters:
             v = context.get(k)

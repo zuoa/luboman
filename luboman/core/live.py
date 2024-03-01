@@ -304,7 +304,9 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
-            upload_info = {}
+            upload_info = {
+                "room_data": self.room_data,
+            }
             upload('biliweb', file_list, **upload_info)
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)

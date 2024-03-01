@@ -1,4 +1,5 @@
 import re
+import time
 
 
 def match1(text, *patterns):
@@ -37,6 +38,15 @@ def get_valid_filename(name):
     if s in {"", ".", ".."}:
         raise RuntimeError("Could not derive file name from '%s'" % name)
     return s
+
+
+def format_live_prop_text(formatted_str: str, room_data):
+    prop_text = (formatted_str.format(**room_data).encode('unicode-escape').decode()).encode().decode("unicode-escape")
+    prop_text = get_valid_filename(prop_text)
+
+    prop_text = time.strftime(prop_text.encode("unicode-escape").decode()).encode().decode("unicode-escape")
+
+    return prop_text
 
 
 class NamedLock:

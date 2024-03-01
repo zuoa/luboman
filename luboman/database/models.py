@@ -101,8 +101,8 @@ class BiliUploadTemplate(BaseModel):
     template_name = CharField()  # 模板名称
     bili_account_id = IntegerField()  # B站账号ID
     title = CharField(null=True)  # 自定义标题的时间格式, {title}代表当场直播间标题 {streamer}代表在本config里面设置的主播名称 {url}代表设置的该主播的第一条直播间链接
-    tid = IntegerField(null=True)  # 投稿分区码,171为电子竞技分区
-    copyright = IntegerField(null=True)  # 1为自制
+    tid = IntegerField(null=True, default=171)  # 投稿分区码,171为电子竞技分区
+    copyright = IntegerField(null=True, default=1)  # 1为自制
     cover_path = CharField(null=True)  # 封面路径
     # 支持strftime, {title}, {streamer}, {url}占位符。
     description = TextField(null=True)  # 视频简介
@@ -117,6 +117,8 @@ class BiliUploadTemplate(BaseModel):
     up_selection_reply = IntegerField(null=True)  # 精选评论
     up_close_reply = IntegerField(null=True)  # 关闭评论
     up_close_danmu = IntegerField(null=True)  # 精选评论
+    threads = IntegerField(null=True, default=3)  # 线程数
+    lines = CharField(null=True, default='AUTO')  # 线路
 
 
 class LiveRoom(BaseModel):

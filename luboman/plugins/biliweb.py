@@ -19,9 +19,17 @@ class BiliWebUploader(Uploader):
 
     def upload(self):
         bili_upload_template_id = self.room_data.get('bili_upload_template_id')
+        if bili_upload_template_id is None:
+            logger.error(f"bili_upload_template_id is None")
+            return
+
         template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
         if not template_info:
             logger.error(f"bili_upload_template_id: {bili_upload_template_id} not found")
+            return
+
+        if template_info.bili_account_id is None:
+            logger.error(f"bili_account_id is None")
             return
 
         bili_account = BiliAccount.get_by_id(template_info.bili_account_id)

@@ -59,7 +59,7 @@ class LiveBase(object):
         self.ffmpeg_opt_args = []
         self.default_ffmpeg_output_args = [
             '-bsf:a', 'aac_adtstoasc',
-            '-loglevel', 'quiet'
+            # '-loglevel', 'quiet'
         ]
         if config.get('segment_duration', '01:00:00'):
             self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '01:00:00')}"]

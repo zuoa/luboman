@@ -92,6 +92,7 @@ class BiliAccount(BaseModel):
     account_avatar = CharField(null=True)  # 头像地址
     bili_cookies_filepath = CharField(null=True)  # B站cookie文件路径
     bili_cookies = TextField(null=True)  # B站cookie
+    state_active = IntegerField(default=1)  # 状态, 0为未激活, 1为激活
 
 
 class BiliUploadTemplate(BaseModel):

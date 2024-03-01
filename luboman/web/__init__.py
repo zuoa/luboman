@@ -8,6 +8,7 @@ import aiohttp_cors
 from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
+from luboman.config import config
 from luboman.core.live import start_room
 from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
@@ -45,6 +46,21 @@ async def hello(request):
     return web.Response(text="pong")
 
 
+@routes.post('/bili/archive/pre')
+async def pre_archive(request):
+    one_account = BiliAccount.select().first()
+    if one_account is None:
+        return error(1, "no account found")
+    cookies_str = one_account.bili_cookies
+    cookies = {}
+    for i in cookies_str.split(';'):
+        if i:
+            k, v = i.split('=')
+            cookies[k] = v
+
+    return web.json_response(BiliBili(Data()).tid_archive(cookies))
+
+
 @routes.post("/v1/room/listAll")
 async def list_room(request):
     res = []
@@ -79,6 +95,15 @@ async def add_room(request):
         return error(1, str(e))
 
 
+@routes.post("/v1/biliaccount/listAll")
+async def list_room(request):
+    res = []
+    for ls in BiliAccount.select():
+        temp = model_to_dict(ls)
+        res.append(temp)
+    return success(res)
+
+
 @routes.post("/v1/biliaccount/add")
 async def add_bili_account(request):
     data = await request.json()
@@ -92,7 +117,8 @@ async def add_bili_account(request):
             cookies = bili.cookies
             cookies_str = ''
             for k, v in cookies.items():
-                cookies_str += f"{k}={v};"
+                if v is not None:
+                    cookies_str += f"{k}={v};"
             data['bili_cookies'] = cookies_str
 
     elif data.get('bili_cookies'):
@@ -113,6 +139,20 @@ async def add_bili_account(request):
     try:
 
         bili_account_id = BiliAccount.add(**data)
+        return success(bili_account_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/biliaccount/del")
+async def add_bili_account(request):
+    data = await request.json()
+    bili_account_id = data.get('id')
+    try:
+        bili_account = BiliAccount.get_by_id(bili_account_id)
+        bili_account.state_active = 0
+        bili_account.save()
         return success(bili_account_id)
     except Exception as e:
         logger.error(e)

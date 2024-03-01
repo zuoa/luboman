@@ -37,15 +37,10 @@ class LiveBase(object):
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
 
-        self.ffmpeg_opt_args = []
-        self.default_ffmpeg_output_args = [
-            '-bsf:a', 'aac_adtstoasc',
-            '-loglevel', 'error'
-        ]
-        if config.get('segment_file_size'):
-            self.default_ffmpeg_output_args += ['-fs', f"{config.get('segment_file_size')}"]
-        else:
-            self.default_ffmpeg_output_args += ['-to', f"{config.get('segment_duration', '01:00:00')}"]
+        self.default_ffmpeg_options = {
+            '-bsf:a': 'aac_adtstoasc',
+            '-loglevel': 'error'
+        }
 
         self.fake_headers = {
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -53,6 +48,24 @@ class LiveBase(object):
             'accept-language': 'zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3',
             'user-agent': random_user_agent(),
         }
+
+    @property
+    def ffmpeg_opt_args(self):
+        options = self.default_ffmpeg_options.copy()
+        global_options = {}
+        if config.get('segment_file_size'):
+            global_options['-fs'] = f"{config.get('segment_file_size')}"
+        else:
+            global_options['-to'] = f"{config.get('segment_duration', '01:00:00')}"
+        options.update(global_options)
+
+        if self.room_data.get('ffmpeg_options') and isinstance(self.room_data.get('ffmpeg_options'), dict):
+            options.update(self.room_data.get('ffmpeg_options'))
+
+        option_args = []
+        for k, v in options.items():
+            option_args += (str(k), str(v))
+        return option_args
 
     async def async_check_status(self):
         while True:
@@ -176,7 +189,7 @@ class LiveBase(object):
         if '.m3u8' in path:
             default_input_args += ['-max_reload', '1000']
         command_args = [ffmpeg_path, '-y', *default_input_args,
-                        '-i', self.raw_stream_url, *self.default_ffmpeg_output_args, *self.ffmpeg_opt_args,
+                        '-i', self.raw_stream_url, *self.ffmpeg_opt_args,
                         '-c', 'copy', '-f', self.suffix]
         # if config.get('segment_time'):
         #     args += ['-f', 'segment',

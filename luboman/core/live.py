@@ -206,7 +206,7 @@ class LiveBase(object):
         path = parsed_url.path
         if '.m3u8' in path:
             default_input_args += ['-max_reload', '1000']
-        args = [ffmpeg_path, '-y', *default_input_args,
+        args = ['ffmpeg', '-y', *default_input_args,
                 '-i', self.raw_stream_url, *self.default_ffmpeg_output_args, *self.ffmpeg_opt_args,
                 '-c', 'copy', '-f', self.suffix]
         # if config.get('segment_time'):

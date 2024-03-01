@@ -206,20 +206,20 @@ class LiveBase(object):
         path = parsed_url.path
         if '.m3u8' in path:
             default_input_args += ['-max_reload', '1000']
-        args = ['ffmpeg', '-y', *default_input_args,
-                '-i', self.raw_stream_url, *self.default_ffmpeg_output_args, *self.ffmpeg_opt_args,
-                '-c', 'copy', '-f', self.suffix]
+        command_args = ['ffmpeg', '-y', *default_input_args,
+                        '-i', self.raw_stream_url, *self.default_ffmpeg_output_args, *self.ffmpeg_opt_args,
+                        '-c', 'copy', '-f', self.suffix]
         # if config.get('segment_time'):
         #     args += ['-f', 'segment',
         #              f'{filename} part-%03d.{self.suffix}']
         # else:
         #     args += [
         #         f'{filename}.{self.suffix}.part']
-        args += [f'{filepath}.part']
+        command_args += [f'{filepath}.part']
 
-        logger.info(' '.join(args))
+        logger.info(' '.join(command_args))
 
-        proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             with proc.stdout as stdout:
                 for line in iter(stdout.readline, b''):  # b'\n'-separated lines

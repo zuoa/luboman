@@ -15,8 +15,8 @@ RUN  set -eux; \
 COPY luboman ./luboman
 RUN mkdir bin && ls -a
 
-COPY --from=tools --chmod=777 /opt/aliyunpan bin/aliyunpan
-COPY --from=tools --chmod=777 /usr/bin/ffmpeg bin/ffmpeg
+COPY --from=tools --chmod=777 /opt/aliyunpan/aliyunpan /usr/bin/aliyunpan
+COPY --from=tools --chmod=777 /usr/bin/ffmpeg /usr/bin/ffmpeg
 
 RUN pwd && ls -a
 

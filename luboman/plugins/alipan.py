@@ -16,12 +16,9 @@ class Alipan(Uploader):
         super().__init__(file_list)
 
     def upload(self):
-
-        alipan_path = config.get('ffmpeg_path', '/app/bin/aliyunpan/aliyunpan')
-
         for file_info in self.file_list:
             drive_dir = os.path.dirname(file_info['video'])
-            command_args = [alipan_path, 'upload', file_info['video'], drive_dir]
+            command_args = ['aliyunpan', 'upload', file_info['video'], drive_dir]
 
             try:
                 proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

@@ -199,8 +199,6 @@ class LiveBase(object):
                     f.flush()
 
     def ffmpeg_download(self, filepath):
-        ffmpeg_path = config.get('ffmpeg_path', '/app/bin/ffmpeg/ffmpeg')
-
         default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout', '20000000']
         parsed_url = urlparse(self.raw_stream_url)
         path = parsed_url.path

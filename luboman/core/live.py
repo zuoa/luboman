@@ -262,6 +262,7 @@ class LiveBase(object):
         @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
         def refresh_room_info(room_info):
             self.room_data.update(room_info)
+            logger.info(f'Room data updated:{self.room_data}')
 
         @event_manager.register(EventType.EVENT_PRE_RECORD)
         def process_pre_record():

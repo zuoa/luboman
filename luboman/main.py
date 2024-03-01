@@ -55,7 +55,7 @@ def arg_parser():
 
 async def start_all_record():
     for room in LiveRoom.select():
-        start_room(room.room_name, room.room_url, **{"room_data": model_to_dict(room)})
+        start_room(model_to_dict(room), **{})
     # Douyu("谢彬DD", "https://www.douyu.com/110").start()
     # Douyu("Azheng", "https://www.douyu.com/73965").start()
 

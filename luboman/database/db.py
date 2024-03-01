@@ -158,7 +158,7 @@ class DB:
         update_data = {
             key: value for key, value in data.items() if key in update_columns
         }
-        row_id = data["room_db_row_id"]
+        row_id = data["id"]
         return LiveRoom.update(**update_data).where(LiveRoom.id == row_id).execute()
 
     def backup(self):

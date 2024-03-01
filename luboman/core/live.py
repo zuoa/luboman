@@ -33,8 +33,6 @@ class LiveBase(object):
         self.is_living = False
         self.is_recording = False
 
-        self.custom_filename = ""
-
         self.suffix = suffix.lower()
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
@@ -56,28 +54,6 @@ class LiveBase(object):
             'user-agent': random_user_agent(),
         }
 
-    @property
-    def live_context(self):
-        if not self.room_data:
-            return {}
-
-        return {
-            "room_db_row_id": self.room_data.get("id"),
-            "room_name": self.room_data.get("room_name"),
-            "room_url": self.room_data.get("room_url"),
-            "room_platform": self.room_data.get("room_platform"),
-            "room_id": self.room_data.get("room_id"),
-            "room_title": self.room_data.get("room_title"),
-            "room_owner_id": self.room_data.get("room_owner_id"),
-            "room_owner": self.room_data.get("room_owner"),
-            "room_owner_avatar": self.room_data.get("room_owner_avatar"),
-            "room_owner_title": self.room_data.get("room_owner_title"),
-            "room_cover_url": self.room_data.get("room_cover_url"),
-            "room_cover_frame_url": self.room_data.get("room_cover_frame_url"),
-            "raw_stream_url": self.raw_stream_url,
-            "live_state": self.room_data.get("live_state", 0)
-        }
-
     async def async_check_status(self):
         while True:
             self.send_event(Event(EventType.EVENT_CHECK_STATUS, (1,)))
@@ -85,6 +61,7 @@ class LiveBase(object):
 
     def start(self):
         logger.info(f'开始直播间任务：{self.__class__.__name__} - {self.room_name}')
+        logger.info(self.room_data)
         asyncio.create_task(self.async_check_status())
 
     def start_record_thread(self):
@@ -232,8 +209,9 @@ class LiveBase(object):
 
         filename = f'{self.room_name}.%Y_%m_%d_%H_%M_%S'
 
-        if self.custom_filename:  # 判断是否存在自定义录播命名设置
-            filename = (self.custom_filename.format(**self.live_context).encode(
+        if self.room_data.get('custom_filename'):  # 判断是否存在自定义录播命名设置
+            custom_filename = self.room_data.get('custom_filename')
+            filename = (custom_filename.format(**self.room_data).encode(
                 'unicode-escape').decode()).encode().decode("unicode-escape")
         filename = get_valid_filename(filename)
 
@@ -263,22 +241,27 @@ class LiveBase(object):
             logger.debug(self.room_name + ": Checking status")
             last_living = self.is_living
             self.is_living = self.check_live(is_check_status=True)
-            if last_living != self.is_living:
-                logger.info(self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
             self.room_data['live_state'] = 1 if self.is_living else 0
 
-            if not last_living and self.is_living:
-                self.send_event(Event(EventType.EVENT_NOTIFY, (f'开播通知:{self.room_name}',
-                                                               f'### {self.room_name}[{self.room_data.get("room_id")}]开播了\n\n{self.room_data.get("room_title")}\n\n{self.room_url}')))
+            # 状态改变记录
+            if last_living != self.is_living:
+                logger.info(self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
 
+                # 开播通知
+                if self.is_living:
+                    self.send_event(Event(EventType.EVENT_NOTIFY, (f'开播通知:{self.room_name}',
+                                                                   f'### {self.room_name}[{self.room_data.get("room_id")}]开播了\n\n{self.room_data.get("room_title")}\n\n{self.room_url}')))
+
+            # 启动录制
             if self.is_living and not self.is_recording:
                 self.send_event(Event(EventType.EVENT_PRE_RECORD))
 
-            DB.update_live_room_operation_data(self.live_context)
+            # 更新数据库信息
+            DB.update_live_room_operation_data(self.room_data)
 
         @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
         def refresh_room_info(room_info):
-            self.live_context.update(room_info)
+            self.room_data.update(room_info)
 
         @event_manager.register(EventType.EVENT_PRE_RECORD)
         def process_pre_record():
@@ -328,7 +311,13 @@ class LiveBase(object):
         return event_manager
 
 
-def start_room(room_name, url, **kwargs):
+def start_room(room_data, **kwargs):
+    room_name = room_data.get('room_name')
+    url = room_data.get('room_url')
+    room_id = room_data.get('id')
+
+    kwargs.update({'room_data': room_data})
+
     pg = None
 
     for plugin in PluginTool.live_plugins:
@@ -337,6 +326,8 @@ def start_room(room_name, url, **kwargs):
             for k in pg.__dict__:
                 if kwargs.get(k):
                     pg.__dict__[k] = kwargs.get(k)
+
+            PluginTool.running_plugins[str(room_id)] = pg
             break
 
     if pg:

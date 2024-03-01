@@ -9,6 +9,8 @@ from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
 from luboman.config import config
+from luboman.core.decorators import PluginTool
+from luboman.core.event import Event, EventType
 from luboman.core.live import start_room
 from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
@@ -78,7 +80,7 @@ async def add_room(request):
 
         room = LiveRoom.get_by_id(new_room_id)
         if room:
-            start_room(json_data.get('room_name'), json_data.get('room_url'), **{"room_data": model_to_dict(room)})
+            start_room(model_to_dict(room), **{})
         return success(new_room_id)
     except Exception as e:
         logger.error(e)
@@ -92,6 +94,12 @@ async def update_room(request):
         return error(1, "id is required")
     try:
         row = DB.update_live_room(data)
+
+        room = LiveRoom.get_by_id(data.get('id'))
+        if room:
+            running_plugin = PluginTool.running_plugins.get(str(data.get('id')))
+            running_plugin.send_event(Event(EventType.EVENT_REFRESH_ROOM_INFO, (model_to_dict(room),)))
+
         return success(row)
     except Exception as e:
         logger.error(e)

@@ -11,6 +11,8 @@ class PluginTool:
     live_plugins = []
     upload_plugins = {}
 
+    running_plugins = {}
+
     def __init__(self, pkg):
         self.load_plugins(pkg)
 

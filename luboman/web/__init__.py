@@ -12,7 +12,7 @@ from luboman.config import config
 from luboman.core.live import start_room
 from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
-from luboman.database.models import LiveRoom, BiliAccount
+from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate
 from luboman.plugins.bilibili import Bilibili
 
 logger = logging.getLogger('luboman')
@@ -83,7 +83,7 @@ async def add_room(request):
 
 
 @routes.post("/v1/room/update")
-async def add_room(request):
+async def update_room(request):
     data = await request.json()
     if not data.get('id'):
         return error(1, "id is required")
@@ -96,7 +96,7 @@ async def add_room(request):
 
 
 @routes.post("/v1/biliaccount/listAll")
-async def list_room(request):
+async def list_bili_account(request):
     res = []
     for ls in BiliAccount.select():
         temp = model_to_dict(ls)
@@ -146,14 +146,66 @@ async def add_bili_account(request):
 
 
 @routes.post("/v1/biliaccount/del")
-async def add_bili_account(request):
+async def del_bili_account(request):
     data = await request.json()
     bili_account_id = data.get('id')
+    if not bili_account_id:
+        return error(1, "id is required")
+
     try:
         bili_account = BiliAccount.get_by_id(bili_account_id)
         bili_account.state_active = 0
         bili_account.save()
         return success(bili_account_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliUploadTemplate/add")
+async def add_bili_upload_template(request):
+    data = await request.json()
+    if not data.get('template_name'):
+        return error(1, "template_name is required")
+
+    if not data.get('bili_account_id'):
+        return error(1, "bili_account_id is required")
+
+    if not data.get('tags'):
+        data['tags'] = ["录播Man"]
+    try:
+        bili_account_id = BiliUploadTemplate.add(**data)
+        return success(bili_account_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliUploadTemplate/update")
+async def update_bili_upload_template(request):
+    data = await request.json()
+    if not data.get('id'):
+        return error(1, "id is required")
+    if data.get('tags'):
+        if '录播Man' not in data['tags']:
+            data['tags'].append('录播Man')
+
+    try:
+        row = DB.update_bili_upload_template(data)
+        return success(row)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliUploadTemplate/del")
+async def del_bili_upload_template(request):
+    data = await request.json()
+    template_id = data.get('id')
+
+    try:
+        BiliUploadTemplate.delete_by_id(template_id)
+        return success(template_id)
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

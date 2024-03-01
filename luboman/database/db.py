@@ -130,6 +130,16 @@ class DB:
         return [file.file for file in file_list]
 
     @classmethod
+    def update_bili_upload_template(cls, data):
+        update_columns = ["template_name", "bili_account_id", "tags", "description", "tid", "copyright", "cover_path", "dynamic", "dtime",
+                          "dolby", "hires", "open_elec", "no_reprint", "credits", "up_selection_reply", "up_close_reply", "up_close_danmu"]
+        update_data = {
+            key: value for key, value in data.items() if key in update_columns
+        }
+
+        return BiliUploadTemplate.update(**update_data).where(BiliUploadTemplate.id == data["id"]).execute()
+
+    @classmethod
     def update_live_room(cls, data):
         update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "upload_storage_platform",
                           "stream_video_format", "active_state", "active_begin", "active_end"]

@@ -10,7 +10,7 @@ LOG_CONF = {
     'formatters': {
         'verbose': {
             'format': "%(asctime)s %(filename)s[line:%(lineno)d](Pid:%(process)d "
-                      "Tname:%(threadName)s) %(levelname)s %(message)s",
+                      "Thread:%(threadName)s) %(levelname)s %(message)s",
             # 'datefmt': "%Y-%m-%d %H:%M:%S"
         },
         'simple': {

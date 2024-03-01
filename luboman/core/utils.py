@@ -37,3 +37,17 @@ def get_valid_filename(name):
     if s in {"", ".", ".."}:
         raise RuntimeError("Could not derive file name from '%s'" % name)
     return s
+
+
+class NamedLock:
+    """
+    简单实现的命名锁
+    """
+    from _thread import LockType
+    _lock_dict = {}
+
+    def __new__(cls, name) -> LockType:
+        import threading
+        if name not in cls._lock_dict:
+            cls._lock_dict[name] = threading.Lock()
+        return cls._lock_dict[name]

@@ -9,21 +9,6 @@ RUN \
   tar -xvf /tmp/ffmpeg.tar.xz -C /opt && mv /opt/ffmpeg-6.1-amd64-static /opt/ffmpeg
 
 
-FROM node:20 as webui
-
-COPY webui ./webui
-
-RUN \
-  set -eux && \
-  cd webui &&\
-  pwd && \
-  ls -a && \
-  npm install &&  \
-  npm run build && \
-  ls -a dist/
-
-
-
 FROM python:3.9-slim
 WORKDIR /app
 COPY requirements.txt .
@@ -33,7 +18,6 @@ RUN mkdir bin && ls -a
 
 COPY --from=tools --chmod=777 /opt/aliyunpan bin/aliyunpan
 COPY --from=tools --chmod=777 /opt/ffmpeg bin/ffmpeg
-COPY --from=webui /webui/dist/ /app/luboman/web/public/
 
 RUN pwd && ls -a
 

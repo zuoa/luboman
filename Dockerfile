@@ -27,5 +27,5 @@ ENV TZ=Asia/Shanghai
 ENV PYTHONPATH="/app:$PYTHONPATH"
 EXPOSE 5001/tcp
 VOLUME /data
-VOLUME ~/.bypy
+VOLUME /root/.bypy
 ENTRYPOINT ["python", "main.py"]

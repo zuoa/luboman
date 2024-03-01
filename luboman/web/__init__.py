@@ -61,7 +61,7 @@ async def pre_archive(request):
     return web.json_response(BiliBili(Data()).tid_archive(cookies))
 
 
-@routes.post("/v1/room/listAll")
+@routes.post("/v1/LiveRoom/listAll")
 async def list_room(request):
     res = []
     for ls in LiveRoom.select():
@@ -70,7 +70,7 @@ async def list_room(request):
     return success(res)
 
 
-@routes.post("/v1/room/add")
+@routes.post("/v1/LiveRoom/add")
 async def add_room(request):
     json_data = await request.json()
     try:
@@ -82,7 +82,7 @@ async def add_room(request):
         return error(1, str(e))
 
 
-@routes.post("/v1/room/update")
+@routes.post("/v1/LiveRoom/update")
 async def update_room(request):
     data = await request.json()
     if not data.get('id'):
@@ -95,7 +95,20 @@ async def update_room(request):
         return error(1, str(e))
 
 
-@routes.post("/v1/biliaccount/listAll")
+@routes.post("/v1/LiveRoom/del")
+async def del_room(request):
+    data = await request.json()
+    row_id = data.get('id')
+
+    try:
+        LiveRoom.delete_by_id(row_id)
+        return success(row_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliAccount/listAll")
 async def list_bili_account(request):
     res = []
     for ls in BiliAccount.select():
@@ -104,7 +117,7 @@ async def list_bili_account(request):
     return success(res)
 
 
-@routes.post("/v1/biliaccount/add")
+@routes.post("/v1/BiliAccount/add")
 async def add_bili_account(request):
     data = await request.json()
     if data.get('bili_cookies_filepath'):
@@ -122,7 +135,6 @@ async def add_bili_account(request):
             data['bili_cookies'] = cookies_str
 
     elif data.get('bili_cookies'):
-        # TODO: login by cookie
         cookies_str = data.get('bili_cookies')
         cookies = {}
         for i in cookies_str.split(';'):
@@ -145,7 +157,7 @@ async def add_bili_account(request):
         return error(1, str(e))
 
 
-@routes.post("/v1/biliaccount/del")
+@routes.post("/v1/BiliAccount/del")
 async def del_bili_account(request):
     data = await request.json()
     bili_account_id = data.get('id')

@@ -148,3 +148,15 @@ class LiveRoom(BaseModel):
     active_state = IntegerField(default=1)  # 活跃状态, 0为未活跃, 1为活跃
     message_notify_token = CharField(null=True)  # 通知机器人的token
     ffmpeg_options = JSONField(null=True)  # ffmpeg参数
+    patron = CharField(null=True)  # 赞助人
+    patron_link = CharField(null=True)
+
+
+# 文件记录
+class RecordFile(BaseModel):
+    live_room_id = IntegerField()
+    begin_time = DateTimeField()
+    end_time = DateTimeField()
+    video = CharField()
+    upload_info = JSONField(null=True)
+    series_code = CharField(null=True)

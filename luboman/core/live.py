@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import datetime
 import logging
 import os
 import re
@@ -17,6 +18,7 @@ from luboman.core.event import EventManager, Event, EventType
 from luboman.core.utils import random_user_agent, get_valid_filename
 from luboman.core.upload import upload
 from luboman.database.db import DB
+from luboman.database.models import RecordFile
 
 logger = logging.getLogger('luboman')
 
@@ -102,7 +104,7 @@ class LiveBase(object):
                 continue
 
             recording_context = {
-                "begin_time": time.localtime(),
+                "begin_time": datetime.datetime.now(),
             }
 
             logger.info(f'开始录制：{self.__class__.__name__} - {self.room_name}')
@@ -123,9 +125,15 @@ class LiveBase(object):
                 retry_count = 0
                 retry_count_delay = 0
 
-                recording_context["end_time"] = time.localtime()
+                recording_context["end_time"] = datetime.datetime.now(),
                 recording_context["video"] = filepath
                 record_file_list.append(recording_context)
+
+                recording_context['live_room_id'] = self.room_data.get('id')
+
+                # 数据库记录
+                RecordFile.add(**recording_context)
+
             else:
                 if retry_count < 3:
                     retry_count += 1
@@ -185,7 +193,8 @@ class LiveBase(object):
 
     def ffmpeg_download(self, filepath):
         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
-        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout', '20000000']
+        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout',
+                              '20000000']
         parsed_url = urlparse(self.raw_stream_url)
         path = parsed_url.path
         if '.m3u8' in path:
@@ -193,12 +202,7 @@ class LiveBase(object):
         command_args = [ffmpeg_path, '-y', *default_input_args,
                         '-i', self.raw_stream_url, *self.ffmpeg_opt_args,
                         '-c', 'copy', '-f', self.suffix]
-        # if config.get('segment_time'):
-        #     args += ['-f', 'segment',
-        #              f'{filename} part-%03d.{self.suffix}']
-        # else:
-        #     args += [
-        #         f'{filename}.{self.suffix}.part']
+
         command_args += [f'{filepath}.part']
 
         proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

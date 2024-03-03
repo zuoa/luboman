@@ -171,6 +171,8 @@ class LiveBase(object):
         filepath = self.get_filepath()
         self.ffmpeg_download(filepath)
         self.rename(filepath)
+
+        self.send_event(Event(EventType.EVENT_UPLOAD, ([filepath], 'bdpan')))
         return True, filepath
 
     def raw_download(self, filepath):
@@ -295,7 +297,6 @@ class LiveBase(object):
             logger.info(file_list)
 
             self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
-            self.send_event(Event(EventType.EVENT_UPLOAD, (file_list, 'bdpan')))
 
         @event_manager.register(EventType.EVENT_NOTIFY)
         def process_notify(title, content):

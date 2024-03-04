@@ -85,7 +85,7 @@ class LiveBase(object):
     def start_record(self):
         date = time.localtime()
         end_time = None
-        delay = int(config.get('live_offline_judge_delay', 0))
+        delay = int(config.get('live_offline_judge_delay', 60))
         # 重试次数
         retry_count = 0
         # delay 重试次数

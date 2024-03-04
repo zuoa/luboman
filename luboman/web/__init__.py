@@ -1,4 +1,7 @@
 import asyncio
+import datetime
+import functools
+import json
 import logging
 import os
 import pathlib
@@ -18,6 +21,17 @@ from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate
 from luboman.plugins.bilibili import Bilibili
 
 logger = logging.getLogger('luboman')
+
+
+def default_json(obj):
+    if isinstance(obj, datetime.datetime):
+        return str(obj)
+    raise TypeError('Unable to serialize {!r}'.format(obj))
+
+
+json_dumps = functools.partial(json.dumps, default=default_json)
+json_response = functools.partial(web.json_response, dumps=json_dumps)
+
 routes = web.RouteTableDef()
 
 
@@ -27,7 +41,7 @@ def success(data):
         "data": data,
         "message": "success"
     }
-    return web.json_response(wrapper_data)
+    return json_response(wrapper_data)
 
 
 def error(code, message):
@@ -65,6 +79,7 @@ async def pre_archive(request):
 
 @routes.post("/v1/LiveRoom/listAll")
 async def list_room(request):
+
     res = []
     for ls in LiveRoom.select():
         temp = model_to_dict(ls)
@@ -253,7 +268,6 @@ async def serve(host='127.0.0.1', port=5001):
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = None
     if os.path.exists('/.dockerenv'):
         site = web.TCPSite(runner, port=port)
     else:

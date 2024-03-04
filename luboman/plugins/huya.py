@@ -110,7 +110,7 @@ class Huya(LiveBase):
             if record_ratio != max_ratio:
                 self.raw_stream_url += f"&ratio={record_ratio}"
             return True
-        except:
-            logger.warning(f"{Huya.__name__}: {self.room_url}: 解析错误")
+        except Exception as e:
+            logger.warning(f"{Huya.__name__}: {self.room_url}: 解析错误({e})")
 
         return False

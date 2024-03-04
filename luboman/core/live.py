@@ -128,6 +128,7 @@ class LiveBase(object):
                 recording_context["end_time"] = datetime.datetime.now(),
                 recording_context["video"] = filepath
                 record_file_list.append(recording_context)
+                self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context], 'bdpan')))
 
                 recording_context['live_room_id'] = self.room_data.get('id')
 
@@ -180,7 +181,6 @@ class LiveBase(object):
         self.ffmpeg_download(filepath)
         self.rename(filepath)
 
-        self.send_event(Event(EventType.EVENT_UPLOAD, ([filepath], 'bdpan')))
         return True, filepath
 
     def raw_download(self, filepath):

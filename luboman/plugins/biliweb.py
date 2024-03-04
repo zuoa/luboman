@@ -16,6 +16,7 @@ class BiliWebUploader(Uploader):
     def __init__(self, file_list, room_data):
         super().__init__(file_list)
         self.room_data = room_data
+        # TODO: 解耦合，插件内部不和数据库交互
 
     def upload(self):
         bili_upload_template_id = self.room_data.get('bili_upload_template_id')

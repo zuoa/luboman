@@ -39,6 +39,10 @@ class Huya(LiveBase):
             logger.warning(f"{Huya.__name__}: {self.room_url}: 直播间地址错误")
             return False
 
+        if 'stream:' not in html:
+            logger.warning(f"{Huya.__name__}: {self.room_url}: 没有相关流信息")
+            return False
+
         try:
             html_info = json.loads(html.split('stream: ')[1].split('};')[0])
             live_info = html_info['data'][0]

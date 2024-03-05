@@ -16,7 +16,7 @@ class Baidupan(Uploader):
         super().__init__(file_list)
 
     def upload(self):
-        bp = ByPy()
+        bp = ByPy(verbose=1)
         for file_info in self.file_list:
             drive_dir = os.path.dirname(file_info['video'])
             bp.mkdir(drive_dir)

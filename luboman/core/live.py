@@ -150,7 +150,7 @@ class LiveBase(object):
                     retry_count_delay += 1
                     if retry_count_delay > delay_all_retry_count:
                         logger.info(f'下播延迟检测结束：{self.__class__.__name__}:{self.room_name}')
-                        break
+                        self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
                     else:
                         if delay < 60:
                             logger.info(
@@ -165,13 +165,10 @@ class LiveBase(object):
                             time.sleep(60)
                         continue
                 else:
-                    end_time = time.localtime()
-                    break
-
-        self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
+                    self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
 
     def stop(self):
-        pass
+        logger.warning(f'停止录制：{self.__class__.__name__} - {self.room_name}')
 
     @abc.abstractmethod
     def check_live(self, is_check_status=False):

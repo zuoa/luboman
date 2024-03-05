@@ -7,7 +7,7 @@ from typing import List
 from peewee import OperationalError
 from playhouse.shortcuts import model_to_dict
 
-from .models import db, LiveRoom, GlobalConfig, get_path, BiliAccount, BiliUploadTemplate
+from .models import db, LiveRoom, GlobalConfig, get_path, BiliAccount, BiliUploadTemplate, RecordFile
 
 logger = logging.getLogger('luboman')
 
@@ -31,6 +31,7 @@ class DB:
         LiveRoom.create_table_()
         BiliAccount.create_table_()
         BiliUploadTemplate.create_table_()
+        RecordFile.create_table_()
         return run
 
     @classmethod

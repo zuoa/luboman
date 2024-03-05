@@ -239,7 +239,9 @@ class LiveBase(object):
         return f'{file_dir}/{filename}.{self.suffix}'
 
     def send_event(self, event):
-        logger.info(f'发送事件: {event}')
+        if event.type_ != EventType.EVENT_CHECK_STATUS:
+            logger.info(f'{self.__class__.__name__} - {self.room_name} 发送事件: {event}')
+
         self.event_manager.send(event)
 
     @staticmethod

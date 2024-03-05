@@ -25,7 +25,7 @@ class EventManager(Thread):
 
         self.__thread_pool = {
             'NORMAL': ThreadPoolExecutor(2, thread_name_prefix='NORMAL'),
-            'SLOW': ThreadPoolExecutor(2, thread_name_prefix='SLOW'),
+            'SLOW': ThreadPoolExecutor(3, thread_name_prefix='SLOW'),
         }
 
     def stop(self):

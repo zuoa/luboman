@@ -133,7 +133,10 @@ class LiveBase(object):
                 recording_context['live_room_id'] = self.room_data.get('id')
 
                 # 数据库记录
-                RecordFile.add(**recording_context)
+                try:
+                    RecordFile.add(**recording_context)
+                except Exception as e:
+                    logger.exception(f'Uncaught exception:{e}')
 
             else:
                 if retry_count < 3:

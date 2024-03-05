@@ -85,8 +85,6 @@ class LiveBase(object):
         return record_thread
 
     def start_record(self):
-        date = time.localtime()
-        end_time = None
         delay = int(config.get('live_offline_judge_delay', 60))
         # 重试次数
         retry_count = 0
@@ -94,8 +92,10 @@ class LiveBase(object):
         retry_count_delay = 0
         # delay 总重试次数 向上取整
         delay_all_retry_count = -(-delay // 60)
-
+        is_offline = False
         record_file_list = []
+
+        logger.info(f'启动录制线程：{self.__class__.__name__} - {self.room_name}')
 
         while True:
             # 未启动录制
@@ -124,6 +124,7 @@ class LiveBase(object):
                 # 成功下载重置重试次数
                 retry_count = 0
                 retry_count_delay = 0
+                is_offline = False
 
                 recording_context["end_time"] = datetime.datetime.now(),
                 recording_context["video"] = filepath
@@ -150,7 +151,7 @@ class LiveBase(object):
                     retry_count_delay += 1
                     if retry_count_delay > delay_all_retry_count:
                         logger.info(f'下播延迟检测结束：{self.__class__.__name__}:{self.room_name}')
-                        self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
+                        is_offline = True
                     else:
                         if delay < 60:
                             logger.info(
@@ -165,7 +166,11 @@ class LiveBase(object):
                             time.sleep(60)
                         continue
                 else:
+                    is_offline = True
+
+                if is_offline:
                     self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
+                    record_file_list = []
 
     def stop(self):
         logger.warning(f'停止录制：{self.__class__.__name__} - {self.room_name}')

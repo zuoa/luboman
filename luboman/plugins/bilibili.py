@@ -68,7 +68,8 @@ class Bilibili(LiveBase):
 
         s = requests.Session()
         self.fake_headers['cookie'] = (
-                load_cookies(config.get('user', {}).get('bili_cookie_file')) or config.get('user', {}).get('bili_cookie')
+                load_cookies(config.get('user', {}).get('bili_cookie_file')) or config.get('user', {}).get(
+            'bili_cookie')
         )
         s.headers = self.fake_headers
         user_data = do_login(s).get('data', {})
@@ -208,7 +209,8 @@ class Bilibili(LiveBase):
                 while i:
                     i -= 1
                     try:
-                        self.raw_stream_url = stream_info['url_info'][i]['host'] + stream_url['base_url'] + stream_info['url_info'][i]['extra']
+                        self.raw_stream_url = stream_info['url_info'][i]['host'] + stream_url['base_url'] + \
+                                              stream_info['url_info'][i]['extra']
                         if check_url_healthy(s, self.raw_stream_url):
                             break
                     except Exception as e:
@@ -244,8 +246,11 @@ def check_areablock(data):
 
 
 def check_url_healthy(s, url):
-    if s.get(url, stream=True, timeout=5).status_code == 200:
-        return True
+    try:
+        if s.get(url, stream=True, timeout=5).status_code == 200:
+            return True
+    except:
+        pass
     return False
 
 

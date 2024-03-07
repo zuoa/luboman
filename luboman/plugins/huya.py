@@ -115,6 +115,6 @@ class Huya(LiveBase):
                 self.raw_stream_url += f"&ratio={record_ratio}"
             return True
         except Exception as e:
-            logger.warning(f"{Huya.__name__}: {self.room_url}: 解析错误({e})")
+            logger.debug(f"{Huya.__name__}: {self.room_url}: 解析错误({e})")
 
         return False

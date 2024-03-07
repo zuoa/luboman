@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlparse
 
 import requests
+from playhouse.shortcuts import model_to_dict
 
 from luboman.config import config
 from luboman.core.decorators import PluginTool
@@ -18,7 +19,7 @@ from luboman.core.event import EventManager, Event, EventType
 from luboman.core.utils import random_user_agent, get_valid_filename
 from luboman.core.upload import upload
 from luboman.database.db import DB
-from luboman.database.models import RecordFile
+from luboman.database.models import RecordFile, BiliUploadTemplate, BiliAccount
 
 logger = logging.getLogger('luboman')
 
@@ -317,9 +318,34 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
+            bili_upload_template_id = self.room_data.get('bili_upload_template_id')
+            if bili_upload_template_id is None:
+                logger.error(f"bili_upload_template_id is None")
+                return
+
+            template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
+            if not template_info:
+                logger.error(f"bili_upload_template_id: {bili_upload_template_id} not found")
+                return
+
+            if template_info.bili_account_id is None:
+                logger.error(f"bili_account_id is None")
+                return
+
+            bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
+            if not bili_account:
+                logger.error(f"bili_account_id: {template_info.bili_account_id} not found")
+                return
+
+            template_info = model_to_dict(template_info)
+            template_info['bili_account'] = model_to_dict(bili_account)
+
+            room_data = self.room_data.copy()
+            room_data['bili_upload_template'] = template_info
             upload_info = {
-                "room_data": self.room_data,
+                'room_data': room_data
             }
+
             upload('biliweb', file_list, **upload_info)
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)

@@ -16,42 +16,34 @@ class BiliWebUploader(Uploader):
     def __init__(self, file_list, room_data):
         super().__init__(file_list)
         self.room_data = room_data
-        # TODO: 解耦合，插件内部不和数据库交互
 
     def upload(self):
-        bili_upload_template_id = self.room_data.get('bili_upload_template_id')
-        if bili_upload_template_id is None:
-            logger.error(f"bili_upload_template_id is None")
-            return
-
-        template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
+        template_info = self.room_data.get('bili_upload_template')
         if not template_info:
-            logger.error(f"bili_upload_template_id: {bili_upload_template_id} not found")
+            logger.warning(f"未设置上传模板")
             return
 
-        if template_info.bili_account_id is None:
-            logger.error(f"bili_account_id is None")
-            return
-
-        bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
+        bili_account = template_info.get('bili_account')
         if not bili_account:
-            logger.error(f"bili_account_id: {template_info.bili_account_id} not found")
+            logger.warning(f"未设置bilibili账号")
             return
 
+        template_title = template_info.get('title', '【{room_name}】{room_title} %Y年%m月%d日 %H时')
+        template_description = template_info.get('description', '【{room_name}】直播间地址：{room_url} \n如有侵权请联系我删除\n---\n接主播直播录制，可投稿B站/网盘，v:jiadano')
         video = Data()
-        video.title = format_live_prop_text(template_info.title, self.room_data)
-        video.desc = format_live_prop_text(template_info.description, self.room_data)
+        video.title = format_live_prop_text(template_title, self.room_data)
+        video.desc = format_live_prop_text(template_description, self.room_data)
         # 设置视频分区,默认为122 野生技能协会
-        video.tid = template_info.tid
-        video.copyright = template_info.copy_right
-        if template_info.copy_right == 2:
+        video.tid = template_info.get('tid', 171)
+        video.copyright = template_info.get('copy_right', 1)
+        if template_info.get('copy_right', 1) == 2:
             video.source = self.room_data["room_url"]
-        tags = template_info.tags
+        tags = template_info.get('tags')
         if not tags:
             tags = ['录播Man']
         video.set_tag(tags)
-        lines = template_info.lines
-        tasks = template_info.threads
+        lines = template_info.get('lines', 'AUTO')
+        tasks = template_info.get('threads', 3)
         with BiliBili(video) as bili:
             bili.login(bili_account.bili_cookies_filepath, {})
             # bili.login_by_password("username", "password")

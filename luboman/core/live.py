@@ -128,7 +128,7 @@ class LiveBase(object):
                 recording_context["end_time"] = datetime.datetime.now(),
                 recording_context["video"] = filepath
                 record_file_list.append(recording_context)
-                self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context], 'bdpan')))
+                self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
 
                 recording_context['live_room_id'] = self.room_data.get('id')
 
@@ -319,10 +319,12 @@ class LiveBase(object):
             pass
 
         @event_manager.register(EventType.EVENT_UPLOAD, "SLOW")
-        def process_upload(file_list, platform='alipan'):
-            # TODO: 加载房间配置
-
-            upload(platform, file_list)
+        def process_upload(file_list):
+            try:
+                upload_platform = self.room_data.get('upload_storage_platform', 'bdpan')
+                upload(upload_platform, file_list)
+            except Exception as e:
+                logger.exception(f'{self.__class__.__name__} - {self.room_name} | 上传失败: {e}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_COMPLETED)
         def process_upload_completed(file_list, platform='alipan'):

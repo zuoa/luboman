@@ -154,6 +154,7 @@ class LiveRoom(BaseModel):
 
 # 文件记录
 class RecordFile(BaseModel):
+    id = AutoField(primary_key=True)  # 自增主键
     live_room_id = IntegerField()
     begin_time = DateTimeField()
     end_time = DateTimeField()

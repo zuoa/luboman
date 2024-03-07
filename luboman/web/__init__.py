@@ -37,6 +37,7 @@ routes = web.RouteTableDef()
 
 def success(data):
     wrapper_data = {
+        "success": True,
         "code": 0,
         "data": data,
         "message": "success"
@@ -46,6 +47,7 @@ def success(data):
 
 def error(code, message):
     wrapper_data = {
+        "success": False,
         "code": code,
         "message": message
     }
@@ -79,7 +81,6 @@ async def pre_archive(request):
 
 @routes.post("/v1/LiveRoom/listAll")
 async def list_room(request):
-
     res = []
     for ls in LiveRoom.select():
         temp = model_to_dict(ls)
@@ -163,9 +164,16 @@ async def add_bili_account(request):
     elif data.get('bili_cookies'):
         cookies_str = data.get('bili_cookies')
         cookies = {}
-        for i in cookies_str.split(';'):
-            k, v = i.split('=')
-            cookies[k] = v
+        try:
+            for i in cookies_str.split(';'):
+                if '=' in i:
+                    k, v = i.split('=')
+                    cookies[k] = v
+        except Exception as e:
+            return error(1, f"bili_cookies format error{e}")
+
+        if not cookies:
+            return error(1, f"bili_cookies format error:{cookies_str}")
         with BiliBili(Data()) as bili:
             bili.login_by_cookie(cookies)
             account_info = bili.myinfo()
@@ -177,7 +185,10 @@ async def add_bili_account(request):
     try:
 
         bili_account_id = BiliAccount.add(**data)
-        return success(bili_account_id)
+
+        resp_data = BiliAccount.get_by_id(bili_account_id)
+
+        return success(model_to_dict(resp_data))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))
@@ -198,6 +209,15 @@ async def del_bili_account(request):
     except Exception as e:
         logger.error(e)
         return error(1, str(e))
+
+
+@routes.post("/v1/BiliUploadTemplate/listAll")
+async def list_bili_upload_template(request):
+    res = []
+    for ls in BiliUploadTemplate.select():
+        temp = model_to_dict(ls)
+        res.append(temp)
+    return success(res)
 
 
 @routes.post("/v1/BiliUploadTemplate/add")
@@ -249,7 +269,21 @@ async def del_bili_upload_template(request):
         return error(1, str(e))
 
 
-app = web.Application()
+@web.middleware
+async def error_middleware(request, handler):
+    try:
+        response = await handler(request)
+        if response.status != 404:
+            return response
+        message = response.message
+    except web.HTTPException as ex:
+        if ex.status != 404:
+            raise
+        message = ex.reason
+    return web.json_response({'error': message})
+
+
+app = web.Application(logger=logger, middlewares=[error_middleware])
 app.add_routes(routes)
 
 

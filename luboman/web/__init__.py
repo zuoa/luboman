@@ -17,7 +17,7 @@ from luboman.core.event import Event, EventType
 from luboman.core.live import start_room
 from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
-from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate
+from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate, GlobalConfig
 from luboman.plugins.bilibili import Bilibili
 
 logger = logging.getLogger('luboman')
@@ -35,7 +35,9 @@ json_response = functools.partial(web.json_response, dumps=json_dumps)
 routes = web.RouteTableDef()
 
 
-def success(data):
+def success(data=None):
+    if data is None:
+        data = {}
     wrapper_data = {
         "success": True,
         "code": 0,
@@ -77,6 +79,30 @@ async def pre_archive(request):
             cookies[k] = v
 
     return web.json_response(BiliBili(Data()).tid_archive(cookies))
+
+
+@routes.post("/v1/Config/get")
+async def get_config(request):
+    res = {}
+    for ls in GlobalConfig.select():
+        res[ls.key] = ls.value
+    return success(res)
+
+
+@routes.post("/v1/Config/set")
+async def set_config(request):
+    config_data = await request.json()
+    try:
+        for k, v in config_data.items():
+            try:
+                cfg = GlobalConfig.get(GlobalConfig.key == k)
+                cfg.value = v
+                cfg.save()
+            except GlobalConfig.DoesNotExist:
+                GlobalConfig.add(key=k, value=v)
+    except:
+        logger.exception("1")
+    return success()
 
 
 @routes.post("/v1/LiveRoom/listAll")

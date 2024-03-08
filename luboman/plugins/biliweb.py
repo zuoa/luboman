@@ -50,8 +50,8 @@ class BiliWebUploader(Uploader):
             for file_info in self.file_list:
                 video_part = bili.upload_file(file_info['video'], lines=lines, tasks=tasks)  # 上传视频，默认线路AUTO自动选择，线程数量3。
                 video.append(video_part)  # 添加已经上传的视频
-            if template_info.dtime:
-                video.delay_time(template_info.dtime)  # 设置延后发布（2小时~15天）
-            if template_info.cover_path and os.path.exists(template_info.cover_path):
-                video.cover = bili.cover_up(template_info.cover_path)
+            if template_info.get('dtime'):
+                video.delay_time(template_info.get('dtime'))  # 设置延后发布（2小时~15天）
+            if template_info.get('cover_path') and os.path.exists(template_info.get('cover_path')):
+                video.cover = bili.cover_up(template_info.get('cover_path'))
             ret = bili.submit()  # 提交视频

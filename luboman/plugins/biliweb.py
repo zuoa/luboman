@@ -45,7 +45,7 @@ class BiliWebUploader(Uploader):
         lines = template_info.get('lines', 'AUTO')
         tasks = template_info.get('threads', 3)
         with BiliBili(video) as bili:
-            bili.login(bili_account.bili_cookies_filepath, {})
+            bili.login(bili_account.get('bili_cookies_filepath'), {})
             # bili.login_by_password("username", "password")
             for file_info in self.file_list:
                 video_part = bili.upload_file(file_info['video'], lines=lines, tasks=tasks)  # 上传视频，默认线路AUTO自动选择，线程数量3。

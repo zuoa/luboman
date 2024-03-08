@@ -308,8 +308,8 @@ class LiveBase(object):
             self.is_living = False
 
             logger.info(file_list)
-
-            self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
+            if file_list:
+                self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
 
         @event_manager.register(EventType.EVENT_NOTIFY)
         def process_notify(title, content):

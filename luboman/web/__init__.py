@@ -313,7 +313,7 @@ app = web.Application(logger=logger, middlewares=[error_middleware])
 app.add_routes(routes)
 
 
-async def serve(host='127.0.0.1', port=5001):
+async def serve(host='127.0.0.1', port=5005):
     cors = aiohttp_cors.setup(app, defaults={
         "*": aiohttp_cors.ResourceOptions(
             allow_credentials=True,

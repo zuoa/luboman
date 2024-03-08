@@ -25,7 +25,7 @@ RUN pwd && ls -a
 WORKDIR /app/luboman
 ENV TZ=Asia/Shanghai
 ENV PYTHONPATH="/app:$PYTHONPATH"
-EXPOSE 5001/tcp
+EXPOSE 5005/tcp
 VOLUME /data
 VOLUME /root/.bypy
 ENTRYPOINT ["python", "main.py"]

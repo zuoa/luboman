@@ -375,17 +375,16 @@ def start_room(room_data, **kwargs):
 
     kwargs.update({'room_data': room_data})
 
-    pg = None
+    pg = PluginTool.running_plugins.get(str(room_id))
+    if not pg:
+        for plugin in PluginTool.live_plugins:
+            if re.match(plugin.VALID_URL_BASE, url):
+                pg = plugin(room_name, url)
+                for k in pg.__dict__:
+                    if kwargs.get(k):
+                        pg.__dict__[k] = kwargs.get(k)
 
-    for plugin in PluginTool.live_plugins:
-        if re.match(plugin.VALID_URL_BASE, url):
-            pg = plugin(room_name, url)
-            for k in pg.__dict__:
-                if kwargs.get(k):
-                    pg.__dict__[k] = kwargs.get(k)
-
-            PluginTool.running_plugins[str(room_id)] = pg
-            break
-
+                PluginTool.running_plugins[str(room_id)] = pg
+                break
     if pg:
         return pg.start()

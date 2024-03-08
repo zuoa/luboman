@@ -43,7 +43,7 @@ class LiveBase(object):
 
         self.default_ffmpeg_options = {
             '-bsf:a': 'aac_adtstoasc',
-            '-loglevel': 'error'
+            # '-loglevel': 'error'
         }
 
         self.fake_headers = {
@@ -57,8 +57,11 @@ class LiveBase(object):
     def ffmpeg_opt_args(self):
         options = self.default_ffmpeg_options.copy()
         global_options = {}
+
         if config.get('segment_file_size'):
-            global_options['-fs'] = f"{config.get('segment_file_size')}"
+            file_size = config.get('segment_file_size')
+            file_size = int(file_size) * 1024 * 1024
+            global_options['-fs'] = f"{file_size}"
         else:
             global_options['-to'] = f"{config.get('segment_duration', '01:00:00')}"
         options.update(global_options)
@@ -128,7 +131,7 @@ class LiveBase(object):
                 retry_count_delay = 0
                 is_offline = False
 
-                recording_context["end_time"] = datetime.datetime.now(),
+                recording_context["end_time"] = datetime.datetime.now()
                 recording_context["video"] = filepath
                 record_file_list.append(recording_context)
                 self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
@@ -137,6 +140,7 @@ class LiveBase(object):
 
                 # 数据库记录
                 try:
+                    logger.info(recording_context)
                     RecordFile.add(**recording_context)
                 except Exception as e:
                     logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
@@ -161,7 +165,6 @@ class LiveBase(object):
                             time.sleep(delay)
                         else:
                             if retry_count_delay == 1:
-                                end_time = time.localtime()
                                 # 只有第一次显示
                                 logger.info(
                                     f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
@@ -355,8 +358,15 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPLOAD, "SLOW")
         def process_upload(file_list):
-            self._upload_to_storage(file_list)
-            self.send_event(Event(EventType.EVENT_UPLOAD_COMPLETED, (file_list,)))
+            prepare_upload_file_list = []
+            filtering_threshold_file_size = config.get("filtering_threshold_file_size", 5)
+            filtering_threshold_file_size = int(filtering_threshold_file_size) * 1024 * 1024
+            for file in file_list:
+                if os.path.getsize(file['video']) >= filtering_threshold_file_size:
+                    prepare_upload_file_list.append(file)
+
+            self._upload_to_storage(prepare_upload_file_list)
+            self.send_event(Event(EventType.EVENT_UPLOAD_COMPLETED, (prepare_upload_file_list,)))
 
         @event_manager.register(EventType.EVENT_UPLOAD_COMPLETED)
         def process_upload_completed(file_list, platform='alipan'):

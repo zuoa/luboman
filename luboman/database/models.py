@@ -21,6 +21,10 @@ def get_path(*other):
     return os.path.join(dir_path, *other)
 
 
+def get_current_time():
+    return datetime.datetime.now()
+
+
 # 自动重连, 避免报错导致连接丢失
 class ReconnectSqliteDatabase(ReconnectMixin, SqliteExtDatabase):
     pass
@@ -141,7 +145,7 @@ class LiveRoom(BaseModel):
     stream_video_format = CharField(null=True, default="flv")  # 视频格式
     live_state = IntegerField(default=0)  # 直播状态, 0为未开播, 1为开播
     status = CharField(default='IDLE')  # 状态, IDLE为空闲, WORKING为忙碌
-    gmt_created = DateTimeField(null=True, default=datetime.datetime.now)  # 创建时间
+    gmt_created = DateTimeField(null=True, default=get_current_time)  # 创建时间
     gmt_updated = DateTimeField(null=True)  # 更新时间
     active_begin = DateTimeField(null=True)  # 活跃开始时间
     active_end = DateTimeField(null=True)  # 活跃结束时间

@@ -77,7 +77,7 @@ class LiveBase(object):
             await asyncio.sleep(30)
 
     def start(self):
-        logger.info(f'开始直播间任务：{self.__class__.__name__} - {self.room_name}')
+        logger.info(f'{self.__class__.__name__} - {self.room_name} |  开启直播间')
         logger.info(self.room_data)
         asyncio.create_task(self.async_check_status())
 
@@ -97,7 +97,7 @@ class LiveBase(object):
         is_offline = False
         record_file_list = []
 
-        logger.info(f'启动录制线程：{self.__class__.__name__} - {self.room_name}')
+        logger.info(f'{self.__class__.__name__} - {self.room_name} | 启动录制线程')
 
         while True:
             # 未启动录制
@@ -109,7 +109,7 @@ class LiveBase(object):
                 "begin_time": datetime.datetime.now(),
             }
 
-            logger.info(f'开始录制：{self.__class__.__name__} - {self.room_name}')
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | 开始新的录制')
 
             ret = False
             filepath = None
@@ -118,7 +118,7 @@ class LiveBase(object):
                 # 阻塞下载，流没中断，会一直录制
                 ret, filepath = self.record()
             except Exception as e:
-                logger.exception(f'Uncaught exception:{e}')
+                logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
             finally:
                 self.stop()
 
@@ -139,32 +139,32 @@ class LiveBase(object):
                 try:
                     RecordFile.add(**recording_context)
                 except Exception as e:
-                    logger.exception(f'Uncaught exception:{e}')
+                    logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
 
             else:
                 if retry_count < 3:
                     retry_count += 1
                     logger.info(
-                        f'获取流失败：{self.__class__.__name__} - {self.room_name}，重试次数 {retry_count} / 3，等待 3 秒')
+                        f'{self.__class__.__name__} - {self.room_name} | 获取流失败：重试次数 {retry_count} / 3，等待 3 秒')
                     time.sleep(3)
                     continue
 
                 if delay:
                     retry_count_delay += 1
                     if retry_count_delay > delay_all_retry_count:
-                        logger.info(f'下播延迟检测结束：{self.__class__.__name__}:{self.room_name}')
+                        logger.info(f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测结束')
                         is_offline = True
                     else:
                         if delay < 60:
                             logger.info(
-                                f'下播延迟检测：{self.__class__.__name__} - {self.room_name}，将在 {delay} 秒后检测开播状态')
+                                f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测，将在 {delay} 秒后检测开播状态')
                             time.sleep(delay)
                         else:
                             if retry_count_delay == 1:
                                 end_time = time.localtime()
                                 # 只有第一次显示
                                 logger.info(
-                                    f'下播延迟检测：{self.__class__.__name__} - {self.room_name}，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
+                                    f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
                             time.sleep(60)
                         continue
                 else:
@@ -175,7 +175,7 @@ class LiveBase(object):
                     record_file_list = []
 
     def stop(self):
-        logger.warning(f'停止录制：{self.__class__.__name__} - {self.room_name}')
+        logger.warning(f'{self.__class__.__name__} - {self.room_name} | 停止录制')
 
     @abc.abstractmethod
     def check_live(self, is_check_status=False):
@@ -247,7 +247,7 @@ class LiveBase(object):
 
     def send_event(self, event):
         if event.type_ != EventType.EVENT_CHECK_STATUS:
-            logger.info(f'{self.__class__.__name__} - {self.room_name} 发送事件: {event}')
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | 发送事件: {event}')
 
         self.event_manager.send(event)
 
@@ -274,7 +274,7 @@ class LiveBase(object):
 
             # 状态改变记录
             if last_living != self.is_living:
-                logger.info(self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
+                logger.info(f'{self.__class__.__name__} - {self.room_name} | ' + self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
 
                 # 开播通知
                 if self.is_living:
@@ -291,7 +291,7 @@ class LiveBase(object):
         @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
         def refresh_room_info(room_info):
             self.room_data.update(room_info)
-            logger.info(f'Room data updated:{self.room_data}')
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | Room data updated:{self.room_data}')
 
         @event_manager.register(EventType.EVENT_PRE_RECORD)
         def process_pre_record():
@@ -321,21 +321,21 @@ class LiveBase(object):
         def process_upload_bili(file_list):
             bili_upload_template_id = self.room_data.get('bili_upload_template_id')
             if bili_upload_template_id is None:
-                logger.error(f"bili_upload_template_id is None")
+                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id is None")
                 return
 
             template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
             if not template_info:
-                logger.error(f"bili_upload_template_id: {bili_upload_template_id} not found")
+                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id: {bili_upload_template_id} not found")
                 return
 
             if template_info.bili_account_id is None:
-                logger.error(f"bili_account_id is None")
+                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_account_id is None")
                 return
 
             bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
             if not bili_account:
-                logger.error(f"bili_account_id: {template_info.bili_account_id} not found")
+                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_account_id: {template_info.bili_account_id} not found")
                 return
 
             template_info = model_to_dict(template_info)

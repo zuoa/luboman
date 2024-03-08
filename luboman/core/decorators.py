@@ -10,6 +10,7 @@ logger = logging.getLogger('luboman')
 class PluginTool:
     live_plugins = []
     upload_plugins = {}
+    notify_plugins = {}
 
     running_plugins = {}
 
@@ -33,6 +34,14 @@ class PluginTool:
     def upload(platform):
         def decorator(cls):
             PluginTool.upload_plugins[platform] = cls
+            return cls
+
+        return decorator
+
+    @staticmethod
+    def notify(platform):
+        def decorator(cls):
+            PluginTool.notify_plugins[platform] = cls
             return cls
 
         return decorator

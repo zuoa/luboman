@@ -16,6 +16,7 @@ from playhouse.shortcuts import model_to_dict
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
+from luboman.core.notify import BaseNotifier
 from luboman.core.utils import random_user_agent, get_valid_filename
 from luboman.core.upload import upload
 from luboman.database.db import DB
@@ -81,11 +82,11 @@ class LiveBase(object):
         asyncio.create_task(self.async_check_status())
 
     def start_record_thread(self):
-        record_thread = threading.Thread(target=self.start_record)
+        record_thread = threading.Thread(target=self.record_func)
         record_thread.start()
         return record_thread
 
-    def start_record(self):
+    def record_func(self):
         delay = int(config.get('live_offline_judge_delay', 60))
         # 重试次数
         retry_count = 0
@@ -298,7 +299,7 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_RECORD)
         def process_record():
-            self.is_recording = True
+            self._start_record()
 
         @event_manager.register(EventType.EVENT_RECORD_COMPLETED)
         def process_record_completed(file_list):
@@ -354,11 +355,8 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPLOAD, "SLOW")
         def process_upload(file_list):
-            try:
-                upload_platform = self.room_data.get('upload_storage_platform', 'bdpan')
-                upload(upload_platform, file_list)
-            except Exception as e:
-                logger.exception(f'{self.__class__.__name__} - {self.room_name} | 上传失败: {e}')
+            self._upload_to_storage(file_list)
+            self.send_event(Event(EventType.EVENT_UPLOAD_COMPLETED, (file_list,)))
 
         @event_manager.register(EventType.EVENT_UPLOAD_COMPLETED)
         def process_upload_completed(file_list, platform='alipan'):
@@ -366,6 +364,17 @@ class LiveBase(object):
 
         event_manager.start()
         return event_manager
+
+    def _start_record(self):
+        self.is_recording = True
+
+    @BaseNotifier.live_notify("{room_name} 开始上传网盘", "")
+    def _upload_to_storage(self, file_list):
+        try:
+            upload_platform = self.room_data.get('upload_storage_platform', 'bdpan')
+            upload(upload_platform, file_list)
+        except Exception as e:
+            logger.exception(f'{self.__class__.__name__} - {self.room_name} | 上传失败: {e}')
 
 
 def start_room(room_data, **kwargs):

@@ -29,7 +29,8 @@ class BiliWebUploader(Uploader):
             return
 
         template_title = template_info.get('title', '【{room_name}】{room_title} %Y年%m月%d日 %H时')
-        template_description = template_info.get('description', '【{room_name}】直播间地址：{room_url} \n如有侵权请联系我删除\n---\n接主播直播录制，可投稿B站/网盘，v:jiadano')
+        template_description = template_info.get('description',
+                                                 '【{room_name}】直播间地址：{room_url} \n如有侵权请联系我删除\n---\n接主播直播录制，可投稿B站/网盘，v:jiadano')
         video = Data()
         video.title = format_live_prop_text(template_title, self.room_data)
         video.desc = format_live_prop_text(template_description, self.room_data)
@@ -49,6 +50,7 @@ class BiliWebUploader(Uploader):
             # bili.login_by_password("username", "password")
             for file_info in self.file_list:
                 video_part = bili.upload_file(file_info['video'], lines=lines, tasks=tasks)  # 上传视频，默认线路AUTO自动选择，线程数量3。
+                video_part["title"] = os.path.splitext(os.path.basename(file_info['video']))[0][:80]
                 video.append(video_part)  # 添加已经上传的视频
             if template_info.get('dtime'):
                 video.delay_time(template_info.get('dtime'))  # 设置延后发布（2小时~15天）

@@ -18,6 +18,10 @@ services:
     image: ghcr.io/zuoa/luboman-webui:main
     container_name: luboman-webui
     restart: "always"
+    depends_on:
+      - app
+    links:
+      - "app:luboman-service"
     ports:
       - "5001:5001"
 ```

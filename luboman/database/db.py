@@ -159,6 +159,7 @@ class DB:
         update_data = {
             key: value for key, value in data.items() if key in update_columns
         }
+        update_data["gmt_updated"] = datetime.now()
         row_id = data["id"]
         return LiveRoom.update(**update_data).where(LiveRoom.id == row_id).execute()
 

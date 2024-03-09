@@ -102,6 +102,8 @@ async def set_config(request):
                 GlobalConfig.add(key=k, value=v)
     except:
         logger.exception("1")
+
+    config.load_from_db()
     return success()
 
 

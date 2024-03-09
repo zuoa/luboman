@@ -154,6 +154,8 @@ class LiveRoom(BaseModel):
     ffmpeg_options = JSONField(null=True)  # ffmpeg参数
     patron = CharField(null=True)  # 赞助人
     patron_link = CharField(null=True)
+    notify_platform = CharField(null=True)  # 专属推送平台
+    notify_token = TextField(null=True)  # 专属推送token
 
 
 # 文件记录

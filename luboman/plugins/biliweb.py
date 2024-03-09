@@ -49,6 +49,8 @@ class BiliWebUploader(Uploader):
             bili.login(bili_account.get('bili_cookies_filepath'), {})
             # bili.login_by_password("username", "password")
             for file_info in self.file_list:
+                if not os.path.exists(file_info['video']):
+                    continue
                 video_part = bili.upload_file(file_info['video'], lines=lines, tasks=tasks)  # 上传视频，默认线路AUTO自动选择，线程数量3。
                 video_part["title"] = os.path.splitext(os.path.basename(file_info['video']))[0][:80]
                 video.append(video_part)  # 添加已经上传的视频

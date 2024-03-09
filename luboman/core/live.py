@@ -311,7 +311,6 @@ class LiveBase(object):
             self.is_recording = False
             self.is_living = False
 
-            logger.info(file_list)
             if file_list:
                 self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
 
@@ -352,7 +351,14 @@ class LiveBase(object):
                 'room_data': room_data
             }
 
-            upload('biliweb', file_list, **upload_info)
+            prepare_upload_file_list = []
+            filtering_threshold_file_size = config.get("filtering_threshold_file_size", 5)
+            filtering_threshold_file_size = int(filtering_threshold_file_size) * 1024 * 1024
+            for file in file_list:
+                if os.path.exists(file['video']) and os.path.getsize(file['video']) >= filtering_threshold_file_size:
+                    prepare_upload_file_list.append(file)
+
+            upload('biliweb', prepare_upload_file_list, **upload_info)
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)
         def process_upload_bili_completed(file_list):
@@ -364,7 +370,7 @@ class LiveBase(object):
             filtering_threshold_file_size = config.get("filtering_threshold_file_size", 5)
             filtering_threshold_file_size = int(filtering_threshold_file_size) * 1024 * 1024
             for file in file_list:
-                if os.path.getsize(file['video']) >= filtering_threshold_file_size:
+                if os.path.exists(file['video']) and os.path.getsize(file['video']) >= filtering_threshold_file_size:
                     prepare_upload_file_list.append(file)
 
             self._upload_to_storage(prepare_upload_file_list)

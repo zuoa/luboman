@@ -18,6 +18,9 @@ class Baidupan(Uploader):
     def upload(self):
         bp = ByPy(verbose=1)
         for file_info in self.file_list:
+            if not os.path.exists(file_info['video']):
+                continue
+
             drive_dir = os.path.dirname(file_info['video'])
             bp.mkdir(drive_dir)
             logger.info(f"正在上传 {file_info['video']} 到百度网盘")

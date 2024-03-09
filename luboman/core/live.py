@@ -317,7 +317,7 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_NOTIFY)
         def process_notify(title, content):
-            from luboman.notifier import notify_message
+            from luboman.core.notify import notify_message
             notify_message(title, content)
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")

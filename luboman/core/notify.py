@@ -16,10 +16,11 @@ class BaseNotifier:
         self.token = token
 
     def notify(self, title, content):
-        if not content:
-            content = title
-        resp_text = self.do_notify(title, content)
-        logger.info(resp_text)
+        if self.platform and self.token:
+            if not content:
+                content = title
+            resp_text = self.do_notify(title, content)
+            logger.info(resp_text)
 
     def do_notify(self, title, content):
         raise NotImplementedError
@@ -41,7 +42,7 @@ class BaseNotifier:
 def notify_message(title, content, **kwargs):
     try:
         platform = config.get('notify_platform', 'pushplus')
-        token = config.get('notify_token', '01083154c7854191a14ca66dfbf0592c')
+        token = config.get('notify_token', '')
         context = {
             'platform': platform,
             'token': token,

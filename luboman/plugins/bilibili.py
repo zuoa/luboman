@@ -13,7 +13,6 @@ class Bilibili(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
-        self.room_platform = 'bilibili'
         self.fake_headers['referer'] = 'https://live.bilibili.com'
         self.live_time = 0
 
@@ -46,6 +45,7 @@ class Bilibili(LiveBase):
             room_info_simple = room_info.get('data', {}).get('room_info', {})
             new_room_data = {
                 'room_id': room_id,
+                'room_platform': self.__class__.__name__,
                 'room_title': room_info_simple.get('title', ''),
                 'room_cover_url': room_info_simple.get('cover', ''),
                 'room_cover_frame_url': room_info_simple.get('keyframe', ''),

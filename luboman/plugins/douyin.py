@@ -17,7 +17,6 @@ class Douyin(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
-        self.room_platform = 'douyin'
         self.fake_headers['referer'] = "https://live.douyin.com/"
         self.fake_headers['cookie'] = config.get('user', {}).get('douyin_cookie', '')
 
@@ -63,6 +62,7 @@ class Douyin(LiveBase):
                 room_info = room_info[0]
                 new_room_data = {
                     'room_id': room_id,
+                    'room_platform': self.__class__.__name__,
                     'room_title': room_info.get('title', ''),
                     'room_cover_url': room_info.get('cover', {}).get('url_list', [''])[0],
                     'room_cover_frame_url': room_info.get('cover', {}).get('url_list', [''])[0],

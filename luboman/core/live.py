@@ -30,7 +30,6 @@ class LiveBase(object):
 
         self.room_name = room_name
         self.room_url = room_url
-        self.room_platform = None
         self.room_data = None
 
         self.raw_stream_url = None
@@ -232,7 +231,7 @@ class LiveBase(object):
 
     def get_filepath(self):
         video_dir = '/data/video' if os.path.exists('/.dockerenv') else 'data/video'
-        file_dir = f'{video_dir}/{self.room_platform}/{self.room_data.get("room_id")}-{self.room_name}'
+        file_dir = f'{video_dir}/{self.room_data.get("room_platform", "other")}/{self.room_data.get("room_id")}-{self.room_name}'
         if not os.path.exists(file_dir):
             os.makedirs(file_dir)
 
@@ -277,7 +276,8 @@ class LiveBase(object):
 
             # 状态改变记录
             if last_living != self.is_living:
-                logger.info(f'{self.__class__.__name__} - {self.room_name} | ' + self.room_name + ": living: " + str(self.is_living) + " last_living: " + str(last_living))
+                logger.info(f'{self.__class__.__name__} - {self.room_name} | ' + self.room_name + ": living: " + str(
+                    self.is_living) + " last_living: " + str(last_living))
 
                 # 开播通知
                 if self.is_living:
@@ -329,7 +329,8 @@ class LiveBase(object):
 
             template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
             if not template_info:
-                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id: {bili_upload_template_id} not found")
+                logger.error(
+                    f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id: {bili_upload_template_id} not found")
                 return
 
             if template_info.bili_account_id is None:
@@ -338,7 +339,8 @@ class LiveBase(object):
 
             bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
             if not bili_account:
-                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_account_id: {template_info.bili_account_id} not found")
+                logger.error(
+                    f"{self.__class__.__name__} - {self.room_name} | bili_account_id: {template_info.bili_account_id} not found")
                 return
 
             template_info = model_to_dict(template_info)

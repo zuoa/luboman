@@ -16,7 +16,6 @@ class Douyu(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
-        self.room_platform = 'douyu'
 
     def check_live(self, is_check_status=False):
         if len(self.room_url.split("douyu.com/")) < 2:
@@ -37,10 +36,12 @@ class Douyu(LiveBase):
             return False
 
         try:
-            room_info = requests.get(f"https://www.douyu.com/betard/{room_id}", headers=self.fake_headers, timeout=5).json()['room']
+            room_info = \
+            requests.get(f"https://www.douyu.com/betard/{room_id}", headers=self.fake_headers, timeout=5).json()['room']
             if room_info:
                 new_room_data = {
                     'room_id': room_id,
+                    'room_platform': self.__class__.__name__,
                     'room_title': room_info.get('room_name', ''),
                     'room_cover_url': room_info.get('room_pic', ''),
                     'room_cover_frame_url': room_info.get('room_pic', ''),

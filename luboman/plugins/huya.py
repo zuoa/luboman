@@ -16,10 +16,8 @@ from ..plugins import logger
 
 @PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m)\.)?huya\.com')
 class Huya(LiveBase):
-
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
-        self.room_platform = 'huya'
 
     def check_live(self, is_check_status=False):
         try:
@@ -54,6 +52,7 @@ class Huya(LiveBase):
 
             new_room_data = {
                 'room_id': room_id,
+                'room_platform': self.__class__.__name__,
                 'room_title': live_info.get('gameLiveInfo', {}).get('introduction', ''),
                 'room_cover_url': live_info.get('gameLiveInfo', {}).get('screenshot', ''),
                 'room_cover_frame_url': live_info.get('gameLiveInfo', {}).get('screenshot', ''),

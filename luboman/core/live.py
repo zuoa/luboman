@@ -349,7 +349,8 @@ class LiveBase(object):
                 if os.path.exists(file['video']) and os.path.getsize(file['video']) >= filtering_threshold_file_size:
                     prepare_upload_file_list.append(file)
 
-            upload('biliweb', prepare_upload_file_list, **upload_info)
+            ret = upload('biliweb', prepare_upload_file_list, **upload_info)
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | Bili上传完成: {ret}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)
         def process_upload_bili_completed(file_list):

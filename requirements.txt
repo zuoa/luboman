@@ -6,5 +6,6 @@ peewee
 Pillow
 rsa
 bypy
+telebot
 aiohttp
 aiohttp_cors

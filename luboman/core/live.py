@@ -377,7 +377,7 @@ class LiveBase(object):
     def _start_record(self):
         self.is_recording = True
 
-    @BaseNotifier.live_notify("{room_name} 开始上传网盘", "")
+    # @BaseNotifier.live_notify("{room_name} 开始上传网盘", "")
     def _upload_to_storage(self, file_list):
         try:
             upload_platform = self.room_data.get('upload_storage_platform')

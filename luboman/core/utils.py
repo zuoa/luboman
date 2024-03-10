@@ -1,5 +1,9 @@
+import logging
+import os
 import re
 import time
+
+logger = logging.getLogger('luboman')
 
 
 def match1(text, *patterns):
@@ -47,6 +51,36 @@ def format_live_prop_text(formatted_str: str, room_data):
     prop_text = time.strftime(prop_text.encode("unicode-escape").decode()).encode().decode("unicode-escape")
 
     return prop_text
+
+
+def get_video_dir():
+    return '/data/video' if os.path.exists('/.dockerenv') else 'data/video'
+
+
+def remove_filelist(file_list):
+    for f in file_list:
+        remove_file(f['video'])
+        if f.barrage is not None:
+            remove_file(f['barrage'])
+
+
+def remove_file(file: str):
+    try:
+        os.remove(file)
+        logger.info(f'删除 - {file}')
+    except:
+        logger.warning(f'删除失败 - {file}')
+
+
+def rename(filepath):
+    try:
+        os.rename(filepath + '.part', filepath)
+        logger.info(f'更名 {filepath + ".part"} 为 {filepath}')
+    except FileNotFoundError:
+        logger.debug(f'文件不存在: {filepath + ".part"}')
+    except FileExistsError:
+        os.rename(filepath + '.part', filepath)
+        logger.info(f'更名 {filepath + ".part"} 为 {filepath} 失败, {filepath} 已存在')
 
 
 class NamedLock:

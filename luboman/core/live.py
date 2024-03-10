@@ -17,7 +17,7 @@ from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
 from luboman.core.notify import BaseNotifier
-from luboman.core.utils import random_user_agent, get_valid_filename
+from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename
 from luboman.core.upload import upload
 from luboman.database.db import DB
 from luboman.database.models import RecordFile, BiliUploadTemplate, BiliAccount
@@ -188,7 +188,7 @@ class LiveBase(object):
             return False, None
         filepath = self.get_filepath()
         self.ffmpeg_download(filepath)
-        self.rename(filepath)
+        rename(filepath)
 
         return True, filepath
 
@@ -230,8 +230,10 @@ class LiveBase(object):
         return True
 
     def get_filepath(self):
-        video_dir = '/data/video' if os.path.exists('/.dockerenv') else 'data/video'
-        file_dir = f'{video_dir}/{self.room_data.get("room_platform", "other")}/{self.room_data.get("room_id")}-{self.room_name}'
+        video_dir = get_video_dir()
+        day = time.strftime('%Y-%m-%d', time.localtime(time.time()))
+
+        file_dir = f'{video_dir}/{self.room_data.get("room_platform", "other")}/{self.room_data.get("room_id")}-{self.room_name}/{day}'
         if not os.path.exists(file_dir):
             os.makedirs(file_dir)
 
@@ -252,17 +254,6 @@ class LiveBase(object):
             logger.info(f'{self.__class__.__name__} - {self.room_name} | 发送事件: {event}')
 
         self.event_manager.send(event)
-
-    @staticmethod
-    def rename(filepath):
-        try:
-            os.rename(filepath + '.part', filepath)
-            logger.info(f'更名 {filepath + ".part"} 为 {filepath}')
-        except FileNotFoundError:
-            logger.debug(f'文件不存在: {filepath + ".part"}')
-        except FileExistsError:
-            os.rename(filepath + '.part', filepath)
-            logger.info(f'更名 {filepath + ".part"} 为 {filepath} 失败, {filepath} 已存在')
 
     def create_event_manager(self):
         event_manager = EventManager()

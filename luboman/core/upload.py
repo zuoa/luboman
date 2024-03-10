@@ -43,20 +43,6 @@ class Uploader:
     def upload(self):
         raise NotImplementedError
 
-    @staticmethod
-    def remove_filelist(file_list):
-        for f in file_list:
-            Uploader.remove_file(f['video'])
-            if f.barrage is not None:
-                Uploader.remove_file(f['barrage'])
-
-    @staticmethod
-    def remove_file(file: str):
-        try:
-            os.remove(file)
-            logger.info(f'删除 - {file}')
-        except:
-            logger.warning(f'删除失败 - {file}')
 
 
 class BiliBili:

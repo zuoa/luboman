@@ -44,7 +44,6 @@ class Uploader:
         raise NotImplementedError
 
 
-
 class BiliBili:
     def __init__(self, video: 'Data'):
         self.app_key = None
@@ -711,6 +710,8 @@ class Data:
 
 
 def upload(uploader_platform, file_list, **kwargs):
+    if not uploader_platform:
+        return
     """
     上传入口
     """

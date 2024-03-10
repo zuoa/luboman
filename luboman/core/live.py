@@ -380,8 +380,9 @@ class LiveBase(object):
     @BaseNotifier.live_notify("{room_name} 开始上传网盘", "")
     def _upload_to_storage(self, file_list):
         try:
-            upload_platform = self.room_data.get('upload_storage_platform', 'bdpan')
-            upload(upload_platform, file_list)
+            upload_platform = self.room_data.get('upload_storage_platform')
+            if upload_platform:
+                upload(upload_platform, file_list)
         except Exception as e:
             logger.exception(f'{self.__class__.__name__} - {self.room_name} | 上传失败: {e}')
 

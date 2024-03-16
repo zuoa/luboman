@@ -18,7 +18,7 @@ class Douyin(LiveBase):
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
         self.fake_headers['referer'] = "https://live.douyin.com/"
-        self.fake_headers['cookie'] = config.get('user', {}).get('douyin_cookie', '')
+        self.fake_headers['cookie'] = config.get('douyin_cookies', '')
 
     def check_live(self, is_check_status=False):
 

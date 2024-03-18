@@ -1,12 +1,10 @@
 import logging
 import os
 
-from luboman.core.upload import BiliBili, Data
-
 from luboman.core.decorators import PluginTool
+from luboman.core.upload import BiliBili, Data
 from luboman.core.upload import Uploader
 from luboman.core.utils import format_live_prop_text
-from luboman.database.models import BiliUploadTemplate, BiliAccount
 
 logger = logging.getLogger('luboman')
 
@@ -46,8 +44,15 @@ class BiliWebUploader(Uploader):
         lines = template_info.get('lines', 'AUTO')
         tasks = template_info.get('threads', 3)
         with BiliBili(video) as bili:
-            bili.login(bili_account.get('bili_cookies_filepath'), {})
-            # bili.login_by_password("username", "password")
+            cookies_file = bili_account.get('bili_cookies_filepath')
+            if os.path.exists(cookies_file):
+                cookies_file_content = open(cookies_file, 'r').read()
+
+            if cookies_file_content:
+                bili.login(cookies_file, {})
+            else:
+                bili.login_by_cookies(bili_account.get('bili_cookies'))
+
             for file_info in self.file_list:
                 if not os.path.exists(file_info['video']):
                     continue

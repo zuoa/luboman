@@ -24,10 +24,11 @@ class Douyin(LiveBase):
 
         if "/user/" in self.room_url:
             try:
+                room_id = None
                 user_page = requests.get(self.room_url, headers=self.fake_headers, timeout=5).text
-                user_page_data = unquote(
-                    user_page.split('<script id="RENDER_DATA" type="application/json">')[1].split('</script>')[0])
-                room_id = match1(user_page_data, r'"web_rid":"([^"]+)"')
+                if "web_rid" in user_page:
+                    user_page_data = user_page[user_page.index("web_rid"):user_page.index("web_rid") + 50].replace('\\"', '"')
+                    room_id = match1(user_page_data, r'web_rid":"([^"]+)"')
                 if room_id is None or not room_id:
                     logger.debug(f"{Douyin.__name__}: {self.room_url}: 未开播")
                     return False

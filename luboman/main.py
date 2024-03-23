@@ -15,7 +15,7 @@ from luboman.core.decorators import PluginTool
 from luboman.core.live import start_room
 from luboman.core.timer import Timer
 from luboman import __version__, LOG_CONF
-from luboman.core.utils import remove_file, get_video_dir
+from luboman.core.utils import remove_file, get_video_dir, remove_dir
 from luboman.database.models import LiveRoom
 from luboman.plugins.bilibili import Bilibili
 from luboman.plugins.douyu import Douyu
@@ -48,7 +48,7 @@ def check_runtime_state():
                     continue
                 day_time = datetime.datetime.strptime(day_dir, "%Y-%m-%d")
                 if (day_time + datetime.timedelta(days=local_video_file_remain_days)) < datetime.datetime.now():
-                    remove_file(os.path.join(video_dir, platform_dir, room_dir, day_dir))
+                    remove_dir(os.path.join(video_dir, platform_dir, room_dir, day_dir))
 
 
 def do_exit(lp):

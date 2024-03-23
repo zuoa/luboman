@@ -61,12 +61,20 @@ def remove_filelist(file_list):
             remove_file(f['barrage'])
 
 
+def remove_dir(dir_path: str):
+    try:
+        os.rmdir(dir_path)
+        logger.info(f'删除 - {dir_path}')
+    except Exception as e:
+        logger.warning(f'删除失败 - {dir_path} :{e}')
+
+
 def remove_file(file: str):
     try:
         os.remove(file)
         logger.info(f'删除 - {file}')
-    except:
-        logger.warning(f'删除失败 - {file}')
+    except Exception as e:
+        logger.warning(f'删除失败 - {file} :{e}')
 
 
 def rename(filepath):

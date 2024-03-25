@@ -5,6 +5,7 @@ import functools
 import logging.config
 import os
 import re
+import time
 
 from playhouse.shortcuts import model_to_dict
 
@@ -34,24 +35,27 @@ async def start_all_record():
 
 def check_runtime_state():
     logger.info("检查运行状态")
-    local_video_file_remain_days = int(config.get("local_video_file_remain_days", 3))
+    try:
+        local_video_file_remain_days = int(config.get("local_video_file_remain_days", 3))
 
-    video_dir = get_video_dir()
+        video_dir = get_video_dir()
 
-    for platform_dir in os.listdir(video_dir):
-        if not os.path.isdir(os.path.join(video_dir, platform_dir)):
-            continue
-
-        for room_dir in os.listdir(os.path.join(video_dir, platform_dir)):
-            if not os.path.isdir(os.path.join(video_dir, platform_dir, room_dir)):
+        for platform_dir in os.listdir(video_dir):
+            if not os.path.isdir(os.path.join(video_dir, platform_dir)):
                 continue
 
-            for day_dir in os.listdir(os.path.join(video_dir, platform_dir, room_dir)):
-                if not os.path.isdir(os.path.join(video_dir, platform_dir, room_dir, day_dir)):
+            for room_dir in os.listdir(os.path.join(video_dir, platform_dir)):
+                if not os.path.isdir(os.path.join(video_dir, platform_dir, room_dir)):
                     continue
-                day_time = datetime.datetime.strptime(day_dir, "%Y-%m-%d")
-                if (day_time + datetime.timedelta(days=local_video_file_remain_days)) < datetime.datetime.now():
-                    remove_dir(os.path.join(video_dir, platform_dir, room_dir, day_dir))
+
+                for day_dir in os.listdir(os.path.join(video_dir, platform_dir, room_dir)):
+                    if not os.path.isdir(os.path.join(video_dir, platform_dir, room_dir, day_dir)):
+                        continue
+                    day_time = datetime.datetime.strptime(day_dir, "%Y-%m-%d")
+                    if (day_time + datetime.timedelta(days=local_video_file_remain_days)) < datetime.datetime.now():
+                        remove_dir(os.path.join(video_dir, platform_dir, room_dir, day_dir))
+    except Exception as e:
+        logger.error(f"检查运行状态失败: {e}")
 
 
 def do_exit(lp):
@@ -64,7 +68,7 @@ if __name__ == '__main__':
     config.load_from_db()
     PluginTool(plugins)
 
-    Timer(func=check_runtime_state, interval=60).start()
+    Timer(func=check_runtime_state, interval=3).start()
 
     loop = asyncio.get_event_loop()
     future = asyncio.gather(start_all_record(), luboman.web.serve())

@@ -34,7 +34,7 @@ async def start_all_record():
 
 def check_runtime_state():
     logger.info("检查运行状态")
-    local_video_file_remain_days = config.get("local_video_file_remain_days", 3)
+    local_video_file_remain_days = int(config.get("local_video_file_remain_days", 3))
 
     video_dir = get_video_dir()
 

@@ -24,6 +24,8 @@ from luboman.plugins.huya import Huya
 
 from luboman import plugins
 
+logger = logging.getLogger("luboman")
+
 
 async def start_all_record():
     for room in LiveRoom.select():
@@ -31,6 +33,7 @@ async def start_all_record():
 
 
 def check_runtime_state():
+    logger.info("检查运行状态")
     local_video_file_remain_days = config.get("local_video_file_remain_days", 3)
 
     video_dir = get_video_dir()

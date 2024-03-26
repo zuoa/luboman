@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import shutil
 import time
 
 logger = logging.getLogger('luboman')
@@ -63,7 +64,7 @@ def remove_filelist(file_list):
 
 def remove_dir(dir_path: str):
     try:
-        os.rmdir(dir_path)
+        shutil.rmtree(dir_path, ignore_errors=True)
         logger.info(f'删除 - {dir_path}')
     except Exception as e:
         logger.warning(f'删除失败 - {dir_path} :{e}')

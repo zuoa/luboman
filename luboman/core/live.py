@@ -34,6 +34,7 @@ class LiveBase(object):
 
         self.raw_stream_url = None
         self.is_living = False
+        self.living_time = 0
         self.is_recording = False
 
         self.suffix = suffix.lower()
@@ -262,8 +263,11 @@ class LiveBase(object):
         def check_status(event):
             logger.debug(self.room_name + ": Checking status")
             last_living = self.is_living
+            last_living_time = self.living_time
             self.is_living = self.check_live(is_check_status=True)
             self.room_data['live_state'] = 1 if self.is_living else 0
+            if self.is_living:
+                self.living_time = int(time.time() * 1000)
 
             # 状态改变记录
             if last_living != self.is_living:
@@ -271,7 +275,7 @@ class LiveBase(object):
                     self.is_living) + " last_living: " + str(last_living))
 
                 # 开播通知
-                if self.is_living:
+                if self.is_living and self.living_time - last_living_time > 60000:
                     self.send_event(Event(EventType.EVENT_NOTIFY, (f'开播通知:{self.room_name}',
                                                                    f'### {self.room_name}[{self.room_data.get("room_id")}]开播了\n\n{self.room_data.get("room_title")}\n\n{self.room_url}')))
 

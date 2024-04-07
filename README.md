@@ -34,4 +34,5 @@ services:
 docker run -P --name luboman -v /data/luboman:/data -v ~/.bypy:/root/.bypy -p 5001:5001 -d --restart always ghcr.io/zuoa/luboman:main`
 ```
 
-
+#### 获取阿里云盘token
+https://alist.nn.ci/zh/guide/drivers/aliyundrive.html#

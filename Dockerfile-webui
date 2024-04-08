@@ -1,22 +1,11 @@
 FROM python:3.9-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN  set -eux; \
-     apt-get update; \
-     apt-get install -y --no-install-recommends  ffmpeg; \
-     pip3 install --no-cache-dir -r requirements.txt
-COPY luboman ./luboman
-RUN mkdir bin && ls -a
+RUN  pip3 install --no-cache-dir -r requirements.txt
+COPY webservice ./webservice
 
-COPY --from=tools --chmod=777 /opt/aliyunpan/aliyunpan /usr/bin/aliyunpan
-#COPY --from=tools --chmod=777 /usr/bin/ffmpeg /usr/bin/ffmpeg
-
-RUN pwd && ls -a
-
-WORKDIR /app/luboman
+WORKDIR /app/webservice
 ENV TZ=Asia/Shanghai
 ENV PYTHONPATH="/app:$PYTHONPATH"
-EXPOSE 5005/tcp
-VOLUME /data
-VOLUME /root/.bypy
-ENTRYPOINT ["python", "main.py"]
+EXPOSE 5010/tcp
+ENTRYPOINT ["gunicorn", "-c", "config.py", "app:app"]

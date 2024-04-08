@@ -9,3 +9,6 @@ bypy
 telebot
 aiohttp
 aiohttp_cors
+flask
+gunicorn
+gevent

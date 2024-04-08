@@ -16,9 +16,8 @@ from playhouse.shortcuts import model_to_dict
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
-from luboman.core.notify import BaseNotifier
-from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename
 from luboman.core.upload import upload
+from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename
 from luboman.database.db import DB
 from luboman.database.models import RecordFile, BiliUploadTemplate, BiliAccount
 
@@ -36,7 +35,7 @@ class LiveBase(object):
         self.is_living = False
         self.living_time = 0
         self.is_recording = False
-
+        self._active = True
         self.suffix = suffix.lower()
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
@@ -52,6 +51,9 @@ class LiveBase(object):
             'accept-language': 'zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3',
             'user-agent': random_user_agent(),
         }
+
+    def __del__(self):
+        logger.warning(f'{self.__class__.__name__} - {self.room_name} | 销毁')
 
     @property
     def ffmpeg_opt_args(self):
@@ -75,7 +77,7 @@ class LiveBase(object):
         return option_args
 
     async def async_check_status(self):
-        while True:
+        while self._active:
             self.send_event(Event(EventType.EVENT_CHECK_STATUS, (1,)))
             await asyncio.sleep(30)
 
@@ -83,6 +85,15 @@ class LiveBase(object):
         logger.info(f'{self.__class__.__name__} - {self.room_name} |  开启直播间')
         logger.info(self.room_data)
         asyncio.create_task(self.async_check_status())
+
+    def stop(self):
+        logger.warning(f'{self.__class__.__name__} - {self.room_name} |  停止直播间')
+        self._active = False
+        self.record_thread.join()
+        self.event_manager.stop()
+
+    def stopped(self):
+        logger.warning(f'{self.__class__.__name__} - {self.room_name} | 直播间已停止')
 
     def start_record_thread(self):
         record_thread = threading.Thread(target=self.record_func)
@@ -102,7 +113,7 @@ class LiveBase(object):
 
         logger.info(f'{self.__class__.__name__} - {self.room_name} | 启动录制线程')
 
-        while True:
+        while self._active:
             # 未启动录制
             if not self.is_recording:
                 time.sleep(3)
@@ -123,7 +134,7 @@ class LiveBase(object):
             except Exception as e:
                 logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
             finally:
-                self.stop()
+                self.stopped()
 
             if ret:
                 # 成功下载重置重试次数
@@ -176,9 +187,6 @@ class LiveBase(object):
                 if is_offline:
                     self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
                     record_file_list = []
-
-    def stop(self):
-        logger.warning(f'{self.__class__.__name__} - {self.room_name} | 停止录制')
 
     @abc.abstractmethod
     def check_live(self, is_check_status=False):
@@ -395,11 +403,11 @@ class LiveBase(object):
 def start_room(room_data, **kwargs):
     room_name = room_data.get('room_name')
     url = room_data.get('room_url')
-    room_id = room_data.get('id')
+    room_row_id = room_data.get('id')
 
     kwargs.update({'room_data': room_data})
 
-    pg = PluginTool.running_plugins.get(str(room_id))
+    pg = PluginTool.running_plugins.get(str(room_row_id))
     if not pg:
         for plugin in PluginTool.live_plugins:
             if re.match(plugin.VALID_URL_BASE, url):
@@ -408,7 +416,14 @@ def start_room(room_data, **kwargs):
                     if kwargs.get(k):
                         pg.__dict__[k] = kwargs.get(k)
 
-                PluginTool.running_plugins[str(room_id)] = pg
+                PluginTool.running_plugins[str(room_row_id)] = pg
                 break
     if pg:
         return pg.start()
+
+
+def stop_room(room_row_id):
+    pg = PluginTool.running_plugins.pop(str(room_row_id))
+    if pg:
+        pg.stop()
+        del pg

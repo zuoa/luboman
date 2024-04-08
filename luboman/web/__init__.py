@@ -11,7 +11,7 @@ from playhouse.shortcuts import model_to_dict
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import Event, EventType
-from luboman.core.live import start_room
+from luboman.core.live import start_room, stop_room
 from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
 from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate, GlobalConfig
@@ -160,6 +160,7 @@ async def del_room(request):
 
     try:
         LiveRoom.delete_by_id(row_id)
+        stop_room(row_id)
         return success(row_id)
     except Exception as e:
         logger.error(e)

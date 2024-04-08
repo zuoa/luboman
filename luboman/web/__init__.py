@@ -1,11 +1,8 @@
-import asyncio
 import datetime
 import functools
 import json
 import logging
 import os
-import pathlib
-from importlib.resources import files
 
 import aiohttp_cors
 from aiohttp import web
@@ -18,7 +15,6 @@ from luboman.core.live import start_room
 from luboman.core.upload import BiliBili, Data
 from luboman.database.db import DB
 from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate, GlobalConfig
-from luboman.plugins.bilibili import Bilibili
 
 logger = logging.getLogger('luboman')
 
@@ -35,25 +31,32 @@ json_response = functools.partial(web.json_response, dumps=json_dumps)
 routes = web.RouteTableDef()
 
 
-def success(data=None):
-    if data is None:
-        data = {}
+def resp_data(data=None, code=0, message="success"):
     wrapper_data = {
-        "success": True,
-        "code": 0,
+        "success": code == 0,
+        "code": code,
         "data": data,
-        "message": "success"
+        "message": message
     }
     return json_response(wrapper_data)
 
 
-def error(code, message):
-    wrapper_data = {
-        "success": False,
-        "code": code,
-        "message": message
+def resp_page_list(list_, total, page):
+    data = {
+        "list": list_,
+        "total": total,
+        "page": page,
     }
-    return web.json_response(wrapper_data)
+
+    return resp_data(data)
+
+
+def success(data=None):
+    return resp_data(data)
+
+
+def error(code, message):
+    return resp_data(code=code, message=message)
 
 
 @routes.get("/")

@@ -1,10 +1,11 @@
 import time
 from typing import Optional, Dict
+
 import requests
 
-from luboman.core.live import LiveBase
 from luboman.config import config
 from luboman.core.decorators import PluginTool
+from luboman.core.live import LiveBase
 from luboman.core.utils import match1, NamedLock
 from luboman.plugins import logger
 
@@ -52,6 +53,7 @@ class AfreecaTV(LiveBase):
                 'room_title': channel_info.get('CHANNEL', {}).get('TITLE', ''),
                 'room_owner': channel_info.get('CHANNEL', {}).get('BJNICK', ''),
                 'room_owner_id': channel_info.get('CHANNEL', {}).get('BJID', ''),
+                'room_cover': f"https://liveimg.afreecatv.com/h/{channel_info.get('CHANNEL', {}).get('BNO', '')}.webp",
                 'live_state': 1
             }
             self.room_data.update(new_room_data)
@@ -122,4 +124,4 @@ class AfreecaTVUtils:
 
 
 if __name__ == '__main__':
-    print(match1('https://bj.afreecatv.com/dlsgk1763', r"https?://.*?\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"))
+    print(match1('https://play.afreecatv.com/tildaaa/263094720', r"https?://.*?\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"))

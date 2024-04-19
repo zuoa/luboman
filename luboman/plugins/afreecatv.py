@@ -3,15 +3,15 @@ from typing import Optional, Dict
 import requests
 
 from luboman.core.live import LiveBase
-from ..config import config
-from ..core.decorators import PluginTool
-from ..core.utils import match1, NamedLock
-from ..plugins import logger
+from luboman.config import config
+from luboman.core.decorators import PluginTool
+from luboman.core.utils import match1, NamedLock
+from luboman.plugins import logger
 
 
 @PluginTool.live(regexp=r'https?://(.*?)\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?')
 class AfreecaTV(LiveBase):
-    VALID_URL_BASE = r"https?://play\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"
+    VALID_URL_BASE = r"https?://.*?\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"
     CHANNEL_API_URL = "https://live.afreecatv.com/afreeca/player_live_api.php"
     QUALITIES = ["original", "hd4k", "hd", "sd"]
 
@@ -119,3 +119,7 @@ class AfreecaTVUtils:
                 AfreecaTVUtils._cookie_expires = time.time() + (7 * 24 * 60 * 60)
 
             return AfreecaTVUtils._cookie
+
+
+if __name__ == '__main__':
+    print(match1('https://bj.afreecatv.com/dlsgk1763', r"https?://.*?\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"))

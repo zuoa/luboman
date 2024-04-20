@@ -53,7 +53,8 @@ class AfreecaTV(LiveBase):
                 'room_title': channel_info.get('CHANNEL', {}).get('TITLE', ''),
                 'room_owner': channel_info.get('CHANNEL', {}).get('BJNICK', ''),
                 'room_owner_id': channel_info.get('CHANNEL', {}).get('BJID', ''),
-                'room_cover': f"https://liveimg.afreecatv.com/h/{channel_info.get('CHANNEL', {}).get('BNO', '')}.webp",
+                'room_cover_url': f"https://liveimg.afreecatv.com/h/{channel_info.get('CHANNEL', {}).get('BNO', '')}.webp",
+                'room_cover_frame_url': f"https://liveimg.afreecatv.com/h/{channel_info.get('CHANNEL', {}).get('BNO', '')}.webp",
                 'live_state': 1
             }
             self.room_data.update(new_room_data)

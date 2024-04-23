@@ -48,7 +48,7 @@ class AfreecaTV(LiveBase):
                 return False
 
             new_room_data = {
-                'room_id': channel_info.get('CHANNEL', {}).get('BNO', ''),
+                'room_id': username,
                 'room_platform': self.__class__.__name__,
                 'room_title': channel_info.get('CHANNEL', {}).get('TITLE', ''),
                 'room_owner': channel_info.get('CHANNEL', {}).get('BJNICK', ''),

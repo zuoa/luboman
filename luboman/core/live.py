@@ -156,6 +156,15 @@ class LiveBase(object):
                 except Exception as e:
                     logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
 
+                try:
+                    ## 录像最后一个时间减去第一个起始时间大于24小时
+                    first_file = record_file_list[0]
+                    if (recording_context["end_time"] - first_file["begin_time"]).seconds > 86400:
+                        self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
+                        record_file_list = []
+                except Exception as ex:
+                    logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{ex}')
+
             else:
                 if retry_count < 3:
                     retry_count += 1

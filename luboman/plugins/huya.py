@@ -8,10 +8,10 @@ from urllib.parse import parse_qs, unquote
 import requests
 
 from luboman.core.live import LiveBase
-from ..config import config
-from ..core.decorators import PluginTool
-from ..core.utils import match1
-from ..plugins import logger
+from luboman.config import config
+from luboman.core.decorators import PluginTool
+from luboman.core.utils import match1
+from luboman.plugins import logger
 
 
 @PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m)\.)?huya\.com')
@@ -117,3 +117,7 @@ class Huya(LiveBase):
             logger.debug(f"{Huya.__name__}: {self.room_url}: 解析错误({e})")
 
         return False
+
+
+if __name__ == '__main__':
+    Huya('test', 'https://www.huya.com/52226').check_live()

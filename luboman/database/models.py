@@ -1,36 +1,26 @@
 import datetime
 import logging
 import os.path
-from pathlib import Path
-from sqlite3 import IntegrityError
 
-from peewee import Model, AutoField, CharField, IntegerField, TextField, ForeignKeyField, CompositeKey, DateTimeField
-from playhouse.shortcuts import ReconnectMixin, model_to_dict
-from playhouse.sqlite_ext import SqliteExtDatabase, JSONField
+from peewee import Model, AutoField, CharField, IntegerField, TextField, DateTimeField
+from playhouse.pool import PooledPostgresqlExtDatabase
+from playhouse.shortcuts import model_to_dict
+from playhouse.sqlite_ext import JSONField
 
 logger = logging.getLogger('luboman')
-
-
-def get_path(*other):
-    """获取数据文件绝对路径"""
-    dir_path = "/data/db" if os.path.exists('/.dockerenv') else 'data/db'
-    # 若目录不存在则创建
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-
-    return os.path.join(dir_path, *other)
 
 
 def get_current_time():
     return datetime.datetime.now()
 
 
-# 自动重连, 避免报错导致连接丢失
-class ReconnectSqliteDatabase(ReconnectMixin, SqliteExtDatabase):
-    pass
+db_host = os.environ.get('DATABASE_HOST', '10.0.4.13')
+db_port = os.environ.get('DATABASE_PORT', 54321)
+db_name = os.environ.get('DATABASE_NAME', 'luboman')
+db_user = os.environ.get('DATABASE_USER', 'luboman')
+db_password = os.environ.get('DATABASE_PASSWORD', 'luboman@2024#Hangzhou')
 
-
-db = ReconnectSqliteDatabase(f"{get_path('data.sqlite3')}")
+db = PooledPostgresqlExtDatabase(db_name, host=db_host, port=db_port, user=db_user, password=db_password)
 
 
 class BaseModel(Model):

@@ -1,0 +1,58 @@
+version: "3"
+# 服务配置
+services:
+  postgres:
+    image: postgres:13-alpine
+    container_name: luboman-postgres
+    restart: always
+    environment:
+      - "TZ=Asia/Shanghai"
+      - "POSTGRES_USER=luboman"
+      - "POSTGRES_PASSWORD=luboman@2024#Hangzhou"
+    ports:
+      - 54321:5432
+    volumes:
+      - ./data/pgsql/data:/var/lib/postgresql/data
+    networks:
+      - bridge_net
+
+  app:
+    image: ghcr.io/zuoa/luboman:main
+    container_name: luboman
+    restart: "always"
+    environment:
+      - "TZ=Asia/Shanghai"
+      - "DATABASE_HOST=postgres"
+      - "DATABASE_PORT=5432"
+      - "DATABASE_USER=luboman"
+      - "DATABASE_PASSWORD=luboman@2024#Hangzhou"
+      - "DATABASE_NAME=luboman"
+    depends_on:
+      - postgres
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./data/luboman:/data
+      - ~/.bypy:/root/.bypy
+    networks:
+      - bridge_net
+
+  webui:
+    image: ghcr.io/zuoa/luboman-webui:main
+    container_name: luboman-webui
+    restart: "always"
+    environment:
+      - "TZ=Asia/Shanghai"
+    depends_on:
+      - app
+    links:
+      - "app:luboman-service"
+    ports:
+      - "5001:5001"
+    networks:
+      - bridge_net
+
+# 网络配置
+networks:
+  bridge_net:
+    driver: bridge

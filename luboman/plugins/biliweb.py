@@ -42,7 +42,7 @@ class BiliWebUploader(Uploader):
             tags = ['录播Man']
         video.set_tag(tags)
         lines = template_info.get('lines', 'AUTO')
-        tasks = template_info.get('threads', 3)
+        tasks = template_info.get('threads', 5)
         with BiliBili(video) as bili:
             cookies_file = bili_account.get('bili_cookies_filepath')
             if os.path.exists(cookies_file):

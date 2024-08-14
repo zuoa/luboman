@@ -2,7 +2,7 @@ version: "3"
 # 服务配置
 services:
   postgres:
-    image: postgres:13-alpine
+    image: postgres:13.16
     container_name: luboman-postgres
     restart: always
     environment:

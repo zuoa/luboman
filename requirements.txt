@@ -3,6 +3,7 @@ quickjs
 jieba
 jsengine
 peewee
+psycopg2-binary
 Pillow
 rsa
 bypy

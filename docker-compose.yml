@@ -32,7 +32,7 @@ services:
     ports:
       - "5005:5005"
     volumes:
-      - ./data/luboman:/data
+      - ./data/app:/data
       - ~/.bypy:/root/.bypy
     networks:
       - bridge_net

@@ -29,7 +29,7 @@ class LiveBase(object):
 
         self.room_name = room_name
         self.room_url = room_url
-        self.room_data = {}
+        self.room_data = None
 
         self.raw_stream_url = None
         self.is_living = False

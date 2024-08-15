@@ -5,11 +5,11 @@ from urllib.parse import urlencode, parse_qs, urlparse, urlunparse, unquote
 
 import requests
 
-from luboman.core.live import LiveBase
 from luboman.core.utils import match1, NamedLock
-from ..config import config
-from . import logger
-from ..core.decorators import PluginTool
+from luboman.config import config
+from luboman.core.decorators import PluginTool
+from luboman.core.live import LiveBase
+from luboman.plugins import logger
 
 
 @PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m|live)\.)?douyin\.com')
@@ -159,3 +159,6 @@ class DouyinUtils:
             parsed_url.fragment
         ))
         return new_url
+
+if __name__ == '__main__':
+    print(Douyin('test', 'https://live.douyin.com/Ppnn..').check_live(is_check_status=True))

@@ -113,7 +113,7 @@ async def set_config(request):
 @routes.post("/v1/LiveRoom/listAll")
 async def list_room(request):
     res = []
-    for ls in LiveRoom.select():
+    for ls in LiveRoom.select().order_by(LiveRoom.gmt_created.asc()):
         temp = model_to_dict(ls)
         res.append(temp)
     return success(res)

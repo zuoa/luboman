@@ -49,7 +49,7 @@ class Kuaishou(LiveBase):
             logger.debug(f"{self.logger_prefix}: 直播间未开播或非直播")
             return False
         if room_info['result'] != 1:
-            logger.error(f"{self.logger_prefix}: {room_info}")
+            logger.error(f"{self.logger_prefix} 未知状态: {room_info}")
             return False
 
         new_room_data = {
@@ -82,4 +82,4 @@ class Kuaishou(LiveBase):
 
 
 if __name__ == '__main__':
-    Kuaishou('test', 'https://live.kuaishou.com/u/tianci666').check_live()
+    print(Kuaishou('test', 'https://live.kuaishou.com/u/3xeg4htns3tcp6w').check_live(is_check_status=True))

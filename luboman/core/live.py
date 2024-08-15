@@ -29,7 +29,7 @@ class LiveBase(object):
 
         self.room_name = room_name
         self.room_url = room_url
-        self.room_data = None
+        self.room_data = {}
 
         self.raw_stream_url = None
         self.is_living = False
@@ -123,7 +123,7 @@ class LiveBase(object):
                 "begin_time": datetime.datetime.now(),
             }
 
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | 开始新的录制')
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | 开始新的录制:{self.raw_stream_url}')
 
             ret = False
             filepath = None
@@ -131,6 +131,7 @@ class LiveBase(object):
             try:
                 # 阻塞下载，流没中断，会一直录制
                 ret, filepath = self.record()
+                logger.info(f'{self.__class__.__name__} - {self.room_name} | 片段录制结束:{ret} {filepath}')
             except Exception as e:
                 logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
             finally:

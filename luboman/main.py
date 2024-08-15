@@ -68,7 +68,7 @@ if __name__ == '__main__':
     config.load_from_db()
     PluginTool(plugins)
 
-    Timer(func=check_runtime_state, interval=60).start()
+    Timer(func=check_runtime_state, interval=1800).start()
 
     loop = asyncio.get_event_loop()
     future = asyncio.gather(start_all_record(), luboman.web.serve())

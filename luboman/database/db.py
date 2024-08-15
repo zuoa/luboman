@@ -68,7 +68,7 @@ class DB:
     @classmethod
     def update_live_room_operation_data(cls, data):
         update_columns = ["room_platform", "room_id", "room_title", "room_owner_id", "room_owner", "room_owner_avatar",
-                          "room_owner_title", "room_cover_url", "room_cover_frame_url", "live_state", "status"]
+                          "room_owner_title", "room_cover_url", "room_cover_frame_url", "live_state", "status", "last_living_time"]
         update_data = {
             key: value for key, value in data.items() if key in update_columns
         }

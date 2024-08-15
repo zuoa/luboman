@@ -279,13 +279,14 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_CHECK_STATUS, "NORMAL")
         def check_status(event):
-            logger.debug(self.room_name + ": Checking status")
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | 检查直播状态')
             last_living = self.is_living
             last_living_time = self.living_time
             self.is_living = self.check_live(is_check_status=True)
             self.room_data['live_state'] = 1 if self.is_living else 0
             if self.is_living:
                 self.living_time = int(time.time() * 1000)
+                self.room_data['last_living_time'] = datetime.datetime.now()
 
             # 状态改变记录
             if last_living != self.is_living:

@@ -89,6 +89,7 @@ class LiveRoom(BaseModel):
     bili_upload_template_id = IntegerField(null=True)
     upload_storage_platform = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True, default="flv")  # 视频格式
+    last_living_time = DateTimeField(null=True)  # 最近直播时间
     live_state = IntegerField(default=0)  # 直播状态, 0为未开播, 1为开播
     status = CharField(default='IDLE')  # 状态, IDLE为空闲, WORKING为忙碌
     gmt_created = DateTimeField(null=True, default=get_current_time)  # 创建时间

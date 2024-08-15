@@ -333,6 +333,7 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
+            logger.info(f'{self.__class__.__name__} - {self.room_name} | Bili上传开始: {file_list}')
             bili_upload_template_id = self.room_data.get('bili_upload_template_id')
             if bili_upload_template_id is None:
                 logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id is None")

@@ -4,7 +4,6 @@ import os.path
 
 from peewee import Model, AutoField, CharField, IntegerField, TextField, DateTimeField
 from playhouse.pool import PooledPostgresqlExtDatabase
-from playhouse.shortcuts import model_to_dict
 from playhouse.sqlite_ext import JSONField
 
 logger = logging.getLogger('luboman')
@@ -26,49 +25,6 @@ db = PooledPostgresqlExtDatabase(db_name, host=db_host, port=db_port, user=db_us
 class BaseModel(Model):
     class Meta:
         database = db
-
-    @classmethod
-    def add(cls, **kwargs) -> int:
-        """添加行, 返回添加的行的 id 值"""
-        with db.atomic():
-            dq = cls.create(**kwargs)
-            return dq.id
-
-    @classmethod
-    def delete_(cls, **kwargs):
-        """删除行"""
-        with db.atomic():
-            try:
-                query = cls.get(**kwargs)
-                return query.delete_instance()
-            except cls.DoesNotExist:
-                return 0
-
-    @classmethod
-    def create_table_(cls):
-        """创建表"""
-        with db.atomic():
-            if not cls.table_exists():
-                cls.create_table()
-
-    @classmethod
-    def get_by_id_(cls, pk):
-        """根据主键获取记录"""
-        with db.connection_context():
-            try:
-                return cls.get_by_id(pk)
-            except cls.DoesNotExist:
-                return cls()  # 若不存在, 则返回一个空对象
-
-    @classmethod
-    def get_dict(cls, **kwargs):
-        """获取字典类型的数据"""
-        with db.connection_context():
-            try:
-                obj = cls.get(**kwargs)
-                return model_to_dict(obj)
-            except cls.DoesNotExist:
-                return {}
 
 
 class GlobalConfig(BaseModel):

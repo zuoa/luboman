@@ -152,7 +152,7 @@ class LiveBase(object):
                 # 数据库记录
                 try:
                     logger.info(recording_context)
-                    RecordFile.add(**recording_context)
+                    RecordFile.create(**recording_context)
                 except Exception as e:
                     logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
 
@@ -338,7 +338,7 @@ class LiveBase(object):
                 logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id is None")
                 return
 
-            template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
+            template_info = BiliUploadTemplate.get_by_id(bili_upload_template_id)
             if not template_info:
                 logger.error(
                     f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id: {bili_upload_template_id} not found")

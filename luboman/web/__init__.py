@@ -102,7 +102,7 @@ async def set_config(request):
                 cfg.value = v
                 cfg.save()
             except GlobalConfig.DoesNotExist:
-                GlobalConfig.add(key=k, value=v)
+                GlobalConfig.create(key=k, value=v)
     except:
         logger.exception("1")
 
@@ -123,7 +123,7 @@ async def list_room(request):
 async def add_room(request):
     json_data = await request.json()
     try:
-        new_room_id = LiveRoom.add(**json_data)
+        new_room_id = LiveRoom.create(**json_data)
 
         room = LiveRoom.get_by_id(new_room_id)
         if room:
@@ -216,7 +216,7 @@ async def add_bili_account(request):
         return error(1, "bili_cookie or bili_cookie_filepath is required")
     try:
 
-        bili_account_id = BiliAccount.add(**data)
+        bili_account_id = BiliAccount.create(**data)
 
         resp_data = BiliAccount.get_by_id(bili_account_id)
 
@@ -264,7 +264,7 @@ async def add_bili_upload_template(request):
     if not data.get('tags'):
         data['tags'] = ["录播Man"]
     try:
-        bili_account_id = BiliUploadTemplate.add(**data)
+        bili_account_id = BiliUploadTemplate.create(**data)
         return success(bili_account_id)
     except Exception as e:
         logger.error(e)

@@ -26,11 +26,11 @@ class DB:
     @classmethod
     def init(cls):
         """初始化数据库"""
-        GlobalConfig.create_table_()
-        LiveRoom.create_table_()
-        BiliAccount.create_table_()
-        BiliUploadTemplate.create_table_()
-        RecordFile.create_table_()
+        GlobalConfig.create_table()
+        LiveRoom.create_table()
+        BiliAccount.create_table()
+        BiliUploadTemplate.create_table()
+        RecordFile.create_table()
 
     @classmethod
     def connect(cls):

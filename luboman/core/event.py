@@ -102,6 +102,7 @@ class EventManager(Thread):
 class EventType:
     EVENT_CHECK_STATUS = "check-status"
     EVENT_DOWNLOAD_ASSET = "download-asset"
+    EVENT_UPDATE_DB_ROOM_DATA = "update-db-room-data"
     EVENT_REFRESH_ROOM_INFO = "refresh-room-info"
     EVENT_PRE_RECORD = "pre-record"
     EVENT_RECORD = "record"

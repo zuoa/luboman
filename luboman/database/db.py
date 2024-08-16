@@ -1,13 +1,8 @@
 import logging
 import time
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import List
+from datetime import datetime
 
-from peewee import OperationalError
-from playhouse.shortcuts import model_to_dict
-
-from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
+from .models import LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
 
 logger = logging.getLogger('luboman')
 
@@ -31,17 +26,6 @@ class DB:
         BiliAccount.create_table()
         BiliUploadTemplate.create_table()
         RecordFile.create_table()
-
-    @classmethod
-    def connect(cls):
-        """打开数据库连接"""
-        db.connect()
-
-    @classmethod
-    def close(cls):
-        """关闭数据库连接"""
-        db.close()
-
 
     @classmethod
     def update_bili_upload_template(cls, data):

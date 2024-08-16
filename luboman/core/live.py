@@ -289,6 +289,8 @@ class LiveBase(object):
                 self.room_data['last_living_time'] = datetime.datetime.now()
                 self.send_event(Event(EventType.EVENT_DOWNLOAD_ASSET))
 
+            self.send_event(Event(EventType.EVENT_UPDATE_DB_ROOM_DATA))
+
             # 状态改变记录
             if last_living != self.is_living:
                 logger.info(f'{self.__class__.__name__} - {self.room_name} | ' + self.room_name + ": living: " + str(
@@ -303,6 +305,8 @@ class LiveBase(object):
             if self.is_living and not self.is_recording:
                 self.send_event(Event(EventType.EVENT_PRE_RECORD))
 
+        @event_manager.register(EventType.EVENT_UPDATE_DB_ROOM_DATA)
+        def update_db_room_data():
             # 更新数据库信息
             DB.update_live_room_operation_data(self.room_data)
             logger.debug(f'{self.__class__.__name__} - {self.room_name} | Room data updated:{self.room_data}')

@@ -270,7 +270,7 @@ class LiveBase(object):
 
     def send_event(self, event):
         if event.type_ != EventType.EVENT_CHECK_STATUS:
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | 发送事件: {event}')
+            logger.debug(f'{self.__class__.__name__} - {self.room_name} | 发送事件: {event}')
 
         self.event_manager.send(event)
 
@@ -305,6 +305,7 @@ class LiveBase(object):
 
             # 更新数据库信息
             DB.update_live_room_operation_data(self.room_data)
+            logger.debug(f'{self.__class__.__name__} - {self.room_name} | Room data updated:{self.room_data}')
 
         @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
         def refresh_room_info(room_info):

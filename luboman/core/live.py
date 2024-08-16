@@ -307,9 +307,14 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPDATE_DB_ROOM_DATA)
         def update_db_room_data():
-            # 更新数据库信息
-            DB.update_live_room_operation_data(self.room_data)
-            logger.debug(f'{self.__class__.__name__} - {self.room_name} | Room data updated:{self.room_data}')
+
+            try:
+                logger.debug(f'{self.__class__.__name__} - {self.room_name} |Try to update room data in db:{self.room_data}')
+                # 更新数据库信息
+                DB.update_live_room_operation_data(self.room_data)
+                logger.debug(f'{self.__class__.__name__} - {self.room_name} | Room data updated')
+            except Exception as e:
+                logger.error(f'{self.__class__.__name__} - {self.room_name} | 更新数据库信息失败: {e}')
 
         @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
         def refresh_room_info(room_info):

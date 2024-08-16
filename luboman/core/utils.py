@@ -55,6 +55,10 @@ def get_video_dir():
     return '/data/video' if os.path.exists('/.dockerenv') else 'data/video'
 
 
+def get_public_dir():
+    return '/data/public' if os.path.exists('/.dockerenv') else 'data/public'
+
+
 def remove_filelist(file_list):
     for f in file_list:
         remove_file(f['video'])
@@ -87,6 +91,18 @@ def rename(filepath):
     except FileExistsError:
         os.rename(filepath + '.part', filepath)
         logger.info(f'更名 {filepath + ".part"} 为 {filepath} 失败, {filepath} 已存在')
+
+
+def download_file(url, local_path, headers=None):
+    import requests
+    if headers is None:
+        headers = {}
+    resp = requests.get(url, stream=True, headers=headers, timeout=120)
+    with open(local_path, 'wb') as f:
+        for chunk in resp.iter_content(chunk_size=1024):
+            if chunk:
+                f.write(chunk)
+                f.flush()
 
 
 class NamedLock:

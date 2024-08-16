@@ -17,7 +17,7 @@ from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
 from luboman.core.upload import upload
-from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename
+from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename, get_public_dir, download_file
 from luboman.database.db import DB
 from luboman.database.models import RecordFile, BiliUploadTemplate, BiliAccount
 
@@ -287,6 +287,7 @@ class LiveBase(object):
             if self.is_living:
                 self.living_time = int(time.time() * 1000)
                 self.room_data['last_living_time'] = datetime.datetime.now()
+                self.send_event(Event(EventType.EVENT_DOWNLOAD_ASSET))
 
             # 状态改变记录
             if last_living != self.is_living:
@@ -332,6 +333,32 @@ class LiveBase(object):
         def process_notify(title, content):
             from luboman.core.notify import notify_message
             notify_message(title, content)
+
+        @event_manager.register(EventType.EVENT_DOWNLOAD_ASSET)
+        def download_living_asset():
+            # cover 下载
+            cover_url = self.room_data.get('room_cover_frame_url') if self.room_data.get('room_cover_frame_url') else self.room_data.get('room_cover_url')
+            if cover_url:
+                cover_file = f'{get_public_dir()}/cover/{self.room_data.get("room_id")}-{self.room_name}.jpg'
+                cover_dir = os.path.dirname(cover_file)
+                if not os.path.exists(cover_dir):
+                    os.makedirs(cover_dir)
+                try:
+                    download_file(cover_url, cover_file, headers=self.fake_headers)
+                except Exception as e:
+                    logger.error(f'{self.__class__.__name__} - {self.room_name} | 下载封面失败: {e}')
+
+            # avatar 下载
+            avatar_url = self.room_data.get('room_owner_avatar')
+            if avatar_url:
+                avatar_file = f'{get_public_dir()}/avatar/{self.room_data.get("room_id")}-{self.room_name}.jpg'
+                avatar_dir = os.path.dirname(avatar_file)
+                if not os.path.exists(avatar_dir):
+                    os.makedirs(avatar_dir)
+                try:
+                    download_file(avatar_url, avatar_file, headers=self.fake_headers)
+                except Exception as e:
+                    logger.error(f'{self.__class__.__name__} - {self.room_name} | 下载头像失败: {e}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):

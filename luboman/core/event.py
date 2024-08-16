@@ -40,8 +40,7 @@ class EventManager(Thread):
                 event = self.__queue.get(block=True, timeout=1)
                 self.__event_process(event)
             except Exception as e:
-                logger.debug(e)
-                # pass
+                pass
 
     def __event_process(self, event):
         if self.__active:

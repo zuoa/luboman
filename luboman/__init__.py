@@ -1,6 +1,5 @@
 import logging
 import os
-import platform
 import sys
 
 __version__ = "0.4.34"
@@ -25,12 +24,21 @@ LOG_CONF = {
             'formatter': 'simple'
         },
         'file': {
+            'level': logging.INFO,
+            'class': 'luboman.core.log.SafeRotatingFileHandler',
+            'when': 'W0',
+            'interval': 1,
+            'backupCount': 1,
+            'filename': '/data/logs/run.log' if os.path.exists('/.dockerenv') else 'data/logs/run.log',
+            'formatter': 'verbose'
+        },
+        'debug': {
             'level': logging.DEBUG,
             'class': 'luboman.core.log.SafeRotatingFileHandler',
             'when': 'W0',
             'interval': 1,
             'backupCount': 1,
-            'filename': '/data/logs/luboman.log' if os.path.exists('/.dockerenv') else 'data/logs/luboman.log',
+            'filename': '/data/logs/debug.log' if os.path.exists('/.dockerenv') else 'data/logs/debug.log',
             'formatter': 'verbose'
         }
     },
@@ -40,8 +48,8 @@ LOG_CONF = {
     },
     'loggers': {
         'luboman': {
-            'handlers': ['file'],
-            'level': logging.INFO,
+            'handlers': ['file', 'debug'],
+            'level': logging.DEBUG,
         },
     }
 }

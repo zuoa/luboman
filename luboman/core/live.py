@@ -279,7 +279,7 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_CHECK_STATUS, "NORMAL")
         def check_status(event):
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | 检查直播状态')
+            logger.debug(f'{self.__class__.__name__} - {self.room_name} | 检查直播状态')
             last_living = self.is_living
             last_living_time = self.living_time
             self.is_living = self.check_live(is_check_status=True)

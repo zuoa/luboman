@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import datetime
+import json
 import logging
 import os
 import re
@@ -68,8 +69,15 @@ class LiveBase(object):
             global_options['-to'] = f"{config.get('segment_duration', '01:00:00')}"
         options.update(global_options)
 
-        if self.room_data.get('ffmpeg_options') and isinstance(self.room_data.get('ffmpeg_options'), dict):
-            options.update(self.room_data.get('ffmpeg_options'))
+        if self.room_data.get('ffmpeg_options'):
+            if isinstance(self.room_data.get('ffmpeg_options'), dict):
+                options.update(self.room_data.get('ffmpeg_options'))
+            elif isinstance(self.room_data.get('ffmpeg_options'), str):
+                try:
+                    op = json.loads(self.room_data.get('ffmpeg_options'))
+                    options.update(op)
+                except:
+                    pass
 
         option_args = []
         for k, v in options.items():

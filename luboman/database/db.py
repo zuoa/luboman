@@ -57,6 +57,13 @@ class DB:
             key: value for key, value in data.items() if key in update_columns
         }
         update_data["gmt_updated"] = datetime.now()
+
+        if "room_cover_url" in update_data and update_data["room_cover_url"] == "":
+            update_data.pop("room_cover_url")
+
+        if "room_cover_frame_url" in update_data and update_data["room_cover_frame_url"] == "":
+            update_data.pop("room_cover_frame_url")
+
         row_id = data["id"]
         return LiveRoom.update(**update_data).where(LiveRoom.id == row_id).execute()
 

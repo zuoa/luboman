@@ -123,9 +123,11 @@ async def list_room(request):
 async def add_room(request):
     json_data = await request.json()
     try:
+        json_data["room_name"] = json_data.get("room_name", "").strip()
+        json_data["room_url"] = json_data.get("room_url", "").strip()
         new_room_id = LiveRoom.create(**json_data)
 
-        room = LiveRoom.get_by_id(new_room_id)
+        room = LiveRoom.get(LiveRoom.id == new_room_id)
         if room:
             start_room(model_to_dict(room), **{})
         return success(new_room_id)

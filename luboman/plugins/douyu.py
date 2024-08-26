@@ -36,8 +36,7 @@ class Douyu(LiveBase):
             return False
 
         try:
-            room_info = \
-            requests.get(f"https://www.douyu.com/betard/{room_id}", headers=self.fake_headers, timeout=5).json()['room']
+            room_info = requests.get(f"https://www.douyu.com/betard/{room_id}", headers=self.fake_headers, timeout=5).json()['room']
             if room_info:
                 new_room_data = {
                     'room_id': room_id,

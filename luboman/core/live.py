@@ -300,12 +300,12 @@ class LiveBase(object):
                 self.room_data['last_living_time'] = datetime.datetime.now()
                 self.send_event(Event(EventType.EVENT_DOWNLOAD_ASSET))
 
-            self.send_event(Event(EventType.EVENT_UPDATE_DB_ROOM_DATA))
-
             # 状态改变记录
             if last_living != self.is_living:
                 logger.info(f'{self.__class__.__name__} - {self.room_name} | ' + self.room_name + ": living: " + str(
                     self.is_living) + " last_living: " + str(last_living))
+
+                self.send_event(Event(EventType.EVENT_UPDATE_DB_ROOM_DATA))
 
                 # 开播通知
                 if self.is_living and self.living_time - last_living_time > 60000:

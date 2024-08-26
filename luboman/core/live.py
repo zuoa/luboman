@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import datetime
+import gc
 import json
 import logging
 import os
@@ -248,6 +249,8 @@ class LiveBase(object):
                     decode_line = line.decode(errors='ignore')
                     logger.debug(decode_line.rstrip())
             retval = proc.wait()
+            proc.terminate()
+            gc.collect()
         except KeyboardInterrupt:
             if sys.platform != 'win32':
                 proc.communicate(b'q')

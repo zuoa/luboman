@@ -32,7 +32,7 @@ class LiveBase(object):
         self.room_name = room_name
         self.room_url = room_url
         self.room_data = {}
-
+        self.log_prefix = f"<<<<< {self.__class__.__name__} - {self.room_name} - {self.room_url} >>>>>"
         self.raw_stream_url = None
         self.is_living = False
         self.living_time = 0
@@ -84,10 +84,6 @@ class LiveBase(object):
         for k, v in options.items():
             option_args += (str(k), str(v))
         return option_args
-
-    @property
-    def log_prefix(self):
-        return f"<<<<< {self.__class__.__name__} - {self.room_name} - {self.room_url} >>>>>"
 
     async def async_check_status(self):
         while self._active:

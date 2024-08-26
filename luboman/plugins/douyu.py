@@ -59,8 +59,8 @@ class Douyu(LiveBase):
             if room_info['videoLoop'] != 0:
                 logger.debug(f"{Douyu.__name__}: {self.room_url}: 正在放录播")
                 return False
-        except:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取直播间信息错误")
+        except Exception as e:
+            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取直播间信息错误:{e}")
             return False
 
         if is_check_status:

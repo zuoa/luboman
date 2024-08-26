@@ -19,7 +19,7 @@ class Douyu(LiveBase):
 
     def check_live(self, is_check_status=False):
         if len(self.room_url.split("douyu.com/")) < 2:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 直播间地址错误")
+            logger.warning(f"{self.log_prefix} :  直播间地址错误")
             return False
 
         try:
@@ -29,10 +29,10 @@ class Douyu(LiveBase):
                 html = requests.get(self.room_url, headers=self.fake_headers, timeout=5).text
                 room_id = match1(html, r'\$ROOM\.room_id\s*=\s*(\d+)', r'apm_room_id\s*=\s*(\d+)')[0]
             if not room_id:
-                logger.warning(f"{Douyu.__name__}: {self.room_url}: 直播间不存在或已关闭")
+                logger.warning(f"{self.log_prefix} : 直播间不存在或已关闭")
                 return False
         except:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取房间号错误")
+            logger.warning(f"{self.log_prefix} :  获取房间号错误")
             return False
 
         try:
@@ -53,14 +53,14 @@ class Douyu(LiveBase):
                 self.room_data.update(new_room_data)
 
             if room_info['show_status'] != 1:
-                logger.debug(f"{Douyu.__name__}: {self.room_url}: 未开播")
+                logger.debug(f"{self.log_prefix} : 未开播")
                 return False
 
             if room_info['videoLoop'] != 0:
-                logger.debug(f"{Douyu.__name__}: {self.room_url}: 正在放录播")
+                logger.debug(f"{self.log_prefix} : 正在放录播")
                 return False
         except Exception as e:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取直播间信息错误:{e}")
+            logger.warning(f"{self.log_prefix} :  获取直播间信息错误:{e}")
             return False
 
         if is_check_status:
@@ -84,10 +84,10 @@ class Douyu(LiveBase):
 
             params = parse_qs(ctx.eval(sign_fun))
         except TypeError:
-            logger.error(f"{Douyu.__name__}: {self.room_url}: 请安装至少一个 Javascript 解释器，如 pip install quickjs")
+            logger.error(f"{self.log_prefix} :  请安装至少一个 Javascript 解释器，如 pip install quickjs")
             return False
         except Exception as e:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取签名参数异常({e})")
+            logger.warning(f"{self.log_prefix} :  获取签名参数异常({e})")
             return False
 
         params['cdn'] = config.get('douyucdn', 'tct-h5')
@@ -98,7 +98,7 @@ class Douyu(LiveBase):
             if type(live_data) is not dict:
                 return False
         except:
-            logger.warning(f"{Douyu.__name__}: {self.room_url}: 获取下载信息错误")
+            logger.warning(f"{self.log_prefix} :  获取下载信息错误")
             return False
 
         self.raw_stream_url = f"{live_data.get('rtmp_url')}/{live_data.get('rtmp_live')}"

@@ -55,7 +55,7 @@ class LiveBase(object):
         }
 
     def __del__(self):
-        logger.warning(f'{self.__class__.__name__} - {self.room_name} | 销毁')
+        logger.warning(f'{self.log_prefix} | 销毁')
 
     @property
     def ffmpeg_opt_args(self):
@@ -179,8 +179,7 @@ class LiveBase(object):
             else:
                 if retry_count < 3:
                     retry_count += 1
-                    logger.info(
-                        f'{self.log_prefix} :  获取流失败：重试次数 {retry_count} / 3，等待 3 秒')
+                    logger.info(f'{self.log_prefix} :  获取流失败：重试次数 {retry_count} / 3，等待 3 秒')
                     time.sleep(3)
                     continue
 
@@ -191,14 +190,12 @@ class LiveBase(object):
                         is_offline = True
                     else:
                         if delay < 60:
-                            logger.info(
-                                f'{self.log_prefix} :  下播延迟检测，将在 {delay} 秒后检测开播状态')
+                            logger.info(f'{self.log_prefix} :  下播延迟检测，将在 {delay} 秒后检测开播状态')
                             time.sleep(delay)
                         else:
                             if retry_count_delay == 1:
                                 # 只有第一次显示
-                                logger.info(
-                                    f'{self.log_prefix} :  下播延迟检测，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
+                                logger.info(f'{self.log_prefix} :  下播延迟检测，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
                             time.sleep(60)
                         continue
                 else:
@@ -386,10 +383,10 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | Bili上传开始: {file_list}')
+            logger.info(f'{self.log_prefix} | Bili上传开始: {file_list}')
             bili_upload_template_id = self.room_data.get('bili_upload_template_id')
             if bili_upload_template_id is None:
-                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id is None")
+                logger.error(f"{self.log_prefix} | bili_upload_template_id is None")
                 return
 
             template_info = BiliUploadTemplate.get_by_id(bili_upload_template_id)
@@ -403,8 +400,7 @@ class LiveBase(object):
 
             bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
             if not bili_account:
-                logger.error(
-                    f"{self.log_prefix} :  bili_account_id: {template_info.bili_account_id} not found")
+                logger.error(f"{self.log_prefix} :  bili_account_id: {template_info.bili_account_id} not found")
                 return
 
             template_info = model_to_dict(template_info)

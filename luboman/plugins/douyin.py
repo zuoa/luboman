@@ -30,13 +30,13 @@ class Douyin(LiveBase):
                     user_page_data = user_page[user_page.index("web_rid"):user_page.index("web_rid") + 50].replace('\\"', '"')
                     room_id = match1(user_page_data, r'web_rid":"([^"]+)"')
                 if room_id is None or not room_id:
-                    logger.debug(f"{Douyin.__name__}: {self.room_url}: 未开播")
+                    logger.debug(f"{self.log_prefix} :  未开播")
                     return False
             except (KeyError, IndexError):
-                logger.warning(f"{Douyin.__name__}: {self.room_url}: 获取房间ID失败,请检查Cookie设置")
+                logger.warning(f"{self.log_prefix} :  获取房间ID失败,请检查Cookie设置")
                 return False
             except:
-                logger.warning(f"{Douyin.__name__}: {self.room_url}: 获取房间ID失败")
+                logger.warning(f"{self.log_prefix} :  获取房间ID失败")
                 return False
         else:
             try:
@@ -44,7 +44,7 @@ class Douyin(LiveBase):
                 if not room_id:
                     raise
             except:
-                logger.warning(f"{Douyin.__name__}: {self.room_url}: 直播间地址错误")
+                logger.warning(f"{self.log_prefix} :  直播间地址错误")
                 return False
 
         if room_id[0] == "+":
@@ -77,12 +77,12 @@ class Douyin(LiveBase):
             else:
                 room_info = {}
         except Exception as e:
-            logger.warning(f"{Douyin.__name__}: {self.room_url}: 获取失败{e}")
+            logger.warning(f"{self.log_prefix} :  获取失败{e}")
             return False
 
         try:
             if room_info.get('status') != 2:
-                logger.debug(f"{Douyin.__name__}: {self.room_url}: 未开播")
+                logger.debug(f"{self.log_prefix} :  未开播")
                 return False
 
             stream_data = json.loads(room_info['stream_url']['live_core_sdk_data']['pull_data']['stream_data'])['data']
@@ -122,7 +122,7 @@ class Douyin(LiveBase):
 
             self.raw_stream_url = stream_data[quality]['main']['flv']
         except:
-            logger.warning(f"{Douyin.__name__}: {self.room_url}: 解析错误")
+            logger.warning(f"{self.log_prefix} :  解析错误")
             return False
         return True
 

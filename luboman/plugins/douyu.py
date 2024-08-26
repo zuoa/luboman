@@ -5,10 +5,10 @@ from urllib.parse import parse_qs
 import requests
 
 from luboman.core.live import LiveBase
-from ..config import config
-from ..core.decorators import PluginTool
-from ..core.utils import match1
-from ..plugins import logger
+from luboman.config import config
+from luboman.core.decorators import PluginTool
+from luboman.core.utils import match1
+from luboman.plugins import logger
 
 
 @PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m)\.)?douyu\.com')
@@ -115,3 +115,6 @@ class Douyu(LiveBase):
             return live_data
 
         return None
+
+if __name__ == '__main__':
+    print(Douyu('test', 'https://douyu.com/110').check_live())

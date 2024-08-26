@@ -18,7 +18,6 @@ from luboman.plugins import logger
 class Huya(LiveBase):
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
-        self.log_prefix = f"{Huya.__name__} - {self.room_url}"
         self.fake_headers['referer'] = room_url
         self.fake_headers['cookie'] = config.get('huya_cookie', '')
 

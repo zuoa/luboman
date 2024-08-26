@@ -132,15 +132,12 @@ class LiveBase(object):
                 "begin_time": datetime.datetime.now(),
             }
 
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | 开始新的录制:{self.raw_stream_url}')
-
             ret = False
             filepath = None
 
             try:
                 # 阻塞下载，流没中断，会一直录制
                 ret, filepath = self.record()
-                logger.info(f'{self.__class__.__name__} - {self.room_name} | 片段录制结束:{ret} {filepath}')
             except Exception as e:
                 logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
             finally:
@@ -214,10 +211,13 @@ class LiveBase(object):
     def record(self):
         if not self.check_live():
             return False, None
+
+        logger.info(f'{self.__class__.__name__} - {self.room_name} | 开始新的录制:{self.raw_stream_url}')
         filepath = self.get_filepath()
         self.ffmpeg_download(filepath)
         rename(filepath)
 
+        logger.info(f'{self.__class__.__name__} - {self.room_name} | 片段录制结束: {filepath}')
         return True, filepath
 
     def raw_download(self, filepath):

@@ -83,7 +83,7 @@ class LiveBase(object):
         option_args = []
         for k, v in options.items():
             option_args += (str(k), str(v))
-        return
+        return option_args
 
     @property
     def log_prefix(self):

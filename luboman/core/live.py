@@ -83,7 +83,11 @@ class LiveBase(object):
         option_args = []
         for k, v in options.items():
             option_args += (str(k), str(v))
-        return option_args
+        return
+
+    @property
+    def log_prefix(self):
+        return f"<<<<< {self.__class__.__name__} - {self.room_name} - {self.room_url} >>>>>"
 
     async def async_check_status(self):
         while self._active:
@@ -91,18 +95,18 @@ class LiveBase(object):
             await asyncio.sleep(30)
 
     def start(self):
-        logger.info(f'{self.__class__.__name__} - {self.room_name} |  开启直播间')
+        logger.info(f'{self.log_prefix} : 开启直播间')
         logger.info(self.room_data)
         asyncio.create_task(self.async_check_status())
 
     def stop(self):
-        logger.warning(f'{self.__class__.__name__} - {self.room_name} |  停止直播间')
+        logger.warning(f'{self.log_prefix} :  停止直播间')
         self._active = False
         self.record_thread.join()
         self.event_manager.stop()
 
     def stopped(self):
-        logger.warning(f'{self.__class__.__name__} - {self.room_name} | 直播间已停止')
+        logger.warning(f'{self.log_prefix} : 直播间已停止')
 
     def start_record_thread(self):
         record_thread = threading.Thread(target=self.record_func)
@@ -120,7 +124,7 @@ class LiveBase(object):
         is_offline = False
         record_file_list = []
 
-        logger.info(f'{self.__class__.__name__} - {self.room_name} | 启动录制线程')
+        logger.info(f'{self.log_prefix} :  启动录制线程')
 
         while self._active:
             # 未启动录制
@@ -139,7 +143,7 @@ class LiveBase(object):
                 # 阻塞下载，流没中断，会一直录制
                 ret, filepath = self.record()
             except Exception as e:
-                logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
+                logger.exception(f'{self.log_prefix} :  Uncaught exception:{e}')
             finally:
                 self.stopped()
 
@@ -161,7 +165,7 @@ class LiveBase(object):
                     logger.info(recording_context)
                     RecordFile.create(**recording_context)
                 except Exception as e:
-                    logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{e}')
+                    logger.exception(f'{self.log_prefix} :  | Uncaught exception:{e}')
 
                 try:
                     ## 录像最后一个时间减去第一个起始时间大于24小时
@@ -170,31 +174,31 @@ class LiveBase(object):
                         self.send_event(Event(EventType.EVENT_RECORD_COMPLETED, (record_file_list,)))
                         record_file_list = []
                 except Exception as ex:
-                    logger.exception(f'{self.__class__.__name__} - {self.room_name} | Uncaught exception:{ex}')
+                    logger.exception(f'{self.log_prefix} :  Uncaught exception:{ex}')
 
             else:
                 if retry_count < 3:
                     retry_count += 1
                     logger.info(
-                        f'{self.__class__.__name__} - {self.room_name} | 获取流失败：重试次数 {retry_count} / 3，等待 3 秒')
+                        f'{self.log_prefix} :  获取流失败：重试次数 {retry_count} / 3，等待 3 秒')
                     time.sleep(3)
                     continue
 
                 if delay:
                     retry_count_delay += 1
                     if retry_count_delay > delay_all_retry_count:
-                        logger.info(f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测结束')
+                        logger.info(f'{self.log_prefix} :  下播延迟检测结束')
                         is_offline = True
                     else:
                         if delay < 60:
                             logger.info(
-                                f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测，将在 {delay} 秒后检测开播状态')
+                                f'{self.log_prefix} :  下播延迟检测，将在 {delay} 秒后检测开播状态')
                             time.sleep(delay)
                         else:
                             if retry_count_delay == 1:
                                 # 只有第一次显示
                                 logger.info(
-                                    f'{self.__class__.__name__} - {self.room_name} | 下播延迟检测，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
+                                    f'{self.log_prefix} :  下播延迟检测，每隔 60 秒检测开播状态，共检测 {delay_all_retry_count} 次')
                             time.sleep(60)
                         continue
                 else:
@@ -212,12 +216,12 @@ class LiveBase(object):
         if not self.check_live():
             return False, None
 
-        logger.info(f'{self.__class__.__name__} - {self.room_name} | 开始新的录制:{self.raw_stream_url}')
+        logger.info(f'{self.log_prefix} :  开始新的录制:{self.raw_stream_url}')
         filepath = self.get_filepath()
         self.ffmpeg_download(filepath)
         rename(filepath)
 
-        logger.info(f'{self.__class__.__name__} - {self.room_name} | 片段录制结束: {filepath}')
+        logger.info(f'{self.log_prefix} :  片段录制结束: {filepath}')
         return True, filepath
 
     def raw_download(self, filepath):
@@ -281,7 +285,7 @@ class LiveBase(object):
 
     def send_event(self, event):
         if event.type_ != EventType.EVENT_CHECK_STATUS:
-            logger.debug(f'{self.__class__.__name__} - {self.room_name} | 发送事件: {event}')
+            logger.debug(f'{self.log_prefix} :  发送事件: {event}')
 
         self.event_manager.send(event)
 
@@ -290,7 +294,7 @@ class LiveBase(object):
 
         @event_manager.register(EventType.EVENT_CHECK_STATUS, "NORMAL")
         def check_status(event):
-            logger.debug(f'{self.__class__.__name__} - {self.room_name} | 检查直播状态')
+            logger.debug(f'{self.log_prefix} :  检查直播状态')
             last_living = self.is_living
             last_living_time = self.living_time
             self.is_living = self.check_live(is_check_status=True)
@@ -302,8 +306,7 @@ class LiveBase(object):
 
             # 状态改变记录
             if last_living != self.is_living:
-                logger.info(f'{self.__class__.__name__} - {self.room_name} | ' + self.room_name + ": living: " + str(
-                    self.is_living) + " last_living: " + str(last_living))
+                logger.info(f'{self.log_prefix} :  living: ' + str(self.is_living) + " last_living: " + str(last_living))
 
                 self.send_event(Event(EventType.EVENT_UPDATE_DB_ROOM_DATA))
 
@@ -320,17 +323,17 @@ class LiveBase(object):
         def update_db_room_data():
 
             try:
-                logger.debug(f'{self.__class__.__name__} - {self.room_name} |Try to update room data in db:{self.room_data}')
+                logger.debug(f'{self.log_prefix} :  Try to update room data in db:{self.room_data}')
                 # 更新数据库信息
                 DB.update_live_room_operation_data(self.room_data)
-                logger.debug(f'{self.__class__.__name__} - {self.room_name} | Room data updated')
+                logger.debug(f'{self.log_prefix} :  Room data updated')
             except Exception as e:
-                logger.error(f'{self.__class__.__name__} - {self.room_name} | 更新数据库信息失败: {e}')
+                logger.error(f'{self.log_prefix} :  更新数据库信息失败: {e}')
 
         @event_manager.register(EventType.EVENT_REFRESH_ROOM_INFO)
         def refresh_room_info(room_info):
             self.room_data.update(room_info)
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | Room data updated:{self.room_data}')
+            logger.info(f'{self.log_prefix} :  Room data updated:{self.room_data}')
 
         @event_manager.register(EventType.EVENT_PRE_RECORD)
         def process_pre_record():
@@ -367,7 +370,7 @@ class LiveBase(object):
                 try:
                     download_file(cover_url, cover_file, headers=self.fake_headers)
                 except Exception as e:
-                    logger.error(f'{self.__class__.__name__} - {self.room_name} | 下载封面失败: {e}')
+                    logger.error(f'{self.log_prefix} :  下载封面失败: {e}')
 
             # avatar 下载
             avatar_url = self.room_data.get('room_owner_avatar')
@@ -379,7 +382,7 @@ class LiveBase(object):
                 try:
                     download_file(avatar_url, avatar_file, headers=self.fake_headers)
                 except Exception as e:
-                    logger.error(f'{self.__class__.__name__} - {self.room_name} | 下载头像失败: {e}')
+                    logger.error(f'{self.log_prefix} :  下载头像失败: {e}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
@@ -391,18 +394,17 @@ class LiveBase(object):
 
             template_info = BiliUploadTemplate.get_by_id(bili_upload_template_id)
             if not template_info:
-                logger.error(
-                    f"{self.__class__.__name__} - {self.room_name} | bili_upload_template_id: {bili_upload_template_id} not found")
+                logger.error(f"{self.log_prefix} :  bili_upload_template_id: {bili_upload_template_id} not found")
                 return
 
             if template_info.bili_account_id is None:
-                logger.error(f"{self.__class__.__name__} - {self.room_name} | bili_account_id is None")
+                logger.error(f"{self.log_prefix} :  bili_account_id is None")
                 return
 
             bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
             if not bili_account:
                 logger.error(
-                    f"{self.__class__.__name__} - {self.room_name} | bili_account_id: {template_info.bili_account_id} not found")
+                    f"{self.log_prefix} :  bili_account_id: {template_info.bili_account_id} not found")
                 return
 
             template_info = model_to_dict(template_info)
@@ -422,7 +424,7 @@ class LiveBase(object):
                     prepare_upload_file_list.append(file)
 
             ret = upload('biliweb', prepare_upload_file_list, **upload_info)
-            logger.info(f'{self.__class__.__name__} - {self.room_name} | Bili上传完成: {ret}')
+            logger.info(f'{self.log_prefix} :  Bili上传完成: {ret}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)
         def process_upload_bili_completed(file_list):
@@ -457,7 +459,7 @@ class LiveBase(object):
             if upload_platform:
                 upload(upload_platform, file_list)
         except Exception as e:
-            logger.exception(f'{self.__class__.__name__} - {self.room_name} | 上传失败: {e}')
+            logger.exception(f'{self.log_prefix} :  上传失败: {e}')
 
 
 def start_room(room_data, **kwargs):

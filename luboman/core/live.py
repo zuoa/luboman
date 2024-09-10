@@ -86,8 +86,15 @@ class LiveBase(object):
         return option_args
 
     async def async_check_status(self):
+        seq = 1
         while self._active:
             self.send_event(Event(EventType.EVENT_CHECK_STATUS, (1,)))
+
+            # 每10次更新一次数据库
+            if seq % 10 == 0:
+                self.send_event(Event(EventType.EVENT_UPDATE_DB_ROOM_DATA))
+
+            seq += 1
             await asyncio.sleep(30)
 
     def start(self):

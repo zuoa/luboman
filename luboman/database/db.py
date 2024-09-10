@@ -2,7 +2,9 @@ import logging
 import time
 from datetime import datetime
 
-from .models import LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
+from playhouse.shortcuts import model_to_dict
+
+from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
 
 logger = logging.getLogger('luboman')
 
@@ -29,43 +31,70 @@ class DB:
 
     @classmethod
     def update_bili_upload_template(cls, data):
-        update_columns = ["template_name", "bili_account_id", "tags", "description", "tid", "copyright", "cover_path", "dynamic", "dtime",
-                          "dolby", "hires", "open_elec", "no_reprint", "credits", "up_selection_reply", "up_close_reply", "up_close_danmu"]
-        update_data = {
-            key: value for key, value in data.items() if key in update_columns
-        }
+        with db.connection_context():
+            update_columns = ["template_name", "bili_account_id", "tags", "description", "tid", "copyright", "cover_path", "dynamic", "dtime",
+                              "dolby", "hires", "open_elec", "no_reprint", "credits", "up_selection_reply", "up_close_reply", "up_close_danmu"]
+            update_data = {
+                key: value for key, value in data.items() if key in update_columns
+            }
 
-        return BiliUploadTemplate.update(**update_data).where(BiliUploadTemplate.id == data["id"]).execute()
+            return BiliUploadTemplate.update(**update_data).where(BiliUploadTemplate.id == data["id"]).execute()
 
     @classmethod
     def update_live_room(cls, data):
-        update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "upload_storage_platform",
-                          "stream_video_format", "active_state", "active_begin", "active_end"]
-        update_data = {
-            key: value for key, value in data.items() if key in update_columns
-        }
+        with db.connection_context():
+            update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "upload_storage_platform",
+                              "stream_video_format", "active_state", "active_begin", "active_end"]
+            update_data = {
+                key: value for key, value in data.items() if key in update_columns
+            }
 
-        update_data["gmt_updated"] = datetime.now()
+            update_data["gmt_updated"] = datetime.now()
 
-        return LiveRoom.update(**update_data).where(LiveRoom.id == data["id"]).execute()
+            return LiveRoom.update(**update_data).where(LiveRoom.id == data["id"]).execute()
 
     @classmethod
     def update_live_room_operation_data(cls, data):
-        update_columns = ["room_platform", "room_id", "room_title", "room_owner_id", "room_owner", "room_owner_avatar",
-                          "room_owner_title", "room_cover_url", "room_cover_frame_url", "live_state", "status", "last_living_time"]
-        update_data = {
-            key: value for key, value in data.items() if key in update_columns
-        }
-        update_data["gmt_updated"] = datetime.now()
+        with db.connection_context():
+            update_columns = ["room_platform", "room_id", "room_title", "room_owner_id", "room_owner", "room_owner_avatar",
+                              "room_owner_title", "room_cover_url", "room_cover_frame_url", "live_state", "status", "last_living_time"]
+            update_data = {
+                key: value for key, value in data.items() if key in update_columns
+            }
+            update_data["gmt_updated"] = datetime.now()
 
-        if "room_cover_url" in update_data and update_data["room_cover_url"] == "":
-            update_data.pop("room_cover_url")
+            if "room_cover_url" in update_data and update_data["room_cover_url"] == "":
+                update_data.pop("room_cover_url")
 
-        if "room_cover_frame_url" in update_data and update_data["room_cover_frame_url"] == "":
-            update_data.pop("room_cover_frame_url")
+            if "room_cover_frame_url" in update_data and update_data["room_cover_frame_url"] == "":
+                update_data.pop("room_cover_frame_url")
 
-        row_id = data["id"]
-        return LiveRoom.update(**update_data).where(LiveRoom.id == row_id).execute()
+            row_id = data["id"]
+            return LiveRoom.update(**update_data).where(LiveRoom.id == row_id).execute()
+
+    @classmethod
+    def list_room(cls):
+        with db.connection_context():
+            res = []
+            for ls in LiveRoom.select().order_by(LiveRoom.live_state.desc(), LiveRoom.last_living_time.desc()):
+                temp = model_to_dict(ls)
+                res.append(temp)
+            return res
+
+    @classmethod
+    def get_first_bili_account(cls):
+        with db.connection_context():
+            return BiliAccount.select().where(BiliAccount.state_active == 1).first()
+
+
+    @classmethod
+    def load_config(cls):
+        with db.connection_context():
+            res = {}
+            for ls in GlobalConfig.select():
+                res[ls.key] = ls.value
+
+            return res
 
     def backup(self):
         """备份数据库"""

@@ -71,7 +71,7 @@ async def hello(request):
 
 @routes.post('/bili/archive/pre')
 async def pre_archive(request):
-    one_account = BiliAccount.select().first()
+    one_account = DB.get_first_bili_account()
     if one_account is None:
         return error(1, "no account found")
     cookies_str = one_account.bili_cookies
@@ -86,9 +86,7 @@ async def pre_archive(request):
 
 @routes.post("/v1/Config/get")
 async def get_config(request):
-    res = {}
-    for ls in GlobalConfig.select():
-        res[ls.key] = ls.value
+    res = DB.load_config()
     return success(res)
 
 
@@ -112,10 +110,7 @@ async def set_config(request):
 
 @routes.post("/v1/LiveRoom/listAll")
 async def list_room(request):
-    res = []
-    for ls in LiveRoom.select().order_by(LiveRoom.live_state.desc(), LiveRoom.last_living_time.desc()):
-        temp = model_to_dict(ls)
-        res.append(temp)
+    res = DB.list_room()
     return success(res)
 
 

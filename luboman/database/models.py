@@ -3,7 +3,7 @@ import logging
 import os.path
 
 from peewee import Model, AutoField, CharField, IntegerField, TextField, DateTimeField
-from playhouse.postgres_ext import PostgresqlExtDatabase
+from playhouse.pool import PooledPostgresqlExtDatabase
 from playhouse.sqlite_ext import JSONField
 
 logger = logging.getLogger('luboman')
@@ -19,12 +19,24 @@ db_name = os.environ.get('DATABASE_NAME', 'luboman')
 db_user = os.environ.get('DATABASE_USER', 'luboman')
 db_password = os.environ.get('DATABASE_PASSWORD', 'luboman@2024#Hangzhou')
 
-db = PostgresqlExtDatabase(db_name, host=db_host, port=db_port, user=db_user, password=db_password)
+db = PooledPostgresqlExtDatabase(db_name, host=db_host, port=db_port, user=db_user, password=db_password, stale_timeout=300, max_connections=100)
 
 
 class BaseModel(Model):
     class Meta:
         database = db
+
+    @classmethod
+    def get_by_id_(cls, pk):
+        with db.connection_context():
+            return cls.get(cls._meta.primary_key == pk)
+
+    @classmethod
+    def create_(cls, **kwargs) -> int:
+        """添加行, 返回添加的行的 id 值"""
+        with db.connection_context():
+            dq = cls.create(**kwargs)
+            return dq.id
 
 
 class GlobalConfig(BaseModel):

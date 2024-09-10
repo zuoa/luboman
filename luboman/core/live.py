@@ -159,7 +159,7 @@ class LiveBase(object):
                 # 数据库记录
                 try:
                     logger.info(recording_context)
-                    RecordFile.create(**recording_context)
+                    RecordFile.create_(**recording_context)
                 except Exception as e:
                     logger.exception(f'{self.log_prefix} :  | Uncaught exception:{e}')
 
@@ -385,7 +385,7 @@ class LiveBase(object):
                 logger.error(f"{self.log_prefix} | bili_upload_template_id is None")
                 return
 
-            template_info = BiliUploadTemplate.get_by_id(bili_upload_template_id)
+            template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
             if not template_info:
                 logger.error(f"{self.log_prefix} :  bili_upload_template_id: {bili_upload_template_id} not found")
                 return
@@ -394,7 +394,7 @@ class LiveBase(object):
                 logger.error(f"{self.log_prefix} :  bili_account_id is None")
                 return
 
-            bili_account = BiliAccount.get_by_id(template_info.bili_account_id)
+            bili_account = BiliAccount.get_by_id_(template_info.bili_account_id)
             if not bili_account:
                 logger.error(f"{self.log_prefix} :  bili_account_id: {template_info.bili_account_id} not found")
                 return

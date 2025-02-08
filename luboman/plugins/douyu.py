@@ -110,7 +110,7 @@ class Douyu(LiveBase):
         if type(live_data) is dict:
             # 禁用斗鱼主线路
             if not live_data.get('rtmp_cdn', '').endswith('h5') or 'akm' in live_data.get('rtmp_cdn', ''):
-                params['cdn'] = 'tct-h5'
+                params['cdn'] = live_data['cdnsWithName'][-1]['cdn']
                 return self.get_play_info(room_id, params)
             return live_data
 

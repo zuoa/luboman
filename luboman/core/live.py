@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import copy
 import datetime
 import gc
 import json
@@ -44,6 +45,9 @@ class LiveBase(object):
 
         self.default_ffmpeg_options = {
             '-bsf:a': 'aac_adtstoasc',
+            # '-reconnect': '1',
+            # '-reconnect_streamed': '1',
+            # '-reconnect_delay_max': '5'
             # '-loglevel': 'error'
         }
 
@@ -286,6 +290,10 @@ class LiveBase(object):
     def send_event(self, event):
         if event.type_ != EventType.EVENT_CHECK_STATUS:
             logger.debug(f'{self.log_prefix} :  发送事件: {event}')
+
+        if event.args:
+            # deepcopy
+            event.args = copy.deepcopy(event.args)
 
         self.event_manager.send(event)
 

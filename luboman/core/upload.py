@@ -684,6 +684,10 @@ class Data:
     videos: list = field(default_factory=list)
     dtime: Any = None
     open_subtitle: InitVar[bool] = False
+    charging_pay: int = 0
+    upower_unit_price: int = 0
+
+
 
     # interactive: int = 0
     # no_reprint: int 1

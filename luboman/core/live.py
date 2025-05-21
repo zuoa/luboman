@@ -60,6 +60,16 @@ class LiveBase(object):
 
     def __del__(self):
         logger.warning(f'{self.log_prefix} | 销毁')
+        try:
+            # Clean up any remaining resources
+            if hasattr(self, 'record_thread') and self.record_thread and self.record_thread.is_alive():
+                self._active = False
+                self.record_thread.join(timeout=5)
+
+            # Force garbage collection
+            gc.collect()
+        except:
+            pass
 
     @property
     def ffmpeg_opt_args(self):
@@ -250,22 +260,39 @@ class LiveBase(object):
 
         command_args += [f'{filepath}.part']
 
-        proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        proc = None
         try:
+            proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             with proc.stdout as stdout:
                 for line in iter(stdout.readline, b''):  # b'\n'-separated lines
                     decode_line = line.decode(errors='ignore')
                     logger.debug(decode_line.rstrip())
             retval = proc.wait()
-            proc.terminate()
-            gc.collect()
+            return retval == 0
         except KeyboardInterrupt:
             if sys.platform != 'win32':
                 proc.communicate(b'q')
             raise
-        if retval != 0:
-            return False
-        return True
+        finally:
+            if proc:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)  # Wait for termination with timeout
+                    proc.kill()  # Force kill if still running
+                except:
+                    pass
+
+                # Close any open file descriptors
+                if proc.stdin:
+                    proc.stdin.close()
+                if proc.stdout:
+                    proc.stdout.close()
+                if proc.stderr:
+                    proc.stderr.close()
+
+                # Force garbage collection
+            gc.collect()
+
 
     def get_filepath(self):
         video_dir = get_video_dir()

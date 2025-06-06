@@ -239,12 +239,15 @@ class LiveBase(object):
         return True, filepath
 
     def raw_download(self, filepath):
-        resp = requests.get(self.raw_stream_url, stream=True, headers=self.fake_headers, timeout=60)
-        with open(filepath + ".part", "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1024):
-                if chunk:
-                    f.write(chunk)
-                    f.flush()
+        try:
+            with requests.get(self.raw_stream_url, stream=True, headers=self.fake_headers, timeout=60) as resp:
+                resp.raise_for_status()  # Raise an exception for bad status codes
+                with open(filepath + ".part", "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1024):
+                        if chunk:
+                            f.write(chunk)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"{self.log_prefix} | Raw download failed: {e}")
 
     def ffmpeg_download(self, filepath):
         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')

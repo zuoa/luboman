@@ -383,7 +383,7 @@ class LiveBase(object):
             if self.__class__.__name__.lower() == 'huya':
                 # FFMPEG 合并文件
                 if file_list and len(file_list) > 1:
-                    file_list = RecordFile.merge_files(file_list, self.room_data.get('room_id'), self.room_name, self.suffix)
+                    pass
 
 
             if file_list:

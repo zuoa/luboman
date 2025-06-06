@@ -260,38 +260,30 @@ class LiveBase(object):
 
         command_args += [f'{filepath}.part']
 
-        proc = None
         try:
-            proc = subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            with proc.stdout as stdout:
-                for line in iter(stdout.readline, b''):  # b'\n'-separated lines
-                    decode_line = line.decode(errors='ignore')
-                    logger.debug(decode_line.rstrip())
-            retval = proc.wait()
-            return retval == 0
-        except KeyboardInterrupt:
-            if sys.platform != 'win32':
-                proc.communicate(b'q')
-            raise
-        finally:
-            if proc:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=5)  # Wait for termination with timeout
-                    proc.kill()  # Force kill if still running
-                except:
-                    pass
+            # Use the context manager for robust cleanup
+            with subprocess.Popen(
+                    command_args,
+                    stdin=subprocess.DEVNULL,  # Use DEVNULL if you don't need stdin
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT
+            ) as proc:
+                with proc.stdout as stdout:
+                    for line in iter(stdout.readline, b''):
+                        decode_line = line.decode(errors='ignore')
+                        logger.debug(decode_line.rstrip())
 
-                # Close any open file descriptors
-                if proc.stdin:
-                    proc.stdin.close()
-                if proc.stdout:
-                    proc.stdout.close()
-                if proc.stderr:
-                    proc.stderr.close()
+                # The context manager's __exit__ will call proc.wait()
+                # but we can get the return code to check for success.
+                retval = proc.wait()
+                return retval == 0
 
-                # Force garbage collection
-            gc.collect()
+        except FileNotFoundError:
+            logger.error(f"ffmpeg not found at path: {ffmpeg_path}. Please check your configuration.")
+            return False
+        except Exception as e:
+            logger.error(f"{self.log_prefix} | ffmpeg_download encountered an error: {e}")
+            return False
 
 
     def get_filepath(self):
@@ -384,6 +376,12 @@ class LiveBase(object):
             # 未开播状态
             self.is_recording = False
             self.is_living = False
+
+            if self.__class__.__name__.lower() == 'huya':
+                # FFMPEG 合并文件
+                if file_list and len(file_list) > 1:
+                    file_list = RecordFile.merge_files(file_list, self.room_data.get('room_id'), self.room_name, self.suffix)
+
 
             if file_list:
                 self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))

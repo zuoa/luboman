@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import urlparse
@@ -389,27 +390,40 @@ class LiveBase(object):
                         file_list_prepare = [f['video'] for f in file_list_prepare]
                         output_file = self.get_filepath()
                         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
-                        command_args = [ffmpeg_path, '-y', '-f', 'concat', '-safe', '0', '-i', 'pipe:0', '-c', 'copy', output_file]
-                        with subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
-                            with proc.stdin as stdin:
-                                for file in file_list_prepare:
-                                    stdin.write(f"file '{file}'\n".encode())
-                            stdout, stderr = proc.communicate()
-                            if proc.returncode != 0:
-                                logger.error(f'{self.log_prefix} :  合并录制文件失败: {stderr.decode()}')
-                            else:
-                                logger.info(f'{self.log_prefix} :  合并录制文件成功: {output_file}')
 
-                                # 删除原始文件
-                                for file in file_list:
-                                    if os.path.exists(file['video']):
-                                        try:
-                                            os.remove(file['video'])
-                                            logger.info(f'{self.log_prefix} :  删除原始录制文件: {file["video"]}')
-                                        except Exception as e:
-                                            logger.error(f'{self.log_prefix} :  删除原始录制文件失败: {e}')
+                        # 创建临时文件列表文件
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False,
+                                                         encoding='utf-8') as temp_file:
+                            for file in file_list_prepare:
+                                temp_file.write(f"file '{file}'\n")
+                            temp_file_path = temp_file.name
 
-                                file_list = [{'video': output_file}]
+                        try:
+                            command_args = [ffmpeg_path, '-y', '-f', 'concat', '-safe', '0', '-i', temp_file_path, '-c',
+                                            'copy', output_file]
+
+                            with subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+                                stdout, stderr = proc.communicate()
+
+                                if proc.returncode != 0:
+                                    logger.error(f'{self.log_prefix} :  合并录制文件失败: {stderr.decode()}')
+                                else:
+                                    logger.info(f'{self.log_prefix} :  合并录制文件成功: {output_file}')
+
+                                    # 删除原始文件
+                                    for file in file_list:
+                                        if os.path.exists(file['video']):
+                                            try:
+                                                os.remove(file['video'])
+                                                logger.info(f'{self.log_prefix} :  删除原始录制文件: {file["video"]}')
+                                            except Exception as e:
+                                                logger.error(f'{self.log_prefix} :  删除原始录制文件失败: {e}')
+
+                                    file_list = [{'video': output_file}]
+                        finally:
+                            # 清理临时文件
+                            if os.path.exists(temp_file_path):
+                                os.remove(temp_file_path)
 
                     except Exception as e:
                         logger.error(f'{self.log_prefix} :  合并录制文件失败: {e}')

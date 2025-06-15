@@ -383,8 +383,36 @@ class LiveBase(object):
             if self.__class__.__name__.lower() == 'huya':
                 # FFMPEG 合并文件
                 if file_list and len(file_list) > 1:
-                    pass
+                    try:
+                        logger.info(f'{self.log_prefix} :  开始合并录制文件: {file_list}')
+                        file_list_prepare = sorted(file_list, key=lambda x: x['begin_time'])
+                        file_list_prepare = [f['video'] for f in file_list_prepare]
+                        output_file = self.get_filepath()
+                        ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
+                        command_args = [ffmpeg_path, '-y', '-f', 'concat', '-safe', '0', '-i', 'pipe:0', '-c', 'copy', output_file]
+                        with subprocess.Popen(command_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+                            with proc.stdin as stdin:
+                                for file in file_list_prepare:
+                                    stdin.write(f"file '{file}'\n".encode())
+                            stdout, stderr = proc.communicate()
+                            if proc.returncode != 0:
+                                logger.error(f'{self.log_prefix} :  合并录制文件失败: {stderr.decode()}')
+                            else:
+                                logger.info(f'{self.log_prefix} :  合并录制文件成功: {output_file}')
 
+                                # 删除原始文件
+                                for file in file_list:
+                                    if os.path.exists(file['video']):
+                                        try:
+                                            os.remove(file['video'])
+                                            logger.info(f'{self.log_prefix} :  删除原始录制文件: {file["video"]}')
+                                        except Exception as e:
+                                            logger.error(f'{self.log_prefix} :  删除原始录制文件失败: {e}')
+
+                                file_list = [{'video': output_file}]
+
+                    except Exception as e:
+                        logger.error(f'{self.log_prefix} :  合并录制文件失败: {e}')
 
             if file_list:
                 self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))

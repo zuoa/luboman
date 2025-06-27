@@ -388,7 +388,7 @@ class LiveBase(object):
                         logger.info(f'{self.log_prefix} :  开始合并录制文件: {file_list}')
                         file_list_prepare = sorted(file_list, key=lambda x: x['begin_time'])
                         file_list_prepare = [f['video'] for f in file_list_prepare]
-                        output_file = self.get_filepath()
+                        output_file = self.get_filepath() + ".merged." + self.suffix
                         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
 
                         # 创建临时文件列表文件
@@ -420,6 +420,8 @@ class LiveBase(object):
                                                 logger.error(f'{self.log_prefix} :  删除原始录制文件失败: {e}')
 
                                     file_list = [{'video': output_file}]
+
+                                    self.send_event(Event(EventType.EVENT_UPLOAD, (file_list,)))
                         finally:
                             # 清理临时文件
                             if os.path.exists(temp_file_path):

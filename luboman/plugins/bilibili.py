@@ -1,11 +1,12 @@
+import os.path
 import time
 import requests
 
 from luboman.core.live import LiveBase
 from luboman.core.utils import match1
-from ..config import config
-from . import logger
-from ..core.decorators import PluginTool
+from luboman.config import config
+from luboman.plugins import logger
+from luboman.core.decorators import PluginTool
 
 
 @PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m|live)\.)?bilibili\.com')
@@ -14,9 +15,13 @@ class Bilibili(LiveBase):
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
         self.fake_headers['referer'] = 'https://live.bilibili.com'
+
         self.live_time = 0
 
     def check_live(self, is_check_status=False):
+
+        if os.path.exists("/data/cookies/bili_cookie.txt"):
+            self.fake_headers['cookie'] = open("/data/cookies/bili_cookie.txt", 'r').read().strip()
 
         official_api = "https://api.live.bilibili.com"
         room_id = match1(self.room_url, r'/(\d+)')
@@ -26,7 +31,7 @@ class Bilibili(LiveBase):
         with requests.Session() as s:
             s.headers = self.fake_headers.copy()
             # 获取直播状态与房间标题
-            info_by_room_url = f"{official_api}/xlive/web-room/v1/index/getInfoByRoom?room_id={room_id}"
+            info_by_room_url = f"{official_api}/xlive/web-room/v1/index/getInfoByRoom?room_id={room_id}&web_location=444.8"
             try:
                 room_info = s.get(info_by_room_url, timeout=5).json()
             except Exception as e:
@@ -284,3 +289,7 @@ def load_cookies(filename):
             logger.debug(e)
             logger.error(f"读取 {filename} 文件失败")
     return None
+
+
+if __name__ == '__main__':
+    Bilibili("测试直播间", "https://live.bilibili.com/21654762").check_live()

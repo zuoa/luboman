@@ -28,7 +28,7 @@ class CC(LiveBase):
             )).json()["data"][0]
 
         except:
-            logger.warning(f"{self.log_prefix}: 直播间地址错误")
+            logger.debug(f"{self.log_prefix}: 获取直播间信息错误，未开播")
             return False
 
         if not room_info:

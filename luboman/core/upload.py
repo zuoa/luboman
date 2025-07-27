@@ -16,7 +16,7 @@ import rsa
 from dataclasses import asdict, dataclass, field, InitVar
 from json import JSONDecodeError
 from os.path import splitext, basename
-from typing import Union, Any, List
+from typing import Union, Any, List, Optional
 from urllib import parse
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
@@ -115,7 +115,7 @@ class BiliBili:
         response = self.__session.get('http://api.bilibili.com/x/space/myinfo')
         return response.json()
 
-    def login(self, persistence_path, user_cookie):
+    def login(self, user_cookie):
         self.persistence_path = user_cookie
         if os.path.isfile(self.persistence_path):
             print('使用持久化内容上传')

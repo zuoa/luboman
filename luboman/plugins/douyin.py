@@ -1,11 +1,12 @@
 import json
+import random
 import time
 from typing import Optional
 from urllib.parse import urlencode, parse_qs, urlparse, urlunparse, unquote
 
 import requests
 
-from luboman.core.utils import match1, NamedLock
+from luboman.core.utils import match1, NamedLock, random_user_agent
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.live import LiveBase
@@ -55,10 +56,9 @@ class Douyin(LiveBase):
         try:
             if "ttwid" not in self.fake_headers['cookie']:
                 self.fake_headers['cookie'] = f'ttwid={DouyinUtils.get_ttwid()};{self.fake_headers["cookie"]}'
-            page = requests.get(
-                DouyinUtils.build_request_url(f"https://live.douyin.com/webcast/room/web/enter/?web_rid={room_id}"),
-                headers=self.fake_headers, timeout=5).text
-            room_info = json.loads(page)['data']['data']
+            web_info = self.get_web_room_info(room_id)
+
+            room_info = web_info.get('data', {}).get('data', [])
             if len(room_info) > 0:
                 room_info = room_info[0]
                 new_room_data = {
@@ -126,29 +126,48 @@ class Douyin(LiveBase):
             return False
         return True
 
+    def get_web_room_info(self, web_rid: str) -> dict:
+        query = {
+            'web_rid': web_rid,
+            # 2025-08-01 服务端暂不校验以下参数的值，只校验参数存在
+            'enter_from': random.choice(['link_share', 'web_live']),
+            'a_bogus': '0',
+        }
+        target_url = DouyinUtils.build_request_url(f"https://live.douyin.com/webcast/room/web/enter/", query)
+        logger.debug(f"{self.log_prefix}: get_web_room_info {target_url}")
+        web_info = requests.get(target_url, headers=self.fake_headers).json()
+
+        logger.debug(f"{self.log_prefix}: get_web_room_info {web_info}")
+        return web_info
+
 
 class DouyinUtils:
     # 抖音ttwid
     _douyin_ttwid: Optional[str] = None
+    # DOUYIN_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36'
+    DOUYIN_USER_AGENT = random_user_agent()
+    DOUYIN_HTTP_HEADERS = {
+        'user-agent': DOUYIN_USER_AGENT
+    }
 
     @staticmethod
     def get_ttwid() -> Optional[str]:
         with NamedLock("douyin_ttwid_get"):
             if not DouyinUtils._douyin_ttwid:
-                page = requests.get("https://live.douyin.com/1-2-3-4-5-6-7-8-9-0", timeout=5)
+                page = requests.get("https://live.douyin.com/1-2-3-4-5-6-7-8-9-0", timeout=15)
                 DouyinUtils._douyin_ttwid = page.cookies.get("ttwid")
             return DouyinUtils._douyin_ttwid
 
     @staticmethod
-    def build_request_url(url: str) -> str:
+    def build_request_url(url: str, query: Optional[dict] = None) -> str:
         parsed_url = urlparse(url)
-        existing_params = parse_qs(parsed_url.query)
+        existing_params = query or parse_qs(parsed_url.query)
         existing_params['aid'] = ['6383']
         existing_params['device_platform'] = ['web']
         existing_params['browser_language'] = ['zh-CN']
         existing_params['browser_platform'] = ['Win32']
-        existing_params['browser_name'] = ['Chrome']
-        existing_params['browser_version'] = ['92.0.4515.159']
+        existing_params['browser_name'] = [DouyinUtils.DOUYIN_USER_AGENT.split('/')[0]]
+        existing_params['browser_version'] = [DouyinUtils.DOUYIN_USER_AGENT.split(existing_params['browser_name'][0])[-1][1:]]
         new_query_string = urlencode(existing_params, doseq=True)
         new_url = urlunparse((
             parsed_url.scheme,
@@ -161,4 +180,4 @@ class DouyinUtils:
         return new_url
 
 if __name__ == '__main__':
-    print(Douyin('test', 'https://live.douyin.com/Ppnn..').check_live(is_check_status=True))
+    print(Douyin('test', 'https://live.douyin.com/870887192950').check_live(is_check_status=True))

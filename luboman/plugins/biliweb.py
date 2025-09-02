@@ -49,7 +49,7 @@ class BiliWebUploader(Uploader):
                 cookies_file_content = open(cookies_file, 'r').read()
 
             if cookies_file_content:
-                bili.login(cookies_file, {})
+                bili.login(cookies_file)
             else:
                 bili.login_by_cookies(bili_account.get('bili_cookies'))
 
@@ -64,3 +64,25 @@ class BiliWebUploader(Uploader):
             if template_info.get('cover_path') and os.path.exists(template_info.get('cover_path')):
                 video.cover = bili.cover_up(template_info.get('cover_path'))
             ret = bili.submit()  # 提交视频
+
+
+if __name__ == '__main__':
+    video = Data()
+    video.title = "测试标题"
+    video.desc = "测试描述"
+    video.tid = 122  # 分区ID
+    video.copyright = 1
+    video.set_tag(['测试标签'])
+    with BiliBili(video) as bili:
+        cookies_file = "/Users/yujian/Downloads/biliupR-v0.2.1-x86_64-macos/cookies.json"  # 替换为实际的cookies文件路径
+        if os.path.exists(cookies_file):
+            cookies_file_content = open(cookies_file, 'r').read()
+            if cookies_file_content:
+                bili.login(cookies_file)
+            else:
+                bili.login_by_cookies("your_bili_cookies_here")  # 替换为实际的cookies内容
+
+        video_part = bili.upload_file("/Users/yujian/Downloads/70jWyqpzuwwhFldg.mp4")  # 替换为实际的视频文件路径
+        video.append(video_part)
+        ret = bili.submit()
+        print(ret)

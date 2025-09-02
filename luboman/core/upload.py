@@ -16,7 +16,7 @@ import rsa
 from dataclasses import asdict, dataclass, field, InitVar
 from json import JSONDecodeError
 from os.path import splitext, basename
-from typing import Union, Any, List
+from typing import Union, Any, List, Optional
 from urllib import parse
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
@@ -42,7 +42,6 @@ class Uploader:
 
     def upload(self):
         raise NotImplementedError
-
 
 class BiliBili:
     def __init__(self, video: 'Data'):
@@ -111,24 +110,16 @@ class BiliBili:
         response = self.__session.get("https://member.bilibili.com/x/vupre/web/archive/pre")
         return response.json()
 
-    def myinfo(self, cookies=None):
-        if cookies is None:
-            cookies = self.cookies
+    def myinfo(self, cookies):
         requests.utils.add_dict_to_cookiejar(self.__session.cookies, cookies)
         response = self.__session.get('http://api.bilibili.com/x/space/myinfo')
         return response.json()
 
-    def login(self, persistence_path, user):
-        self.persistence_path = persistence_path
-        if os.path.isfile(persistence_path):
+    def login(self, user_cookie):
+        self.persistence_path = user_cookie
+        if os.path.isfile(self.persistence_path):
             print('使用持久化内容上传')
             self.load()
-        if user.get('cookies'):
-            self.cookies = user['cookies']
-        if user.get('access_token'):
-            self.access_token = user['access_token']
-        if user.get('account'):
-            self.account = user['account']
         if self.cookies:
             try:
                 self.login_by_cookies(self.cookies)
@@ -142,18 +133,9 @@ class BiliBili:
     def load(self):
         try:
             with open(self.persistence_path) as f:
-                data = json.load(f)
-                if data.get('platform') == 'BiliTV':
-                    if self.cookies is None:
-                        self.cookies = {}
-                    ## biliup生成文件
-                    for ck_item in data.get('cookie_info', {}).get('cookies', []):
-                        self.cookies[ck_item['name']] = ck_item['value']
-                    self.access_token = data.get('token_info', {}).get('access_token')
-                    self.cookies['access_token'] = self.access_token
-                else:
-                    self.cookies = data
-                    self.access_token = self.cookies['access_token']
+                self.cookies = json.load(f)
+                self.access_token = self.cookies['token_info']['access_token']
+                self.refresh_token = self.cookies['token_info']['refresh_token']
         except (JSONDecodeError, KeyError):
             logger.exception('加载cookie出错')
 
@@ -233,13 +215,15 @@ class BiliBili:
         return r
 
     def login_by_cookies(self, cookie):
-        print('使用cookies上传')
-        requests.utils.add_dict_to_cookiejar(self.__session.cookies, cookie)
-        if 'bili_jct' in cookie:
-            self.__bili_jct = cookie["bili_jct"]
+        logger.info(f'{self.__class__.__name__}: login by cookies')
+        cookies_dict = {c['name']: c['value'] for c in cookie['cookie_info']['cookies']}
+        requests.utils.add_dict_to_cookiejar(self.__session.cookies, cookies_dict)
+        if 'bili_jct' in cookies_dict:
+            self.__bili_jct = cookies_dict['bili_jct']
         data = self.__session.get("https://api.bilibili.com/x/web-interface/nav", timeout=5).json()
         if data["code"] != 0:
             raise Exception(data)
+        print('使用cookies上传')
 
     def sign(self, param):
         return hashlib.md5(f"{param}{self.appsec}".encode()).hexdigest()
@@ -288,47 +272,45 @@ class BiliBili:
         """
         preferred_upos_cdn = None
         if not self._auto_os:
-            if lines == 'kodo':
-                self._auto_os = {"os": "kodo", "query": "bucket=bvcupcdnkodobm&probe_version=20221109",
-                                 "probe_url": "//up-na0.qbox.me/crossdomain.xml"}
-            elif lines == 'bda2':
-                self._auto_os = {"os": "upos", "query": "upcdn=bda2&probe_version=20221109",
-                                 "probe_url": "//upos-sz-upcdnbda2.bilivideo.com/OK"}
-                preferred_upos_cdn = 'bda2'
-            elif lines == 'cs-bda2':
+            if lines == 'bda':
+                self._auto_os = {"os": "upos", "query": "upcdn=bda&probe_version=20221109",
+                                 "probe_url": "//upos-cs-upcdnbda.bilivideo.com/OK"}
+                preferred_upos_cdn = 'bda'
+            elif lines in {'bda2', 'cs-bda2'}:
                 self._auto_os = {"os": "upos", "query": "upcdn=bda2&probe_version=20221109",
                                  "probe_url": "//upos-cs-upcdnbda2.bilivideo.com/OK"}
                 preferred_upos_cdn = 'bda2'
             elif lines == 'ws':
                 self._auto_os = {"os": "upos", "query": "upcdn=ws&probe_version=20221109",
-                                 "probe_url": "//upos-sz-upcdnws.bilivideo.com/OK"}
+                                 "probe_url": "//upos-cs-upcdnws.bilivideo.com/OK"}
                 preferred_upos_cdn = 'ws'
-            elif lines == 'qn':
-                self._auto_os = {"os": "upos", "query": "upcdn=qn&probe_version=20221109",
-                                 "probe_url": "//upos-sz-upcdnqn.bilivideo.com/OK"}
-                preferred_upos_cdn = 'qn'
-            elif lines == 'cs-qn':
+            elif lines in {'qn', 'cs-qn'}:
                 self._auto_os = {"os": "upos", "query": "upcdn=qn&probe_version=20221109",
                                  "probe_url": "//upos-cs-upcdnqn.bilivideo.com/OK"}
                 preferred_upos_cdn = 'qn'
-            elif lines == 'cos':
-                self._auto_os = {"os": "cos", "query": "",
-                                 "probe_url": ""}
-            elif lines == 'cos-internal':
-                self._auto_os = {"os": "cos-internal", "query": "",
-                                 "probe_url": ""}
+            elif lines == 'bldsa':
+                self._auto_os = {"os": "upos", "query": "upcdn=bldsa&probe_version=20221109",
+                                 "probe_url": "//upos-cs-upcdnbldsa.bilivideo.com/OK"}
+                preferred_upos_cdn = 'bldsa'
+            elif lines == 'tx':
+                self._auto_os = {"os": "upos", "query": "upcdn=tx&probe_version=20221109",
+                                 "probe_url": "//upos-cs-upcdntx.bilivideo.com/OK"}
+                preferred_upos_cdn = 'tx'
+            elif lines == 'txa':
+                self._auto_os = {"os": "upos", "query": "upcdn=txa&probe_version=20221109",
+                                 "probe_url": "//upos-cs-upcdntxa.bilivideo.com/OK"}
+                preferred_upos_cdn = 'txa'
             else:
                 self._auto_os = self.probe()
-            logger.info(
-                f"线路选择 => {self._auto_os['os']}: {self._auto_os['query']}. time: {self._auto_os.get('cost')}")
+            logger.info(f"线路选择 => {self._auto_os['os']}: {self._auto_os['query']}. time: {self._auto_os.get('cost')}")
         if self._auto_os['os'] == 'upos':
             upload = self.upos
-        elif self._auto_os['os'] == 'cos':
-            upload = self.cos
-        elif self._auto_os['os'] == 'cos-internal':
-            upload = lambda *args, **kwargs: self.cos(*args, **kwargs, internal=True)
-        elif self._auto_os['os'] == 'kodo':
-            upload = self.kodo
+        # elif self._auto_os['os'] == 'cos':
+        #     upload = self.cos
+        # elif self._auto_os['os'] == 'cos-internal':
+        #     upload = lambda *args, **kwargs: self.cos(*args, **kwargs, internal=True)
+        # elif self._auto_os['os'] == 'kodo':
+        #     upload = self.kodo
         else:
             logger.error(f"NoSearch:{self._auto_os['os']}")
             raise NotImplementedError(self._auto_os['os'])
@@ -360,8 +342,7 @@ class BiliBili:
                     else:
                         logger.error(f"Unrecognized preferred_upos_cdn: {preferred_upos_cdn}")
                 else:
-                    logger.warning(
-                        f"Assigned UpOS endpoint {original_endpoint} was never seen before, something else might have changed, so will not modify it")
+                    logger.warning(f"Assigned UpOS endpoint {original_endpoint} was never seen before, something else might have changed, so will not modify it")
             return asyncio.run(upload(f, total_size, ret, tasks=tasks))
 
     async def cos(self, file, total_size, ret, chunk_size=10485760, tasks=3, internal=False):
@@ -554,7 +535,7 @@ class BiliBili:
         async with aiohttp.ClientSession() as session:
             await asyncio.gather(*[upload_chunk() for _ in range(tasks)])
 
-    def submit(self, submit_api=None):
+    def submit(self, submit_api: Optional[str] = 'web'):
         if not self.video.title:
             self.video.title = self.video.videos[0]["title"]
         self.__session.get('https://member.bilibili.com/x/geetest/pre/add', timeout=5)
@@ -569,21 +550,16 @@ class BiliBili:
             else:
                 user_weight = 1
             logger.info(f'用户权重: {user_weight}')
-            submit_api = 'web' if user_weight == 2 else 'client'
+            submit_api = 'web'
         ret = None
         if submit_api == 'web':
             ret = self.submit_web()
-            if ret["code"] == 21138:
-                logger.info(f'改用客户端接口提交{ret}')
-                submit_api = 'client'
-        if submit_api == 'client':
-            ret = self.submit_client()
+            if ret["code"] != 0:
+                logger.error(f'网页端接口提交失败: {ret}')
+                raise Exception(ret)
         if not ret:
             raise Exception(f'不存在的选项：{submit_api}')
-        if ret["code"] == 0:
-            return ret
-        else:
-            raise Exception(ret)
+        return ret
 
     def submit_web(self):
         logger.info('使用网页端api提交')
@@ -602,8 +578,8 @@ class BiliBili:
                                       timeout=5, json=asdict(self.video)).json()
             if ret['code'] == -101:
                 logger.info(f'刷新token{ret}')
-                # self.login_by_password(**config['user']['account'])
-                # self.store()
+                self.login_by_password(**config['user']['account'])
+                self.store()
                 continue
             return ret
 
@@ -684,10 +660,6 @@ class Data:
     videos: list = field(default_factory=list)
     dtime: Any = None
     open_subtitle: InitVar[bool] = False
-    charging_pay: int = 0
-    upower_unit_price: int = 0
-
-
 
     # interactive: int = 0
     # no_reprint: int 1
@@ -711,7 +683,6 @@ class Data:
 
     def append(self, video):
         self.videos.append(video)
-
 
 def upload(uploader_platform, file_list, **kwargs):
     if not uploader_platform:

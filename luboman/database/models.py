@@ -95,8 +95,8 @@ class LiveRoom(BaseModel):
     room_owner_title = CharField(null=True)  # 主播头衔
     room_owner_avatar = CharField(null=True)  # 主播头像
     room_title = CharField(null=True)  # 直播间标题
-    room_cover_url = CharField(null=True)  # 直播间封面地址
-    room_cover_frame_url = CharField(null=True)  # 直播间封面帧地址
+    room_cover_url = TextField(null=True)  # 直播间封面地址
+    room_cover_frame_url = TextField(null=True)  # 直播间封面帧地址
     custom_filename = CharField(null=True)  # 文件名配置
     bili_upload_template_id = IntegerField(null=True)
     upload_storage_platform = CharField(null=True)  # 上传网盘类型

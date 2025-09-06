@@ -137,7 +137,7 @@ class Douyin(LiveBase):
         logger.debug(f"{self.log_prefix}: get_web_room_info {target_url}")
         web_info = requests.get(target_url, headers=self.fake_headers).json()
 
-        logger.debug(f"{self.log_prefix}: get_web_room_info {web_info}")
+        # logger.debug(f"{self.log_prefix}: get_web_room_info {web_info}")
         return web_info
 
 

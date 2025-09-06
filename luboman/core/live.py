@@ -120,8 +120,19 @@ class LiveBase(object):
     def stop(self):
         logger.warning(f'{self.log_prefix} :  停止直播间')
         self._active = False
-        self.record_thread.join()
-        self.event_manager.stop()
+        
+        # 等待录制线程结束，设置超时
+        if self.record_thread and self.record_thread.is_alive():
+            logger.debug(f'{self.log_prefix} :  等待录制线程结束...')
+            self.record_thread.join(timeout=10)  # 10秒超时
+            if self.record_thread.is_alive():
+                logger.warning(f'{self.log_prefix} :  录制线程未能在10秒内结束')
+        
+        # 停止事件管理器
+        if hasattr(self, 'event_manager') and self.event_manager:
+            self.event_manager.stop()
+            
+        logger.info(f'{self.log_prefix} :  直播间已停止')
 
     def stopped(self):
         logger.warning(f'{self.log_prefix} : 直播间已停止')
@@ -315,8 +326,16 @@ class LiveBase(object):
             logger.debug(f'{self.log_prefix} :  发送事件: {event}')
 
         if event.args:
-            # deepcopy
-            event.args = copy.deepcopy(event.args)
+            # 避免深拷贝导致内存泄漏，只对必要的可变对象进行浅拷贝
+            new_args = []
+            for arg in event.args:
+                if isinstance(arg, (list, dict)):
+                    # 只对列表和字典进行浅拷贝
+                    new_args.append(copy.copy(arg))
+                else:
+                    # 不可变对象（字符串、数字、元组等）直接引用
+                    new_args.append(arg)
+            event.args = tuple(new_args)
 
         self.event_manager.send(event)
 
@@ -564,7 +583,20 @@ def start_room(room_data, **kwargs):
 
 
 def stop_room(room_row_id):
-    pg = PluginTool.running_plugins.pop(str(room_row_id))
+    """停止指定直播间"""
+    room_id_str = str(room_row_id)
+    pg = PluginTool.running_plugins.pop(room_id_str, None)
     if pg:
-        pg.stop()
-        del pg
+        try:
+            logger.info(f"停止直播间: {room_id_str}")
+            pg.stop()
+        except Exception as e:
+            logger.error(f"停止直播间 {room_id_str} 时出错: {e}")
+        finally:
+            # 确保对象被删除
+            try:
+                del pg
+            except:
+                pass
+    else:
+        logger.warning(f"直播间 {room_id_str} 未在运行中")

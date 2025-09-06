@@ -12,7 +12,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN  set -eux; \
      apt-get update; \
-     apt-get install -y --no-install-recommends  ffmpeg valgrind gdb  build-essential; \
+     apt-get install -y --no-install-recommends  ffmpeg; \
      pip3 install --no-cache-dir -r requirements.txt
 COPY luboman ./luboman
 RUN mkdir bin && ls -a
@@ -28,4 +28,4 @@ ENV PYTHONPATH="/app:$PYTHONPATH"
 EXPOSE 5005/tcp
 VOLUME /data
 VOLUME /root/.bypy
-ENTRYPOINT ["valgrind", "--leak-check=full", "--show-leak-kinds=all", "--log-file=/tmp/valgrind.log", "python", "main.py"]
+ENTRYPOINT ["python", "main.py"]

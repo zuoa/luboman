@@ -120,12 +120,12 @@ def download_file(url, local_path, headers=None):
     import requests
     if headers is None:
         headers = {}
-    resp = requests.get(url, stream=True, headers=headers, timeout=120)
-    with open(local_path, 'wb') as f:
-        for chunk in resp.iter_content(chunk_size=1024):
-            if chunk:
-                f.write(chunk)
-                f.flush()
+    with requests.get(url, stream=True, headers=headers, timeout=120) as resp:
+        resp.raise_for_status()
+        with open(local_path, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=8192):  # 增大chunk_size提高效率
+                if chunk:
+                    f.write(chunk)
 
 
 class NamedLock:

@@ -2,7 +2,7 @@ FROM python:3.9-slim as tools
 RUN \
   set -eux; \
   apt-get update; \
-  apt-get install -y --no-install-recommends vim git g++ curl unzip xz-utils; \
+  apt-get install -y --no-install-recommends vim git g++ curl unzip xz-utils valgrind gdb  build-essential; \
   curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o /tmp/aliyunpan.zip && \
   unzip /tmp/aliyunpan.zip -d /opt &&  mv /opt/aliyunpan-v0.2.9-linux-amd64 /opt/aliyunpan
 
@@ -28,4 +28,4 @@ ENV PYTHONPATH="/app:$PYTHONPATH"
 EXPOSE 5005/tcp
 VOLUME /data
 VOLUME /root/.bypy
-ENTRYPOINT ["python", "main.py"]
+ENTRYPOINT ["valgrind", "--leak-check=full", "--show-leak-kinds=all", "--log-file=/tmp/valgrind.log", "python", "main.py"]

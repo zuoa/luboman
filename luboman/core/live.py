@@ -462,7 +462,7 @@ class LiveBase(object):
             # cover 下载
             cover_url = self.room_data.get('room_cover_frame_url') if self.room_data.get('room_cover_frame_url') else self.room_data.get('room_cover_url')
             if cover_url:
-                cover_file = f'{get_public_dir()}/cover/{self.room_data.get("room_id")}-{self.room_name}.jpg'
+                cover_file = f'{get_public_dir()}/cover/{self.room_data.get("room_platform")}-{self.room_data.get("room_id")}.jpg'
                 cover_dir = os.path.dirname(cover_file)
                 if not os.path.exists(cover_dir):
                     os.makedirs(cover_dir)
@@ -474,7 +474,7 @@ class LiveBase(object):
             # avatar 下载
             avatar_url = self.room_data.get('room_owner_avatar')
             if avatar_url:
-                avatar_file = f'{get_public_dir()}/avatar/{self.room_data.get("room_id")}-{self.room_name}.jpg'
+                avatar_file = f'{get_public_dir()}/avatar/{self.room_data.get("room_platform")}-{self.room_data.get("room_id")}.jpg'
                 avatar_dir = os.path.dirname(avatar_file)
                 if not os.path.exists(avatar_dir):
                     os.makedirs(avatar_dir)

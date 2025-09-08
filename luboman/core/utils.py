@@ -46,6 +46,8 @@ def get_valid_filename(name):
 
 
 def format_live_prop_text(formatted_str: str, room_data):
+    if not formatted_str:
+        formatted_str = '【{room_name}】{room_title} %Y年%m月%d日 %H时'
     prop_text = formatted_str.format(**room_data)
     prop_text = time.strftime(prop_text)
     return prop_text

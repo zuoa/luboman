@@ -11,12 +11,25 @@ from luboman.core.live import LiveBase
 logger = logging.getLogger('luboman')
 
 
-class AsyncLiveBase(LiveBase):
-    """异步化的直播基类 - 继承原有功能并添加异步支持"""
+class AsyncLiveBase:
+    """异步化的直播基类 - 使用组合模式避免多重继承冲突"""
     
-    def __init__(self, room_name, room_url, suffix):
-        # 初始化父类
-        super().__init__(room_name, room_url, suffix)
+    def __init__(self, plugin_instance):
+        # 使用组合而不是继承来避免metaclass冲突
+        self.plugin_instance = plugin_instance
+        
+        # 代理所有属性到插件实例
+        self.room_name = plugin_instance.room_name
+        self.room_url = plugin_instance.room_url
+        self.room_data = plugin_instance.room_data
+        self.log_prefix = plugin_instance.log_prefix
+        self.raw_stream_url = plugin_instance.raw_stream_url
+        self.is_living = plugin_instance.is_living
+        self.living_time = plugin_instance.living_time
+        self.is_recording = plugin_instance.is_recording
+        self._active = plugin_instance._active
+        self.suffix = plugin_instance.suffix
+        self.fake_headers = plugin_instance.fake_headers
         
         # 异步相关属性
         self.async_tasks: List[asyncio.Task] = []
@@ -24,11 +37,18 @@ class AsyncLiveBase(LiveBase):
         self.batch_update_buffer: List[Dict] = []
         self.last_batch_update = time.time()
         
+        # 录制状态管理
+        self.is_recording_starting = False  # 录制启动中标志，避免重复触发
+        
         # 替换同步事件管理器
         self.async_event_manager = async_event_manager
         self._setup_async_event_handlers()
         
         logger.info(f"{self.log_prefix} 使用异步模式初始化")
+    
+    def __getattr__(self, name):
+        """代理所有未定义的属性访问到插件实例"""
+        return getattr(self.plugin_instance, name)
     
     def _setup_async_event_handlers(self):
         """设置异步事件处理器"""
@@ -36,7 +56,7 @@ class AsyncLiveBase(LiveBase):
         @self.async_event_manager.register(AsyncEventType.EVENT_CHECK_STATUS, priority=1)
         async def async_check_status(event: AsyncEvent):
             """异步状态检查处理器"""
-            logger.debug(f'{self.log_prefix} 异步检查直播状态')
+            # 移除频繁的debug日志 - 状态检查每30秒执行一次太频繁
             
             last_living = self.is_living
             last_living_time = self.living_time
@@ -72,8 +92,10 @@ class AsyncLiveBase(LiveBase):
                         priority=2
                     ))
             
-            # 启动录制
-            if self.is_living and not self.is_recording:
+            # 启动录制 - 加入中间状态判断，避免重复触发
+            if self.is_living and not self.is_recording and not self.is_recording_starting:
+                self.is_recording_starting = True  # 立即设置标志，避免重复触发
+                logger.info(f'{self.log_prefix} 准备启动录制，设置录制启动中标志')
                 await self.async_send_event(AsyncEvent(
                     AsyncEventType.EVENT_PRE_RECORD,
                     priority=1
@@ -146,6 +168,74 @@ class AsyncLiveBase(LiveBase):
                 
                 logger.info(f'{self.log_prefix} 异步Bili上传完成: {result}')
         
+        @self.async_event_manager.register(AsyncEventType.EVENT_PRE_RECORD, priority=1)
+        async def async_process_pre_record(event: AsyncEvent):
+            """异步录制预处理器"""
+            logger.info(f'{self.log_prefix} 收到录制预处理事件，准备开始录制')
+            # 精简debug日志：录制状态信息已在info日志中体现
+            await self.async_send_event(AsyncEvent(
+                AsyncEventType.EVENT_RECORD,
+                priority=1
+            ))
+        
+        @self.async_event_manager.register(AsyncEventType.EVENT_RECORD, priority=1)
+        async def async_process_record(event: AsyncEvent):
+            """异步录制处理器"""
+            logger.info(f'{self.log_prefix} 收到录制事件，开始录制')
+            
+            try:
+                # 在线程池中执行录制，避免阻塞异步事件循环
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self.plugin_instance._start_record
+                )
+                
+                # 录制启动完成后清除中间状态标志
+                self.is_recording_starting = False
+                logger.info(f'{self.log_prefix} 录制启动完成，清除录制启动中标志，当前状态: is_recording={self.is_recording}')
+                
+            except Exception as e:
+                # 录制启动失败时也要清除标志，避免状态锁死
+                self.is_recording_starting = False
+                logger.error(f'{self.log_prefix} 录制启动失败: {e}，已清除录制启动中标志')
+                raise
+        
+        @self.async_event_manager.register(AsyncEventType.EVENT_RECORD_COMPLETED, priority=3)
+        async def async_process_record_completed(event: AsyncEvent):
+            """异步录制完成处理器"""
+            file_list = event.args[0] if event.args else []
+            logger.info(f'{self.log_prefix} 录制完成，处理 {len(file_list)} 个文件')
+            
+            # 录制完成时也要清除录制启动中标志，防止状态异常
+            self.is_recording_starting = False
+            
+            # 如果开启了自动上传
+            if self.room_data.get('auto_upload', False):
+                await self.async_send_event(AsyncEvent(
+                    AsyncEventType.EVENT_UPLOAD,
+                    args=(file_list,),
+                    priority=4
+                ))
+            
+            # 如果开启了B站上传
+            if self.room_data.get('bili_upload_template_id'):
+                await self.async_send_event(AsyncEvent(
+                    AsyncEventType.EVENT_UPLOAD_BILI,
+                    args=(file_list,),
+                    priority=4
+                ))
+        
+        @self.async_event_manager.register(AsyncEventType.EVENT_NOTIFY, priority=2)
+        async def async_process_notify(event: AsyncEvent):
+            """异步通知处理器"""
+            if len(event.args) >= 2:
+                title, content = event.args[0], event.args[1]
+                logger.info(f'{self.log_prefix} 发送通知: {title}')
+                
+                # 在线程池中执行通知发送，避免阻塞
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self._send_notification_sync, title, content
+                )
+        
         @self.async_event_manager.register(AsyncEventType.EVENT_UPLOAD, priority=4)
         async def async_process_upload(event: AsyncEvent):
             """异步上传处理器"""
@@ -173,8 +263,9 @@ class AsyncLiveBase(LiveBase):
         )
         self.async_tasks.append(self.status_check_task)
         
-        # 调用父类启动方法（如果需要）
-        super().start()
+        # 调用插件实例的启动方法（如果需要）
+        if hasattr(self.plugin_instance, 'start'):
+            self.plugin_instance.start()
     
     async def async_stop(self):
         """异步停止直播间"""
@@ -182,6 +273,9 @@ class AsyncLiveBase(LiveBase):
         
         # 设置停止标志
         self._active = False
+        
+        # 清除录制相关状态标志
+        self.is_recording_starting = False
         
         # 取消所有异步任务
         for task in self.async_tasks:
@@ -202,8 +296,9 @@ class AsyncLiveBase(LiveBase):
         if self.batch_update_buffer:
             await self._flush_batch_updates()
         
-        # 调用父类停止方法
-        super().stop()
+        # 调用插件实例的停止方法
+        if hasattr(self.plugin_instance, 'stop'):
+            self.plugin_instance.stop()
         
         logger.info(f'{self.log_prefix} 异步直播间已停止')
     
@@ -224,11 +319,15 @@ class AsyncLiveBase(LiveBase):
                 if seq % 10 == 0:
                     await self._queue_database_update()
                 
+                # 每100次检查记录一次debug信息（50分钟一次），避免完全沉默
+                if seq % 100 == 0:
+                    logger.info(f'{self.log_prefix} 状态检查运行中，已执行 {seq} 次')
+                
                 seq += 1
                 await asyncio.sleep(30)  # 30秒检查一次
                 
             except asyncio.CancelledError:
-                logger.debug(f'{self.log_prefix} 状态检查循环被取消')
+                # 取消操作是正常流程，不需要debug日志
                 break
             except Exception as e:
                 logger.error(f'{self.log_prefix} 状态检查循环错误: {e}')
@@ -237,39 +336,15 @@ class AsyncLiveBase(LiveBase):
     async def async_check_live(self, is_check_status=False) -> bool:
         """异步检查直播状态"""
         try:
-            # 创建网络请求
-            request = NetworkRequest(
-                url=self.room_url,  # 实际应用中应该是状态检查API
-                method='GET',
-                headers=self.fake_headers,
-                timeout=15.0,
-                room_id=str(self.room_data.get('id', '')),
-                request_type='status_check',
-                priority=1
+            # 在线程池中执行具体插件的check_live方法
+            # 这样可以保持与原有插件逻辑的完全兼容
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, self.plugin_instance.check_live, is_check_status
             )
+            return result
             
-            # 执行异步请求
-            response = await async_network_manager.single_request(request)
-            
-            if response.success:
-                # 这里应该解析实际的API响应来判断直播状态
-                # 现在使用模拟逻辑
-                return self._parse_live_status(response.data)
-            else:
-                logger.warning(f'{self.log_prefix} 状态检查请求失败: {response.error}')
-                return False
-                
         except Exception as e:
             logger.error(f'{self.log_prefix} 异步状态检查失败: {e}')
-            return False
-    
-    def _parse_live_status(self, response_data) -> bool:
-        """解析直播状态 - 子类应该重写此方法"""
-        # 这里应该根据不同平台的API响应格式来解析
-        # 现在返回父类的同步检查结果作为兜底
-        try:
-            return self.check_live(is_check_status=True)
-        except Exception:
             return False
     
     async def _queue_database_update(self):
@@ -347,6 +422,20 @@ class AsyncLiveBase(LiveBase):
         else:
             with open(file_path, 'wb') as f:
                 f.write(file_data)
+    
+    def _send_notification_sync(self, title: str, content: str):
+        """同步发送通知"""
+        try:
+            # 这里可以集成各种通知方式（钉钉、微信、邮件等）
+            # 目前只记录日志
+            logger.info(f'{self.log_prefix} 通知标题: {title}')
+            logger.info(f'{self.log_prefix} 通知内容: {content}')
+            
+            # 如果有配置的通知方式，可以在这里调用
+            # 例如调用父类的通知方法或者第三方通知服务
+            
+        except Exception as e:
+            logger.error(f'{self.log_prefix} 发送通知失败: {e}')
     
     async def _async_get_bili_template(self, template_id) -> Optional[Dict]:
         """异步获取B站上传模板"""
@@ -553,7 +642,10 @@ class AsyncLiveRoomManager:
                     if response.success:
                         # 更新房间状态
                         old_status = room.is_living
-                        room.is_living = room._parse_live_status(response.data)
+                        if hasattr(room.plugin_instance, '_parse_live_status'):
+                            room.is_living = room.plugin_instance._parse_live_status(response.data)
+                        elif hasattr(room.plugin_instance, 'parse_live_status'):
+                            room.is_living = room.plugin_instance.parse_live_status(response.data)
                         
                         if old_status != room.is_living:
                             logger.info(f'批量检查状态变化 {room.room_name}: {old_status} -> {room.is_living}')

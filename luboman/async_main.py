@@ -193,7 +193,7 @@ class AsyncLubomanApplication:
         
         try:
             # 获取所有启用的直播间
-            rooms = list(LiveRoom.select().where(LiveRoom.enabled == True))
+            rooms = list(LiveRoom.select().where(LiveRoom.active_state == 1))
             logger.info(f"发现 {len(rooms)} 个启用的直播间")
             
             # 批量启动直播间
@@ -237,17 +237,21 @@ class AsyncLubomanApplication:
                 logger.warning(f"未找到匹配的插件: {room_name} - {room_url}")
                 return
             
-            # 创建异步直播间实例
-            # 这里需要为每个插件创建对应的异步版本
-            # 暂时使用通用的AsyncLiveBase
-            live_room = AsyncLiveBase(room_name, room_url, 'mp4')
-            live_room.room_data = room_data
+            # 使用组合模式创建异步版本的插件实例
+            # 先创建具体插件实例
+            plugin_instance = plugin_class(room_name, room_url, 'mp4')
+            plugin_instance.room_data = room_data
+            
+            # 然后用AsyncLiveBase包装它，避免多重继承冲突
+            live_room = AsyncLiveBase(plugin_instance)
+            
+            logger.info(f"{live_room.log_prefix} 使用异步模式初始化 ({plugin_class.__name__})")
             
             # 启动直播间
             await async_live_room_manager.add_room(live_room)
             self.live_rooms[room_id] = live_room
             
-            logger.info(f"直播间启动成功: {room_name}")
+            logger.info(f"直播间启动成功: {room_name} (插件: {plugin_class.__name__})")
             
         except Exception as e:
             logger.error(f"启动直播间失败 {room_name}: {e}")
@@ -300,7 +304,7 @@ class AsyncLubomanApplication:
                 logger.info("定期清理完成")
                 
             except asyncio.CancelledError:
-                logger.debug("定期清理任务被取消")
+                # 清理任务取消是正常关闭流程，不需要debug日志
                 break
             except Exception as e:
                 logger.error(f"定期清理失败: {e}")
@@ -374,7 +378,7 @@ class AsyncLubomanApplication:
                 await self._check_system_health(stats)
                 
             except asyncio.CancelledError:
-                logger.debug("系统监控被取消")
+                # 系统监控取消是正常关闭流程，不需要debug日志
                 break
             except Exception as e:
                 logger.error(f"系统监控错误: {e}")

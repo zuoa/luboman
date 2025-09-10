@@ -200,6 +200,9 @@ class AsyncNetworkManager:
                     content_type = response.headers.get('Content-Type', '').lower()
                     if 'application/json' in content_type:
                         response_data = await response.json()
+                    elif request.request_type == 'download' or any(binary_type in content_type for binary_type in ['image/', 'video/', 'audio/', 'application/octet-stream']):
+                        # 对于下载请求和二进制内容，读取原始字节
+                        response_data = await response.read()
                     else:
                         response_data = await response.text()
                     
@@ -267,7 +270,7 @@ class AsyncNetworkManager:
         if not requests:
             return []
         
-        logger.debug(f"开始批量网络请求，数量: {len(requests)}")
+        # 精简频繁debug日志：批量请求信息会在完成时的info日志中体现
         start_time = time.time()
         
         # 按优先级排序

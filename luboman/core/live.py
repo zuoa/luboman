@@ -158,8 +158,11 @@ class LiveBase(object):
         while self._active:
             # 未启动录制
             if not self.is_recording:
+                logger.debug(f'{self.log_prefix} :  录制线程等待中: is_recording={self.is_recording}, is_living={self.is_living}')
                 time.sleep(3)
                 continue
+            
+            logger.info(f'{self.log_prefix} :  录制线程开始执行录制: is_recording={self.is_recording}')
 
             recording_context = {
                 "begin_time": datetime.datetime.now(),
@@ -239,16 +242,29 @@ class LiveBase(object):
         raise NotImplementedError()
 
     def record(self):
+        logger.debug(f'{self.log_prefix} :  进入record()方法，检查直播状态')
+        
         if not self.check_live():
+            logger.warning(f'{self.log_prefix} :  录制中检查状态失败，直播可能已结束')
             return False, None
 
         logger.info(f'{self.log_prefix} :  开始新的录制:{self.raw_stream_url}')
+        
+        if not self.raw_stream_url:
+            logger.error(f'{self.log_prefix} :  录制失败，未获取到流地址')
+            return False, None
+            
         filepath = self.get_filepath()
-        self.ffmpeg_download(filepath)
-        rename(filepath)
-
-        logger.info(f'{self.log_prefix} :  片段录制结束: {filepath}')
-        return True, filepath
+        logger.debug(f'{self.log_prefix} :  录制文件路径: {filepath}')
+        
+        try:
+            self.ffmpeg_download(filepath)
+            rename(filepath)
+            logger.info(f'{self.log_prefix} :  片段录制结束: {filepath}')
+            return True, filepath
+        except Exception as e:
+            logger.error(f'{self.log_prefix} :  录制过程出错: {e}')
+            return False, None
 
     def raw_download(self, filepath):
         try:
@@ -548,7 +564,9 @@ class LiveBase(object):
         return event_manager
 
     def _start_record(self):
+        logger.info(f'{self.log_prefix} :  设置录制状态为True')
         self.is_recording = True
+        logger.debug(f'{self.log_prefix} :  录制状态已设置: is_recording={self.is_recording}')
 
     # @BaseNotifier.live_notify("{room_name} 开始上传网盘", "")
     def _upload_to_storage(self, file_list):

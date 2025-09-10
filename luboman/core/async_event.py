@@ -6,8 +6,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Callable, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
 import weakref
+import itertools
 
 logger = logging.getLogger('luboman')
+
+# 全局序列号生成器，确保事件的唯一性
+_event_sequence = itertools.count()
 
 
 @dataclass
@@ -18,6 +22,43 @@ class AsyncEvent:
     data: dict = field(default_factory=dict)  # 事件数据
     created_at: float = field(default_factory=time.time)
     priority: int = 0  # 优先级，数字越小优先级越高
+    sequence: int = field(default_factory=lambda: next(_event_sequence))  # 序列号，用于比较
+    
+    def __lt__(self, other):
+        """定义小于比较，首先按优先级，然后按序列号"""
+        if not isinstance(other, AsyncEvent):
+            return NotImplemented
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.sequence < other.sequence
+    
+    def __le__(self, other):
+        """定义小于等于比较"""
+        if not isinstance(other, AsyncEvent):
+            return NotImplemented
+        return self < other or self == other
+    
+    def __gt__(self, other):
+        """定义大于比较"""
+        if not isinstance(other, AsyncEvent):
+            return NotImplemented
+        return not self <= other
+    
+    def __ge__(self, other):
+        """定义大于等于比较"""
+        if not isinstance(other, AsyncEvent):
+            return NotImplemented
+        return not self < other
+    
+    def __eq__(self, other):
+        """定义相等比较，基于序列号（每个事件都是唯一的）"""
+        if not isinstance(other, AsyncEvent):
+            return NotImplemented
+        return self.sequence == other.sequence
+    
+    def __hash__(self):
+        """定义哈希值，基于序列号"""
+        return hash(self.sequence)
 
 
 class AsyncEventManager:
@@ -110,13 +151,13 @@ class AsyncEventManager:
     
     async def _event_worker(self, worker_name: str):
         """事件处理工作器"""
-        logger.debug(f"启动事件工作器: {worker_name}")
+        # 移除工作器启动debug日志 - 工作器启动会在manager启动时统一报告
         
         while self.running:
             try:
                 # 使用优先队列获取事件，带超时避免死锁
                 try:
-                    priority, event = await asyncio.wait_for(
+                    event = await asyncio.wait_for(
                         self.event_queue.get(), 
                         timeout=1.0
                     )
@@ -143,7 +184,7 @@ class AsyncEventManager:
                 self.event_queue.task_done()
                 
             except asyncio.CancelledError:
-                logger.debug(f"事件工作器 {worker_name} 被取消")
+                # 工作器取消是正常关闭流程，不需要debug日志
                 break
             except Exception as e:
                 self.stats['events_failed'] += 1
@@ -157,7 +198,7 @@ class AsyncEventManager:
             
         event_type = event.type_
         if event_type not in self.handlers:
-            logger.debug(f"没有找到事件类型 {event_type} 的处理器")
+            # 精简频繁debug日志：未注册的事件类型可能较多，降级为仅在必要时记录
             return
         
         # 并发执行所有处理器
@@ -195,12 +236,12 @@ class AsyncEventManager:
     async def send_event(self, event: AsyncEvent):
         """发送事件到异步队列"""
         if not self.running:
-            logger.debug("事件管理器未运行，忽略事件")
+            # 管理器未运行时忽略事件是正常情况，不需要频繁debug日志
             return
             
         try:
-            # 使用优先队列，priority越小优先级越高
-            await self.event_queue.put((event.priority, event))
+            # 直接放入事件对象，由AsyncEvent的比较方法处理优先级
+            await self.event_queue.put(event)
             self.stats['queue_size'] = self.event_queue.qsize()
             
         except asyncio.QueueFull:
@@ -211,7 +252,7 @@ class AsyncEventManager:
             try:
                 # 这是一个简化实现，实际可能需要更复杂的策略
                 await asyncio.sleep(0.001)  # 短暂等待
-                await self.event_queue.put((event.priority, event))
+                await self.event_queue.put(event)
             except asyncio.QueueFull:
                 self.stats['events_failed'] += 1
                 logger.error(f"事件队列饱和，丢弃事件: {event.type_}")
@@ -269,7 +310,7 @@ class AsyncEventManager:
         if not inserted:
             handlers_list.append(actual_handler)
         
-        logger.debug(f"注册事件处理器: {event_type} -> {actual_handler.__name__}")
+        # 精简启动时频繁的debug日志：处理器注册在info级别已有总体报告
     
     def unregister_handler(self, event_type: str, handler: Callable):
         """注销事件处理器"""
@@ -323,7 +364,7 @@ class AsyncEventManager:
         """定期报告性能统计"""
         while self.running:
             try:
-                await asyncio.sleep(30)  # 每30秒报告一次
+                await asyncio.sleep(300)  # 每5分钟报告一次，减少日志频率
                 
                 if self.stats['events_processed'] > 0:
                     logger.info(
@@ -393,7 +434,14 @@ class AsyncEventAdapter:
     def send(self, event):
         """同步发送事件的兼容接口"""
         if hasattr(event, 'type_'):
-            async_event = AsyncEvent(event.type_, event.args, getattr(event, 'data', {}))
+            # 保留原有优先级设置
+            priority = getattr(event, 'priority', 0)
+            async_event = AsyncEvent(
+                event.type_, 
+                event.args, 
+                getattr(event, 'data', {}),
+                priority=priority
+            )
         else:
             # 兼容旧的事件格式
             async_event = AsyncEvent(str(event), (), {})

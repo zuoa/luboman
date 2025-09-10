@@ -13,7 +13,7 @@ def get_current_time():
     return datetime.datetime.now()
 
 
-db_host = os.environ.get('DATABASE_HOST', '10.0.4.13')
+db_host = os.environ.get('DATABASE_HOST', '10.0.4.15')
 db_port = os.environ.get('DATABASE_PORT', 54321)
 db_name = os.environ.get('DATABASE_NAME', 'luboman')
 db_user = os.environ.get('DATABASE_USER', 'luboman')

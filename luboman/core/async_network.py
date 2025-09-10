@@ -367,6 +367,10 @@ class AsyncNetworkManager:
             'session_closed': self.session is None or self.session.closed if self.session else True
         }
     
+    async def stop(self):
+        """停止网络管理器 - 兼容组件接口"""
+        await self.close()
+    
     async def health_check(self) -> bool:
         """健康检查"""
         try:

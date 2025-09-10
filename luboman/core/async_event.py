@@ -94,8 +94,13 @@ class AsyncEventManager:
                     if not task.done():
                         task.cancel()
         
-        # 关闭线程池
-        self.thread_pool.shutdown(wait=True, timeout=5)
+        # 关闭线程池 - 兼容旧版本Python
+        try:
+            # Python 3.9+ 支持timeout参数
+            self.thread_pool.shutdown(wait=True, timeout=5)
+        except TypeError:
+            # Python 3.8及以下版本不支持timeout参数
+            self.thread_pool.shutdown(wait=True)
         
         # 清理处理器
         self.handlers.clear()
@@ -216,32 +221,85 @@ class AsyncEventManager:
         if event_type not in self.handlers:
             self.handlers[event_type] = []
         
+        # 检查是否是bound method，如果是则包装它
+        if hasattr(handler, '__self__') and hasattr(handler, '__func__'):
+            # 这是一个bound method，需要包装
+            original_handler = handler
+            
+            if asyncio.iscoroutinefunction(handler):
+                async def wrapper(*args, **kwargs):
+                    return await original_handler(*args, **kwargs)
+            else:
+                def wrapper(*args, **kwargs):
+                    return original_handler(*args, **kwargs)
+            
+            wrapper.__name__ = getattr(handler, '__name__', str(handler))
+            wrapper._priority = priority
+            wrapper._original_handler = original_handler
+            actual_handler = wrapper
+        else:
+            # 普通函数或已经可以设置属性的对象
+            try:
+                handler._priority = priority
+                actual_handler = handler
+            except AttributeError:
+                # 如果仍然无法设置属性，也包装一下
+                if asyncio.iscoroutinefunction(handler):
+                    async def wrapper(*args, **kwargs):
+                        return await handler(*args, **kwargs)
+                else:
+                    def wrapper(*args, **kwargs):
+                        return handler(*args, **kwargs)
+                
+                wrapper.__name__ = getattr(handler, '__name__', str(handler))
+                wrapper._priority = priority
+                wrapper._original_handler = handler
+                actual_handler = wrapper
+        
         # 按优先级插入
         handlers_list = self.handlers[event_type]
         inserted = False
         for i, existing_handler in enumerate(handlers_list):
-            if hasattr(existing_handler, '_priority') and existing_handler._priority > priority:
-                handlers_list.insert(i, handler)
+            existing_priority = getattr(existing_handler, '_priority', 0)
+            if existing_priority > priority:
+                handlers_list.insert(i, actual_handler)
                 inserted = True
                 break
         
         if not inserted:
-            handlers_list.append(handler)
+            handlers_list.append(actual_handler)
         
-        # 设置处理器优先级属性
-        handler._priority = priority
-        
-        logger.debug(f"注册事件处理器: {event_type} -> {handler.__name__}")
+        logger.debug(f"注册事件处理器: {event_type} -> {actual_handler.__name__}")
     
     def unregister_handler(self, event_type: str, handler: Callable):
         """注销事件处理器"""
         if event_type in self.handlers:
+            # 首先尝试直接移除
             try:
                 self.handlers[event_type].remove(handler)
                 if not self.handlers[event_type]:
                     del self.handlers[event_type]
+                return
             except ValueError:
                 pass
+            
+            # 如果直接移除失败，检查是否是包装的处理器
+            handlers_to_remove = []
+            for registered_handler in self.handlers[event_type]:
+                if hasattr(registered_handler, '_original_handler'):
+                    if registered_handler._original_handler == handler:
+                        handlers_to_remove.append(registered_handler)
+            
+            # 移除找到的包装处理器
+            for wrapped_handler in handlers_to_remove:
+                try:
+                    self.handlers[event_type].remove(wrapped_handler)
+                except ValueError:
+                    pass
+            
+            # 如果列表为空，删除该事件类型
+            if not self.handlers[event_type]:
+                del self.handlers[event_type]
     
     def register(self, event_type: str, priority: int = 0, handler_priority: int = 0):
         """装饰器：注册事件处理器"""

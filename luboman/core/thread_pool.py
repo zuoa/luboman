@@ -120,8 +120,9 @@ class GlobalThreadPoolManager:
                     return False
             return True
         except Exception as e:
-            logger.error(f"线程池健康检查出错: {e}")
+            logger.exception("线程池健康检查出错:")
             return False
+
 
 # 全局实例
 thread_pool_manager = GlobalThreadPoolManager()

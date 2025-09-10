@@ -19,8 +19,7 @@ class BaseNotifier:
         if self.platform and self.token:
             if not content:
                 content = title
-            resp_text = self.do_notify(title, content)
-            logger.info(resp_text)
+            self.do_notify(title, content)
 
     def do_notify(self, title, content):
         raise NotImplementedError

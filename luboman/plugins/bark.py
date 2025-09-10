@@ -10,7 +10,8 @@ class BarkNotifier(BaseNotifier):
         super().__init__('bark', token)
 
     def do_notify(self, title, content):
-        requests.post(f'https://bark.aproxy.cn/{self.token}/', json={
-            'title': title,
-            'body': content,
-        })
+        if self.token:
+            requests.post(f'https://bark.aproxy.cn/{self.token}/', json={
+                'title': title,
+                'body': content,
+            })

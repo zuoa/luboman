@@ -41,6 +41,11 @@ class BiliWebUploader(Uploader):
         if not tags:
             tags = ['录播Man']
         video.set_tag(tags)
+
+        if self.room_data.get('bili_upower_level_id'):
+            video.upower_level_id = self.room_data.get('bili_upower_level_id')
+            video.charging_pay = 1
+
         lines = template_info.get('lines', 'AUTO')
         tasks = template_info.get('threads', 5)
         with BiliBili(video) as bili:
@@ -72,9 +77,11 @@ if __name__ == '__main__':
     video.desc = "测试描述"
     video.tid = 122  # 分区ID
     video.copyright = 1
+    video.charging_pay = 1
+    video.upower_level_id = '952390697301177415'
     video.set_tag(['测试标签'])
     with BiliBili(video) as bili:
-        cookies_file = "/Users/yujian/Downloads/biliupR-v0.2.1-x86_64-macos/cookies.json"  # 替换为实际的cookies文件路径
+        cookies_file = "/Users/yujian/Downloads/biliupR-v0.1.19-x86_64-macos/cookies.json"  # 替换为实际的cookies文件路径
         if os.path.exists(cookies_file):
             cookies_file_content = open(cookies_file, 'r').read()
             if cookies_file_content:
@@ -82,7 +89,7 @@ if __name__ == '__main__':
             else:
                 bili.login_by_cookies("your_bili_cookies_here")  # 替换为实际的cookies内容
 
-        video_part = bili.upload_file("/Users/yujian/Downloads/70jWyqpzuwwhFldg.mp4")  # 替换为实际的视频文件路径
+        video_part = bili.upload_file("/Users/yujian/Downloads/qx6kLOhg3gYDJVhn.mp4")  # 替换为实际的视频文件路径
         video.append(video_part)
         ret = bili.submit()
         print(ret)

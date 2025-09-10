@@ -660,6 +660,10 @@ class Data:
     videos: list = field(default_factory=list)
     dtime: Any = None
     open_subtitle: InitVar[bool] = False
+    charging_pay: int = 0
+    upower_mode: int = 0
+    upower_level_id: str = ''
+
 
     # interactive: int = 0
     # no_reprint: int 1
@@ -704,3 +708,4 @@ def upload(uploader_platform, file_list, **kwargs):
         return cls(file_list, **kwargs).start()
     except:
         logger.exception("Uncaught exception:")
+

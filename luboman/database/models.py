@@ -99,6 +99,7 @@ class LiveRoom(BaseModel):
     room_cover_frame_url = TextField(null=True)  # 直播间封面帧地址
     custom_filename = CharField(null=True)  # 文件名配置
     bili_upload_template_id = IntegerField(null=True)
+    bili_upower_level_id = CharField(null=True)  # B站充电专属等级ID
     upload_storage_platform = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True, default="flv")  # 视频格式
     last_living_time = DateTimeField(null=True)  # 最近直播时间

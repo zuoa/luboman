@@ -28,4 +28,5 @@ ENV PYTHONPATH="/app:$PYTHONPATH"
 EXPOSE 5005/tcp
 VOLUME /data
 VOLUME /root/.bypy
-ENTRYPOINT ["python", "main.py"]
+#ENTRYPOINT ["python", "main.py"]
+ENTRYPOINT ["python", "async_main.py"]

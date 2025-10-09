@@ -49,3 +49,7 @@ const getCookieText = (key) => {
 };
 
 console.log(getCookieText('__ac_nonce') + getCookieText('__ac_signature')+ getCookieText('sessionid'));
+
+
+#### 获取发电
+https://member.bilibili.com/x/vupre/web/archive/pre?lang=cn&t=1757769600025

@@ -102,12 +102,53 @@ class LiveBase(object):
 
     async def async_check_status(self):
         seq = 1
+        last_memory_check = 0
         while self._active:
             self.send_event(Event(EventType.EVENT_CHECK_STATUS, (1,)))
 
             # 每10次更新一次数据库
             if seq % 10 == 0:
                 self.send_event(Event(EventType.EVENT_UPDATE_DB_ROOM_DATA))
+
+            # 每100次检查（50分钟）进行内存监控和垃圾回收
+            if seq % 100 == 0:
+                try:
+                    import psutil
+                    import gc
+                    
+                    # 获取当前进程内存使用情况
+                    process = psutil.Process()
+                    memory_info = process.memory_info()
+                    memory_mb = memory_info.rss / 1024 / 1024
+                    
+                    # 如果内存使用增长过快，记录警告
+                    if last_memory_check > 0:
+                        memory_growth = memory_mb - last_memory_check
+                        if memory_growth > 50:  # 增长超过50MB
+                            logger.warning(f'{self.log_prefix} : 内存使用增长: {memory_growth:.1f}MB，当前: {memory_mb:.1f}MB')
+                            
+                            # 强制垃圾回收
+                            collected = gc.collect()
+                            logger.info(f'{self.log_prefix} : 执行垃圾回收，回收对象数: {collected}')
+                            
+                            # 重新检查内存
+                            new_memory_mb = process.memory_info().rss / 1024 / 1024
+                            if new_memory_mb < memory_mb:
+                                logger.info(f'{self.log_prefix} : 垃圾回收释放内存: {memory_mb - new_memory_mb:.1f}MB')
+                            
+                    last_memory_check = memory_mb
+                    
+                    # 每500次（约4小时）详细报告内存状态
+                    if seq % 500 == 0:
+                        gc_stats = gc.get_stats()
+                        logger.info(f'{self.log_prefix} : 内存状态报告 - 使用: {memory_mb:.1f}MB, GC统计: {gc_stats}')
+                        
+                except ImportError:
+                    # psutil未安装时跳过内存监控
+                    if seq == 100:  # 只在第一次时警告
+                        logger.warning(f'{self.log_prefix} : psutil未安装，跳过内存监控')
+                except Exception as e:
+                    logger.error(f'{self.log_prefix} : 内存监控失败: {e}')
 
             seq += 1
             await asyncio.sleep(30)
@@ -121,18 +162,46 @@ class LiveBase(object):
         logger.warning(f'{self.log_prefix} :  停止直播间')
         self._active = False
         
-        # 等待录制线程结束，设置超时
-        if self.record_thread and self.record_thread.is_alive():
-            logger.debug(f'{self.log_prefix} :  等待录制线程结束...')
-            self.record_thread.join(timeout=10)  # 10秒超时
-            if self.record_thread.is_alive():
-                logger.warning(f'{self.log_prefix} :  录制线程未能在10秒内结束')
-        
-        # 停止事件管理器
-        if hasattr(self, 'event_manager') and self.event_manager:
-            self.event_manager.stop()
+        try:
+            # 首先停止事件管理器，防止新事件产生
+            if hasattr(self, 'event_manager') and self.event_manager:
+                logger.debug(f'{self.log_prefix} :  停止事件管理器...')
+                self.event_manager.stop()
             
-        logger.info(f'{self.log_prefix} :  直播间已停止')
+            # 等待录制线程结束，设置超时
+            if hasattr(self, 'record_thread') and self.record_thread and self.record_thread.is_alive():
+                logger.debug(f'{self.log_prefix} :  等待录制线程结束...')
+                self.record_thread.join(timeout=10)  # 10秒超时
+                if self.record_thread.is_alive():
+                    logger.warning(f'{self.log_prefix} :  录制线程未能在10秒内结束，可能存在死锁')
+                    # 强制清理线程引用，让垃圾回收器处理
+                    self.record_thread = None
+                else:
+                    logger.debug(f'{self.log_prefix} :  录制线程已正常结束')
+            
+            # 清理所有可能的循环引用
+            if hasattr(self, 'room_data'):
+                self.room_data.clear()
+            
+            # 清理HTTP会话相关资源
+            if hasattr(self, 'fake_headers'):
+                self.fake_headers.clear()
+            
+            # 清理流地址
+            self.raw_stream_url = None
+            
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+            
+            logger.info(f'{self.log_prefix} :  直播间已停止，资源已清理')
+            
+        except Exception as e:
+            logger.error(f'{self.log_prefix} :  停止直播间时发生错误: {e}')
+            # 即使发生错误也要确保基本的清理
+            self._active = False
+            if hasattr(self, 'record_thread'):
+                self.record_thread = None
 
     def stopped(self):
         logger.warning(f'{self.log_prefix} : 直播间已停止')
@@ -342,16 +411,26 @@ class LiveBase(object):
             logger.debug(f'{self.log_prefix} :  发送事件: {event}')
 
         if event.args:
-            # 避免深拷贝导致内存泄漏，只对必要的可变对象进行浅拷贝
-            new_args = []
+            # 优化内存使用：减少不必要的拷贝操作
+            # 仅在绝对必要时才进行浅拷贝，减少内存分配
+            needs_copy = False
             for arg in event.args:
-                if isinstance(arg, (list, dict)):
-                    # 只对列表和字典进行浅拷贝
-                    new_args.append(copy.copy(arg))
-                else:
-                    # 不可变对象（字符串、数字、元组等）直接引用
-                    new_args.append(arg)
-            event.args = tuple(new_args)
+                # 只对大型可变对象或深度嵌套对象进行检查
+                if isinstance(arg, (list, dict)) and len(str(arg)) > 1000:
+                    needs_copy = True
+                    break
+            
+            if needs_copy:
+                # 只有当确实需要时才进行拷贝
+                new_args = []
+                for arg in event.args:
+                    if isinstance(arg, (list, dict)) and len(str(arg)) > 1000:
+                        # 对大型对象进行浅拷贝
+                        new_args.append(copy.copy(arg))
+                    else:
+                        # 小对象直接引用，减少内存分配
+                        new_args.append(arg)
+                event.args = tuple(new_args)
 
         self.event_manager.send(event)
 

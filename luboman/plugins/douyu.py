@@ -22,96 +22,99 @@ class Douyu(LiveBase):
             logger.warning(f"{self.log_prefix} :  直播间地址错误")
             return False
 
-        try:
-            if 'm.douyu.com' in self.room_url:
-                room_id = self.room_url.split('m.douyu.com/')[1].split('/')[0].split('?')[0]
-            else:
-                html = requests.get(self.room_url, headers=self.fake_headers, timeout=5).text
-                room_id = match1(html, r'\$ROOM\.room_id\s*=\s*(\d+)', r'apm_room_id\s*=\s*(\d+)')[0]
-            if not room_id:
-                logger.warning(f"{self.log_prefix} : 直播间不存在或已关闭")
-                return False
-        except:
-            logger.warning(f"{self.log_prefix} :  获取房间号错误")
-            return False
-
-        try:
-            room_info = requests.get(f"https://www.douyu.com/betard/{room_id}", headers=self.fake_headers, timeout=5).json()['room']
-            if room_info:
-                new_room_data = {
-                    'room_id': room_id,
-                    'room_platform': self.__class__.__name__,
-                    'room_title': room_info.get('room_name', ''),
-                    'room_cover_url': room_info.get('room_pic', ''),
-                    'room_cover_frame_url': room_info.get('room_pic', ''),
-                    'room_owner': room_info.get('owner_name', ''),
-                    'room_owner_id': room_info.get('owner_uid', ''),
-                    'room_owner_avatar': room_info.get('owner_avatar', ''),
-                    'room_owner_title': room_info.get('officialAnchor', {}).get('od', ''),
-                    'live_state': 1 if room_info.get('show_status', 0) == 1 else 0
-                }
-                self.room_data.update(new_room_data)
-
-            if room_info['show_status'] != 1:
-                logger.debug(f"{self.log_prefix} : 未开播")
+        # 使用Session管理所有HTTP连接，避免连接泄漏
+        with requests.Session() as session:
+            session.headers.update(self.fake_headers)
+            
+            try:
+                if 'm.douyu.com' in self.room_url:
+                    room_id = self.room_url.split('m.douyu.com/')[1].split('/')[0].split('?')[0]
+                else:
+                    html = session.get(self.room_url, timeout=5).text
+                    room_id = match1(html, r'\$ROOM\.room_id\s*=\s*(\d+)', r'apm_room_id\s*=\s*(\d+)')[0]
+                if not room_id:
+                    logger.warning(f"{self.log_prefix} : 直播间不存在或已关闭")
+                    return False
+            except:
+                logger.warning(f"{self.log_prefix} :  获取房间号错误")
                 return False
 
-            if room_info['videoLoop'] != 0:
-                logger.debug(f"{self.log_prefix} : 正在放录播")
+            try:
+                room_info = session.get(f"https://www.douyu.com/betard/{room_id}", timeout=5).json()['room']
+                if room_info:
+                    new_room_data = {
+                        'room_id': room_id,
+                        'room_platform': self.__class__.__name__,
+                        'room_title': room_info.get('room_name', ''),
+                        'room_cover_url': room_info.get('room_pic', ''),
+                        'room_cover_frame_url': room_info.get('room_pic', ''),
+                        'room_owner': room_info.get('owner_name', ''),
+                        'room_owner_id': room_info.get('owner_uid', ''),
+                        'room_owner_avatar': room_info.get('owner_avatar', ''),
+                        'room_owner_title': room_info.get('officialAnchor', {}).get('od', ''),
+                        'live_state': 1 if room_info.get('show_status', 0) == 1 else 0
+                    }
+                    self.room_data.update(new_room_data)
+
+                if room_info['show_status'] != 1:
+                    logger.debug(f"{self.log_prefix} : 未开播")
+                    return False
+
+                if room_info['videoLoop'] != 0:
+                    logger.debug(f"{self.log_prefix} : 正在放录播")
+                    return False
+            except Exception as e:
+                logger.warning(f"{self.log_prefix} :  获取直播间信息错误:{e}")
                 return False
-        except Exception as e:
-            logger.warning(f"{self.log_prefix} :  获取直播间信息错误:{e}")
-            return False
 
-        if is_check_status:
-            return True
+            if is_check_status:
+                return True
 
-        try:
-            import jsengine
-            ctx = jsengine.jsengine()
-            js_enc = requests.get(f'https://www.douyu.com/swf_api/homeH5Enc?rids={room_id}',
-                                  headers=self.fake_headers,
-                                  timeout=5).json()['data'][f'room{room_id}']
-            js_enc = js_enc.replace('return eval', 'return [strc, vdwdae325w_64we];')
+            try:
+                import jsengine
+                ctx = jsengine.jsengine()
+                js_enc = session.get(f'https://www.douyu.com/swf_api/homeH5Enc?rids={room_id}',
+                                      timeout=5).json()['data'][f'room{room_id}']
+                js_enc = js_enc.replace('return eval', 'return [strc, vdwdae325w_64we];')
 
-            sign_fun, sign_v = ctx.eval(f'{js_enc};ub98484234();')
+                sign_fun, sign_v = ctx.eval(f'{js_enc};ub98484234();')
 
-            tt = str(int(time.time()))
-            did = hashlib.md5(tt.encode('utf-8')).hexdigest()
-            rb = hashlib.md5(f"{room_id}{did}{tt}{sign_v}".encode('utf-8')).hexdigest()
-            sign_fun = sign_fun.rstrip(';').replace("CryptoJS.MD5(cb).toString()", f'"{rb}"')
-            sign_fun += f'("{room_id}","{did}","{tt}");'
+                tt = str(int(time.time()))
+                did = hashlib.md5(tt.encode('utf-8')).hexdigest()
+                rb = hashlib.md5(f"{room_id}{did}{tt}{sign_v}".encode('utf-8')).hexdigest()
+                sign_fun = sign_fun.rstrip(';').replace("CryptoJS.MD5(cb).toString()", f'"{rb}"')
+                sign_fun += f'("{room_id}","{did}","{tt}");'
 
-            params = parse_qs(ctx.eval(sign_fun))
-        except TypeError:
-            logger.error(f"{self.log_prefix} :  请安装至少一个 Javascript 解释器，如 pip install quickjs")
-            return False
-        except Exception as e:
-            logger.warning(f"{self.log_prefix} :  获取签名参数异常({e})")
-            return False
-
-        params['cdn'] = config.get('douyucdn', 'tct-h5')
-        params['rate'] = config.get('douyu_rate', 0)
-
-        try:
-            live_data = self.get_play_info(room_id, params)
-            if type(live_data) is not dict:
+                params = parse_qs(ctx.eval(sign_fun))
+            except TypeError:
+                logger.error(f"{self.log_prefix} :  请安装至少一个 Javascript 解释器，如 pip install quickjs")
                 return False
-        except:
-            logger.warning(f"{self.log_prefix} :  获取下载信息错误")
-            return False
+            except Exception as e:
+                logger.warning(f"{self.log_prefix} :  获取签名参数异常({e})")
+                return False
 
-        self.raw_stream_url = f"{live_data.get('rtmp_url')}/{live_data.get('rtmp_live')}"
+            params['cdn'] = config.get('douyucdn', 'tct-h5')
+            params['rate'] = config.get('douyu_rate', 0)
+
+            try:
+                live_data = self.get_play_info(room_id, params, session)
+                if type(live_data) is not dict:
+                    return False
+            except:
+                logger.warning(f"{self.log_prefix} :  获取下载信息错误")
+                return False
+
+            self.raw_stream_url = f"{live_data.get('rtmp_url')}/{live_data.get('rtmp_live')}"
         return True
 
-    def get_play_info(self, room_id, params):
-        live_data = requests.post(f'https://www.douyu.com/lapi/live/getH5Play/{room_id}', headers=self.fake_headers,
+    def get_play_info(self, room_id, params, session):
+        live_data = session.post(f'https://www.douyu.com/lapi/live/getH5Play/{room_id}',
                                   params=params, timeout=5).json().get('data')
         if type(live_data) is dict:
             # 禁用斗鱼主线路
             if not live_data.get('rtmp_cdn', '').endswith('h5') or 'akm' in live_data.get('rtmp_cdn', ''):
                 params['cdn'] = live_data['cdnsWithName'][-1]['cdn']
-                return self.get_play_info(room_id, params)
+                return self.get_play_info(room_id, params, session)
             return live_data
 
         return None

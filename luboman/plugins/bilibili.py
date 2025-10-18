@@ -71,30 +71,30 @@ class Bilibili(LiveBase):
             else:
                 is_new_live = False
 
-        s = requests.Session()
-        self.fake_headers['cookie'] = (
-                load_cookies(config.get('user', {}).get('bili_cookie_file')) or config.get('user', {}).get(
-            'bili_cookie')
-        )
-        s.headers = self.fake_headers
-        user_data = do_login(s).get('data', {})
-        is_login = user_data.get('isLogin', False)
-        if not is_login:
-            logger.debug(f"Bililive: Cookie 不存在或失效")
-            logger.debug(self.fake_headers.pop('cookie', 'Bililive: Not Found Cookie'))
-        else:
-            logger.info(f"用户名：{user_data['uname']}, mid：{user_data['mid']}, isLogin：{is_login}")
+        # 使用with语句确保Session正确关闭
+        with requests.Session() as s:
+            self.fake_headers['cookie'] = (
+                    load_cookies(config.get('user', {}).get('bili_cookie_file')) or config.get('user', {}).get(
+                'bili_cookie')
+            )
+            s.headers = self.fake_headers
+            user_data = do_login(s).get('data', {})
+            is_login = user_data.get('isLogin', False)
+            if not is_login:
+                logger.debug(f"Bililive: Cookie 不存在或失效")
+                logger.debug(self.fake_headers.pop('cookie', 'Bililive: Not Found Cookie'))
+            else:
+                logger.info(f"用户名：{user_data['uname']}, mid：{user_data['mid']}, isLogin：{is_login}")
 
-        # 原画链接复用
-        if self.raw_stream_url is not None \
-                and qualityNumber >= 10000 \
-                and not is_new_live:
-            # 同一个 streamName 即可复用，与其他参数无关，目前没有报告说链接会超时失效。
-            # 前面拿不到 streamName，目前使用开播时间判断
-            if check_url_healthy(s, self.raw_stream_url):
-                logger.debug(f"Bililive-{room_id}: 复用 {self.raw_stream_url}")
-                s.close()
-                return True
+            # 原画链接复用
+            if self.raw_stream_url is not None \
+                    and qualityNumber >= 10000 \
+                    and not is_new_live:
+                # 同一个 streamName 即可复用，与其他参数无关，目前没有报告说链接会超时失效。
+                # 前面拿不到 streamName，目前使用开播时间判断
+                if check_url_healthy(s, self.raw_stream_url):
+                    logger.debug(f"Bililive-{room_id}: 复用 {self.raw_stream_url}")
+                    return True
 
         protocol = config.get('bili_protocol', 'stream')
         perf_cdn = config.get('bili_perfCDN')
@@ -119,115 +119,118 @@ class Bilibili(LiveBase):
 
         stream_name_regexp = r"(live_\d+_\w+_\w+_?\w+?)"  # 匹配 streamName
 
-        try:
-            play_info = get_play_info(s, main_api, params)
-            if check_areablock(play_info['data']['playurl_info']['playurl']):
-                logger.debug(f"{main_api} 返回 {play_info}")
-                if fallback_api:
-                    play_info = get_play_info(s, fallback_api, params)
+        with requests.Session() as s:
+            # 设置headers
+            s.headers = self.fake_headers.copy()
+            
+            try:
+                play_info = get_play_info(s, main_api, params)
                 if check_areablock(play_info['data']['playurl_info']['playurl']):
-                    logger.debug(f"{fallback_api} 返回 {play_info}")
-                    return False
-        except Exception as e:
-            logger.debug(e)
-            return False
-        if play_info['code'] != 0:
-            logger.debug(play_info)
-            return False
-
-        playurl_info = play_info['data']['playurl_info']['playurl']
-        streams = playurl_info['stream']
-        stream = streams[1] if protocol.startswith('hls') and len(streams) > 1 else streams[0]
-        stream_format = stream['format'][0]
-        if protocol == "hls_fmp4":
-            if len(stream['format']) > 1:
-                stream_format = stream['format'][1]
-            elif int(time.time()) - live_start_time <= 60:  # 60s 宽容等待 fmp4
+                    logger.debug(f"{main_api} 返回 {play_info}")
+                    if fallback_api:
+                        play_info = get_play_info(s, fallback_api, params)
+                    if check_areablock(play_info['data']['playurl_info']['playurl']):
+                        logger.debug(f"{fallback_api} 返回 {play_info}")
+                        return False
+            except Exception as e:
+                logger.debug(e)
                 return False
-            elif stream_format['format_name'] == 'ts':  # 海外无 fmp4，优先回退 FLV
-                stream_format = streams[0]['format'][0]
+            if play_info['code'] != 0:
+                logger.debug(play_info)
+                return False
 
-        # if self.downloader == 'stream-gears' and stream_format['format_name'] == 'fmp4':
-        #     logger.error('stream-gears 不支持 fmp4 格式，请修改配置文件内的 downloader')
-        #     return False
-        stream_info = stream_format['codec'][0]
+            playurl_info = play_info['data']['playurl_info']['playurl']
+            streams = playurl_info['stream']
+            stream = streams[1] if protocol.startswith('hls') and len(streams) > 1 else streams[0]
+            stream_format = stream['format'][0]
+            if protocol == "hls_fmp4":
+                if len(stream['format']) > 1:
+                    stream_format = stream['format'][1]
+                elif int(time.time()) - live_start_time <= 60:  # 60s 宽容等待 fmp4
+                    return False
+                elif stream_format['format_name'] == 'ts':  # 海外无 fmp4，优先回退 FLV
+                    stream_format = streams[0]['format'][0]
 
-        stream_url = {
-            'base_url': stream_info['base_url'],
-        }
-        if perf_cdn is not None:
-            perf_cdn_list = perf_cdn.split(',')
-            for url_info in stream_info['url_info']:
-                if 'host' in stream_url:
-                    break
-                for cdn in perf_cdn_list:
-                    if cdn in url_info['extra']:
-                        stream_url['host'] = url_info['host']
-                        stream_url['extra'] = url_info['extra']
-                        logger.debug(f"找到了perfCDN {stream_url['host']}")
+            # if self.downloader == 'stream-gears' and stream_format['format_name'] == 'fmp4':
+            #     logger.error('stream-gears 不支持 fmp4 格式，请修改配置文件内的 downloader')
+            #     return False
+            stream_info = stream_format['codec'][0]
+
+            stream_url = {
+                'base_url': stream_info['base_url'],
+            }
+            if perf_cdn is not None:
+                perf_cdn_list = perf_cdn.split(',')
+                for url_info in stream_info['url_info']:
+                    if 'host' in stream_url:
                         break
-        if len(stream_url) < 3:
-            stream_url['host'] = stream_info['url_info'][-1]['host']
-            stream_url['extra'] = stream_info['url_info'][-1]['extra']
+                    for cdn in perf_cdn_list:
+                        if cdn in url_info['extra']:
+                            stream_url['host'] = url_info['host']
+                            stream_url['extra'] = url_info['extra']
+                            logger.debug(f"找到了perfCDN {stream_url['host']}")
+                            break
+            if len(stream_url) < 3:
+                stream_url['host'] = stream_info['url_info'][-1]['host']
+                stream_url['extra'] = stream_info['url_info'][-1]['extra']
 
-        url_path = f"{stream_url['base_url']}{stream_url['extra']}"
-        streamName = match1(stream_url['base_url'], stream_name_regexp)
+            url_path = f"{stream_url['base_url']}{stream_url['extra']}"
+            streamName = match1(stream_url['base_url'], stream_name_regexp)
 
-        is_cn01 = "cn-gotcha01" in stream_url['extra']
-        # 替换 cn-gotcha01 域名
-        if is_cn01 and cn01_domains[0] != '':
-            import random
-            i = len(cn01_domains)
-            while i:  # 测试节点是否可用
-                host = cn01_domains.pop(random.choice(range(i)))
-                i -= 1
-                try:
-                    if check_url_healthy(s, f"https://{host}{url_path}"):
-                        stream_url['host'] = "https://" + host
-                        logger.debug(f'节点 {host} 可用，替换为该节点')
-                        break
-                except Exception as e:
-                    logger.debug(e)
-                    logger.debug(f'节点 {host} 无法访问，尝试下一个节点。')
-                    continue
-            else:
-                logger.error("配置文件中的cn-gotcha01节点均不可用")
-
-        # 移除 streamName 内画质标签。
-        if streamName is not None and is_cn01 \
-                and force_source and qualityNumber >= 10000:
-            logger.debug(streamName)  # 替换了 FLV 不会通过健康检查，不用添加判断
-            new_base_url = stream_url['base_url'].replace(f"_{streamName.split('_')[-1]}", '')
-            if check_url_healthy(s, f"{stream_url['host']}{new_base_url}{stream_url['extra']}"):
-                stream_url['base_url'] = new_base_url
-                logger.debug(stream_url['base_url'])
-
-        self.raw_stream_url = f"{stream_url['host']}{stream_url['base_url']}{stream_url['extra']}"
-
-        if ov05_ip and "ov-gotcha05" in stream_url['host']:
-            self.raw_stream_url = oversea_expand(s, self.raw_stream_url, ov05_ip)
-
-        if bili_cdn_fallback:
-            stream_info['url_info'].reverse()
-            if not check_url_healthy(s, self.raw_stream_url):
-                i = len(stream_info['url_info'])
-                while i:
+            is_cn01 = "cn-gotcha01" in stream_url['extra']
+            # 替换 cn-gotcha01 域名
+            if is_cn01 and cn01_domains[0] != '':
+                import random
+                i = len(cn01_domains)
+                while i:  # 测试节点是否可用
+                    host = cn01_domains.pop(random.choice(range(i)))
                     i -= 1
                     try:
-                        self.raw_stream_url = stream_info['url_info'][i]['host'] + stream_url['base_url'] + \
-                                              stream_info['url_info'][i]['extra']
-                        if check_url_healthy(s, self.raw_stream_url):
+                        if check_url_healthy(s, f"https://{host}{url_path}"):
+                            stream_url['host'] = "https://" + host
+                            logger.debug(f'节点 {host} 可用，替换为该节点')
                             break
                     except Exception as e:
                         logger.debug(e)
+                        logger.debug(f'节点 {host} 无法访问，尝试下一个节点。')
                         continue
                 else:
-                    logger.debug(play_info)
-                    self.raw_stream_url = None
-                    return False
+                    logger.error("配置文件中的cn-gotcha01节点均不可用")
 
-        s.close()
-        return True
+            # 移除 streamName 内画质标签。
+            if streamName is not None and is_cn01 \
+                    and force_source and qualityNumber >= 10000:
+                logger.debug(streamName)  # 替换了 FLV 不会通过健康检查，不用添加判断
+                new_base_url = stream_url['base_url'].replace(f"_{streamName.split('_')[-1]}", '')
+                if check_url_healthy(s, f"{stream_url['host']}{new_base_url}{stream_url['extra']}"):
+                    stream_url['base_url'] = new_base_url
+                    logger.debug(stream_url['base_url'])
+
+            self.raw_stream_url = f"{stream_url['host']}{stream_url['base_url']}{stream_url['extra']}"
+
+            if ov05_ip and "ov-gotcha05" in stream_url['host']:
+                self.raw_stream_url = oversea_expand(s, self.raw_stream_url, ov05_ip)
+
+            if bili_cdn_fallback:
+                stream_info['url_info'].reverse()
+                if not check_url_healthy(s, self.raw_stream_url):
+                    i = len(stream_info['url_info'])
+                    while i:
+                        i -= 1
+                        try:
+                            self.raw_stream_url = stream_info['url_info'][i]['host'] + stream_url['base_url'] + \
+                                                  stream_info['url_info'][i]['extra']
+                            if check_url_healthy(s, self.raw_stream_url):
+                                break
+                        except Exception as e:
+                            logger.debug(e)
+                            continue
+                    else:
+                        logger.debug(play_info)
+                        self.raw_stream_url = None
+                        return False
+
+            return True
 
 
 def get_play_info(s, api, params):

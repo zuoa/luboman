@@ -138,13 +138,69 @@ class EventManager(Thread):
             # 使用非阻塞方式，避免队列满时卡死
             self.__queue.put_nowait(event)
         except Exception:
-            # 队列满时，记录警告并丢弃最旧的事件
-            logger.warning("事件队列已满，丢弃最旧事件")
-            try:
-                self.__queue.get_nowait()  # 移除最旧事件
-                self.__queue.put_nowait(event)  # 添加新事件
-            except Exception:
-                logger.error("无法处理队列满的情况")
+            # 队列满时，根据事件重要性决定处理策略
+            current_size = self.__queue.qsize()
+            logger.warning(f"事件队列已满 (大小: {current_size})")
+            
+            # 高优先级事件：状态检查、录制相关，需要保留
+            high_priority_events = [
+                EventType.EVENT_CHECK_STATUS,
+                EventType.EVENT_RECORD,
+                EventType.EVENT_PRE_RECORD,
+                EventType.EVENT_RECORD_COMPLETED
+            ]
+            
+            # 低优先级事件：上传、通知等可以丢弃
+            low_priority_events = [
+                EventType.EVENT_UPLOAD,
+                EventType.EVENT_UPLOAD_BILI,
+                EventType.EVENT_NOTIFY,
+                EventType.EVENT_DOWNLOAD_ASSET
+            ]
+            
+            if event.type_ in high_priority_events:
+                # 高优先级事件：尝试清理低优先级事件为其腾出空间
+                try:
+                    cleared_count = 0
+                    temp_events = []
+                    
+                    # 从队列中取出所有事件
+                    while not self.__queue.empty() and cleared_count < 10:
+                        try:
+                            old_event = self.__queue.get_nowait()
+                            if old_event.type_ not in low_priority_events:
+                                temp_events.append(old_event)
+                            else:
+                                cleared_count += 1
+                        except Exception:
+                            break
+                    
+                    # 将保留的事件重新放回队列
+                    for temp_event in temp_events:
+                        try:
+                            self.__queue.put_nowait(temp_event)
+                        except Exception:
+                            break
+                    
+                    # 尝试添加新的高优先级事件
+                    self.__queue.put_nowait(event)
+                    if cleared_count > 0:
+                        logger.info(f"为高优先级事件清理了 {cleared_count} 个低优先级事件")
+                        
+                except Exception as e:
+                    logger.error(f"清理队列失败: {e}")
+                    
+            elif event.type_ in low_priority_events:
+                # 低优先级事件：直接丢弃
+                logger.debug(f"队列满，丢弃低优先级事件: {event.type_}")
+            else:
+                # 中等优先级事件：尝试简单的FIFO清理
+                try:
+                    self.__queue.get_nowait()  # 移除最旧事件
+                    self.__queue.put_nowait(event)  # 添加新事件
+                    logger.debug(f"队列满，使用FIFO策略处理事件: {event.type_}")
+                except Exception:
+                    logger.error("无法处理队列满的情况")
 
     def register(self, type_, block="NORMAL"):
         def callback(result):

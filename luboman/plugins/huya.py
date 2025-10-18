@@ -142,27 +142,33 @@ class Huya(LiveBase):
         return streams
 
     def get_room_profile(self, room_id, use_api=False) -> dict:
-        if use_api:
-            resp = (requests.get(f"https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid={room_id}", headers=self.fake_headers)).json()
-            if resp['status'] != 200:
-                raise Exception(f"{resp['message']}")
-            return resp['data']
-        else:
-            html = (requests.get(f"https://www.huya.com/{room_id}", headers=self.fake_headers)).text
-            if '找不到这个主播' in html:
-                raise Exception(f"找不到这个主播")
-            return json.loads(html.split('stream: ')[1].split('};')[0])
+        # 使用Session避免连接泄漏
+        with requests.Session() as session:
+            session.headers.update(self.fake_headers)
+            
+            if use_api:
+                resp = session.get(f"https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid={room_id}").json()
+                if resp['status'] != 200:
+                    raise Exception(f"{resp['message']}")
+                return resp['data']
+            else:
+                html = session.get(f"https://www.huya.com/{room_id}").text
+                if '找不到这个主播' in html:
+                    raise Exception(f"找不到这个主播")
+                return json.loads(html.split('stream: ')[1].split('};')[0])
 
     def get_real_rid(self):
-        import requests
         headers = {
             'user-agent': random_user_agent(),
         }
-        html = requests.get(self.room_url, headers=headers).text
-        if '找不到这个主播' in html:
-            raise Exception(f"找不到这个主播")
-        html_obj = json.loads(html.split('stream: ')[1].split('};')[0])
-        return str(html_obj['data'][0]['gameLiveInfo']['profileRoom'])
+        # 使用Session避免连接泄漏
+        with requests.Session() as session:
+            session.headers.update(headers)
+            html = session.get(self.room_url).text
+            if '找不到这个主播' in html:
+                raise Exception(f"找不到这个主播")
+            html_obj = json.loads(html.split('stream: ')[1].split('};')[0])
+            return str(html_obj['data'][0]['gameLiveInfo']['profileRoom'])
 
     @staticmethod
     def __build_query(stream_name, anti_code, cookies=None) -> str:

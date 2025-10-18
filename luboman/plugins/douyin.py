@@ -6,7 +6,8 @@ from urllib.parse import urlencode, parse_qs, urlparse, urlunparse, unquote
 
 import requests
 
-from luboman.core.utils import match1, NamedLock, random_user_agent
+from luboman.core.abogus import ABogus
+from luboman.core.utils import match1, NamedLock, random_user_agent, json_loads
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.live import LiveBase
@@ -18,8 +19,17 @@ class Douyin(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
+        self.fake_headers['user-agent'] = DouyinUtils.DOUYIN_USER_AGENT
         self.fake_headers['referer'] = "https://live.douyin.com/"
         self.fake_headers['cookie'] = config.get('douyin_cookies', '')
+        if self.fake_headers['cookie'] != "" and not self.fake_headers['cookie'].endswith(';'):
+            self.fake_headers['cookie'] += ";"
+        if "ttwid" not in self.fake_headers['cookie']:
+            self.fake_headers['cookie'] += f'ttwid={DouyinUtils.get_ttwid()};'
+        if 'odin_ttid=' not in self.fake_headers['cookie']:
+            self.fake_headers['cookie'] += f"odin_ttid={DouyinUtils.generate_odin_ttid()};"
+        if '__ac_nonce=' not in self.fake_headers['cookie']:
+            self.fake_headers['cookie'] += f"__ac_nonce={DouyinUtils.generate_nonce()};"
 
     def check_live(self, is_check_status=False):
 
@@ -128,16 +138,18 @@ class Douyin(LiveBase):
 
     def get_web_room_info(self, web_rid: str) -> dict:
         query = {
+            'app_name': 'douyin_web',
+            # 'enter_from': random.choice(['link_share', 'web_live']),
+            'enter_from': 'web_live',
+            'live_id': '1',
             'web_rid': web_rid,
-            # 2025-08-01 服务端暂不校验以下参数的值，只校验参数存在
-            'enter_from': random.choice(['link_share', 'web_live']),
-            'a_bogus': '0',
+            'is_need_double_stream': "false"
         }
         target_url = DouyinUtils.build_request_url(f"https://live.douyin.com/webcast/room/web/enter/", query)
         logger.debug(f"{self.log_prefix}: get_web_room_info {target_url}")
-        web_info = requests.get(target_url, headers=self.fake_headers).json()
-
-        # logger.debug(f"{self.log_prefix}: get_web_room_info {web_info}")
+        resp_web_info = requests.get(target_url, headers=self.fake_headers)
+        logger.debug(f"{self.log_prefix}: get_web_room_info {resp_web_info.text}")
+        web_info = json_loads(unquote(resp_web_info.text))
         return web_info
 
 
@@ -149,32 +161,58 @@ class DouyinUtils:
     DOUYIN_HTTP_HEADERS = {
         'user-agent': DOUYIN_USER_AGENT
     }
+    CHARSET = "abcdef0123456789"
+    LONG_CHATSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 
     @staticmethod
     def get_ttwid() -> Optional[str]:
-        with NamedLock("douyin_ttwid_get"):
             if not DouyinUtils._douyin_ttwid:
                 page = requests.get("https://live.douyin.com/1-2-3-4-5-6-7-8-9-0", timeout=15)
                 DouyinUtils._douyin_ttwid = page.cookies.get("ttwid")
             return DouyinUtils._douyin_ttwid
 
+
+    @staticmethod
+    def generate_ms_token() -> str:
+        '''生成随机 msToken'''
+        return ''.join(random.choice(DouyinUtils.LONG_CHATSET) for _ in range(184))
+
+
+    @staticmethod
+    def generate_nonce() -> str:
+        """生成 21 位随机十六进制小写 nonce"""
+        return ''.join(random.choice(DouyinUtils.CHARSET) for _ in range(21))
+
+
+    @staticmethod
+    def generate_odin_ttid() -> str:
+        """生成 160 位随机十六进制小写 odin_ttid"""
+        return ''.join(random.choice(DouyinUtils.CHARSET) for _ in range(160))
+
+
     @staticmethod
     def build_request_url(url: str, query: Optional[dict] = None) -> str:
+        # NOTE: 不能在类级别初始化，否则非首次生成的 abogus 有问题，原因未知
+        abogus = ABogus(user_agent=DouyinUtils.DOUYIN_USER_AGENT)
         parsed_url = urlparse(url)
         existing_params = query or parse_qs(parsed_url.query)
         existing_params['aid'] = ['6383']
+        existing_params['compress'] = ['gzip']
         existing_params['device_platform'] = ['web']
         existing_params['browser_language'] = ['zh-CN']
         existing_params['browser_platform'] = ['Win32']
         existing_params['browser_name'] = [DouyinUtils.DOUYIN_USER_AGENT.split('/')[0]]
         existing_params['browser_version'] = [DouyinUtils.DOUYIN_USER_AGENT.split(existing_params['browser_name'][0])[-1][1:]]
+        if 'msToken' not in existing_params:
+            existing_params['msToken'] = [DouyinUtils.generate_ms_token()]
         new_query_string = urlencode(existing_params, doseq=True)
+        signed_query_string, _, _, _ = abogus.generate_abogus(params=new_query_string, body="")
         new_url = urlunparse((
             parsed_url.scheme,
             parsed_url.netloc,
             parsed_url.path,
             parsed_url.params,
-            new_query_string,
+            signed_query_string,
             parsed_url.fragment
         ))
         return new_url

@@ -10,3 +10,4 @@ bypy
 telebot
 aiohttp
 aiohttp_cors
+gmssl

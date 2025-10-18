@@ -130,6 +130,13 @@ def download_file(url, local_path, headers=None):
                     f.write(chunk)
 
 
+def json_loads(s: str):
+    import json
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return {}
+
 class NamedLock:
     """
     简单实现的命名锁

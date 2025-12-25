@@ -148,7 +148,7 @@ class Douyin(LiveBase):
         target_url = DouyinUtils.build_request_url(f"https://live.douyin.com/webcast/room/web/enter/", query)
         logger.debug(f"{self.log_prefix}: get_web_room_info {target_url}")
         resp_web_info = requests.get(target_url, headers=self.fake_headers)
-        logger.debug(f"{self.log_prefix}: get_web_room_info {resp_web_info.text}")
+        # logger.debug(f"{self.log_prefix}: get_web_room_info {resp_web_info.text}")
         web_info = json_loads(unquote(resp_web_info.text))
         return web_info
 

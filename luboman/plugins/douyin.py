@@ -149,7 +149,10 @@ class Douyin(LiveBase):
         logger.debug(f"{self.log_prefix}: get_web_room_info {target_url}")
         resp_web_info = requests.get(target_url, headers=self.fake_headers)
         # logger.debug(f"{self.log_prefix}: get_web_room_info {resp_web_info.text}")
-        web_info = json_loads(unquote(resp_web_info.text))
+        try:
+            web_info = resp_web_info.json()
+        except:
+            web_info = json_loads(unquote(resp_web_info.text))
         return web_info
 
 
@@ -218,4 +221,4 @@ class DouyinUtils:
         return new_url
 
 if __name__ == '__main__':
-    print(Douyin('test', 'https://live.douyin.com/870887192950').check_live(is_check_status=True))
+    print(Douyin('test', 'https://live.douyin.com/81482202').check_live(is_check_status=True))

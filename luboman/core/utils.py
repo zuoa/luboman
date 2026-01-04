@@ -132,9 +132,11 @@ def download_file(url, local_path, headers=None):
 
 def json_loads(s: str):
     import json
+
     try:
         return json.loads(s)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.exception(e)
         return {}
 
 class NamedLock:

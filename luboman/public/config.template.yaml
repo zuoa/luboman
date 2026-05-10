@@ -25,8 +25,10 @@ notify_platform: 'pushplus'
 notify_token: ''
 
 #------上传------#
-### 选择全局默认上传插件，Noop为不上传，但会执行后处理,可选bili_web，biliup-rs(默认值)
-#uploader: Noop
+### 选择全局默认B站上传插件，可选 biliweb/bili_web、biliup-rs/biliup
+#uploader: biliup-rs
+### biliup CLI 路径。使用 biliup-rs/biliup 上传时需要先安装 biliup，并用 `biliup -u cookies.json login` 获取登录文件
+#biliup_path: biliup
 ### b站提交接口，默认自动选择，可选web，client
 #submit_api: client
 ### b站上传线路选择，默认为自动模式，目前可手动切换为bda2, kodo, ws, qn, cos, cos-internal(支持腾讯云内网免流+提速)

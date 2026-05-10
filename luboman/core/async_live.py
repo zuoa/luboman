@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import time
 import copy
@@ -161,10 +162,10 @@ class AsyncLiveBase:
                 
                 # 这里应该调用异步上传功能
                 # 目前保持与原有上传系统的兼容
-                from luboman.core.upload import upload
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, upload, 'biliweb', prepare_upload_file_list, **upload_info
-                )
+                from luboman.core.upload import resolve_bili_uploader, upload
+                bili_uploader = resolve_bili_uploader(upload_info['room_data'])
+                upload_call = functools.partial(upload, bili_uploader, prepare_upload_file_list, **upload_info)
+                result = await asyncio.get_event_loop().run_in_executor(None, upload_call)
                 
                 logger.info(f'{self.log_prefix} 异步Bili上传完成: {result}')
         

@@ -1,11 +1,12 @@
 import atexit
 import functools
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import weakref
+from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from queue import Queue
-from threading import Thread
-from typing import Generator
+from threading import Thread, Lock
+from typing import Generator, Set
 
 logger = logging.getLogger('luboman')
 
@@ -22,6 +23,11 @@ class EventManager(Thread):
 
         self.__handlers = {}
         self.__pool_blocks = []
+        
+        # Future 对象追踪 - 修复内存泄漏问题
+        self.__active_futures: Set[Future] = set()
+        self.__futures_lock = Lock()
+        self.__futures_cleanup_counter = 0
         
         # 尝试使用全局线程池
         self.__use_global_pool = True
@@ -52,11 +58,74 @@ class EventManager(Thread):
                     pool.shutdown(wait=True)
                 except Exception as e:
                     logger.error(f"清理本地线程池时出错: {e}")
+    
+    def _future_done_callback(self, future: Future):
+        """Future 完成时的回调函数，用于自动清理"""
+        try:
+            # 从活跃 Future 集合中移除
+            with self.__futures_lock:
+                self.__active_futures.discard(future)
+            
+            # 获取异常（如果有的话），避免异常被吞没
+            if future.exception() is not None:
+                exc = future.exception()
+                logger.error(f"事件处理任务执行时发生异常: {exc}", exc_info=True)
+        except Exception as e:
+            logger.error(f"清理 Future 对象时出错: {e}")
+    
+    def _cleanup_completed_futures(self):
+        """定期清理已完成的 Future 对象"""
+        try:
+            with self.__futures_lock:
+                # 过滤出已完成的 Future
+                completed = {f for f in self.__active_futures if f.done()}
+                if completed:
+                    self.__active_futures -= completed
+                    logger.debug(f"清理了 {len(completed)} 个已完成的 Future 对象")
+        except Exception as e:
+            logger.error(f"清理已完成的 Future 时出错: {e}")
+    
+    def _wait_for_futures(self, timeout: float = 30.0):
+        """等待所有活跃的 Future 完成"""
+        import time
+        from concurrent.futures import wait, FIRST_COMPLETED
+        
+        try:
+            with self.__futures_lock:
+                active_count = len(self.__active_futures)
+                if active_count == 0:
+                    return
+                
+                logger.info(f"等待 {active_count} 个活跃任务完成...")
+                futures_to_wait = set(self.__active_futures)
+            
+            # 等待所有 Future 完成或超时
+            start_time = time.time()
+            while futures_to_wait and (time.time() - start_time) < timeout:
+                # 等待一批完成
+                done, futures_to_wait = wait(futures_to_wait, timeout=1.0, return_when=FIRST_COMPLETED)
+                
+                if done:
+                    with self.__futures_lock:
+                        self.__active_futures -= done
+                    logger.debug(f"已完成 {len(done)} 个任务，剩余 {len(futures_to_wait)} 个")
+            
+            # 如果超时还有未完成的任务
+            if futures_to_wait:
+                logger.warning(f"等待超时，仍有 {len(futures_to_wait)} 个任务未完成")
+                # 强制清理
+                with self.__futures_lock:
+                    self.__active_futures.clear()
+        except Exception as e:
+            logger.error(f"等待 Future 完成时出错: {e}")
 
     def stop(self):
         """停止事件管理器"""
         logger.debug(f"停止EventManager: {self.name}")
         self.__active = False
+        
+        # 等待所有活跃的 Future 完成
+        self._wait_for_futures(timeout=30.0)
         
         # 清理事件处理器，防止循环引用
         self.__handlers.clear()
@@ -77,12 +146,23 @@ class EventManager(Thread):
                 self.__queue.get_nowait()
         except Exception:
             pass
+        
+        # 最终清理 Future 集合
+        with self.__futures_lock:
+            self.__active_futures.clear()
+            logger.debug("EventManager 停止完成")
 
     def run(self):
         while self.__active:
             try:
                 event = self.__queue.get(block=True, timeout=1)
                 self.__event_process(event)
+                
+                # 每处理 100 个事件，清理一次已完成的 Future
+                self.__futures_cleanup_counter += 1
+                if self.__futures_cleanup_counter >= 100:
+                    self._cleanup_completed_futures()
+                    self.__futures_cleanup_counter = 0
             except Exception as e:
                 pass
 
@@ -94,6 +174,7 @@ class EventManager(Thread):
             for handler in self.__handlers[event.type_]:
                 if handler.__qualname__ in self.__pool_blocks:
                     # 使用全局线程池或本地线程池
+                    future = None
                     if self.__use_global_pool and self._global_manager:
                         future = self._global_manager.submit_task(
                             handler.thread_pool, handler, event
@@ -104,17 +185,40 @@ class EventManager(Thread):
                         pool = self.__thread_pool.get(handler.thread_pool) if self.__thread_pool else None
                         if pool:
                             try:
-                                pool.submit(handler, event)
+                                future = pool.submit(handler, event)
                             except Exception as e:
                                 logger.error(f"提交任务到本地线程池失败: {e}")
                         else:
                             logger.error(f"无法获取线程池: {handler.thread_pool}")
+                    
+                    # 追踪 Future 对象并添加完成回调
+                    if future is not None:
+                        with self.__futures_lock:
+                            self.__active_futures.add(future)
+                        # 添加完成回调自动清理
+                        future.add_done_callback(self._future_done_callback)
                 else:
                     try:
                         handler(event)
                     except Exception as e:
                         logger.error(f"处理事件时出错: {e}")
 
+    def get_stats(self):
+        """获取事件管理器统计信息"""
+        with self.__futures_lock:
+            active_futures_count = len(self.__active_futures)
+            completed_futures = sum(1 for f in self.__active_futures if f.done())
+        
+        return {
+            'active': self.__active,
+            'queue_size': self.__queue.qsize(),
+            'handlers_count': sum(len(handlers) for handlers in self.__handlers.values()),
+            'active_futures': active_futures_count,
+            'completed_futures': completed_futures,
+            'pending_futures': active_futures_count - completed_futures,
+            'use_global_pool': self.__use_global_pool
+        }
+    
     def add_event_handler(self, type_, handler):
         if type_ not in self.__handlers:
             self.__handlers[type_] = []

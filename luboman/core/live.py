@@ -20,7 +20,7 @@ from playhouse.shortcuts import model_to_dict
 from luboman.config import config
 from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
-from luboman.core.upload import upload
+from luboman.core.upload import resolve_bili_uploader, upload
 from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename, get_public_dir, download_file
 from luboman.database.db import DB
 from luboman.database.models import RecordFile, BiliUploadTemplate, BiliAccount
@@ -43,6 +43,7 @@ class LiveBase(object):
         self.suffix = suffix.lower()
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
+        self._status_task = None
 
         self.default_ffmpeg_options = {
             '-bsf:a': 'aac_adtstoasc',
@@ -156,13 +157,19 @@ class LiveBase(object):
     def start(self):
         logger.info(f'{self.log_prefix} : 开启直播间')
         logger.info(self.room_data)
-        asyncio.create_task(self.async_check_status())
+        if self._status_task and not self._status_task.done():
+            logger.warning(f'{self.log_prefix} :  状态检查任务已存在，跳过重复启动')
+            return
+        self._status_task = asyncio.create_task(self.async_check_status())
 
     def stop(self):
         logger.warning(f'{self.log_prefix} :  停止直播间')
         self._active = False
         
         try:
+            if self._status_task and not self._status_task.done():
+                self._status_task.cancel()
+                self._status_task = None
             # 首先停止事件管理器，防止新事件产生
             if hasattr(self, 'event_manager') and self.event_manager:
                 logger.debug(f'{self.log_prefix} :  停止事件管理器...')
@@ -416,9 +423,13 @@ class LiveBase(object):
             needs_copy = False
             for arg in event.args:
                 # 只对大型可变对象或深度嵌套对象进行检查
-                if isinstance(arg, (list, dict)) and len(str(arg)) > 1000:
-                    needs_copy = True
-                    break
+                if isinstance(arg, (list, dict)):
+                    try:
+                        if len(arg) > 1000:
+                            needs_copy = True
+                            break
+                    except Exception:
+                        pass
             
             if needs_copy:
                 # 只有当确实需要时才进行拷贝
@@ -616,7 +627,8 @@ class LiveBase(object):
                 if os.path.exists(file['video']) and os.path.getsize(file['video']) >= filtering_threshold_file_size:
                     prepare_upload_file_list.append(file)
 
-            ret = upload('biliweb', prepare_upload_file_list, **upload_info)
+            bili_uploader = resolve_bili_uploader(room_data)
+            ret = upload(bili_uploader, prepare_upload_file_list, **upload_info)
             logger.info(f'{self.log_prefix} :  Bili上传完成: {ret}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)

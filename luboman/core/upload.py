@@ -688,6 +688,30 @@ class Data:
     def append(self, video):
         self.videos.append(video)
 
+
+def resolve_bili_uploader(room_data=None):
+    """Resolve the configured Bilibili uploader plugin name."""
+    from luboman.config import config
+
+    room_data = room_data or {}
+    platform = (
+        room_data.get('bili_uploader')
+        or room_data.get('uploader')
+        or config.get('bili_uploader')
+        or config.get('uploader')
+        or 'biliup-rs'
+    )
+    aliases = {
+        'bili_web': 'biliweb',
+        'bili-web': 'biliweb',
+        'biliup_rs': 'biliup-rs',
+        'biliup-rs': 'biliup-rs',
+        'biliup_cli': 'biliup-rs',
+        'biliup': 'biliup-rs',
+    }
+    return aliases.get(str(platform).strip(), str(platform).strip())
+
+
 def upload(uploader_platform, file_list, **kwargs):
     if not uploader_platform:
         return
@@ -708,4 +732,3 @@ def upload(uploader_platform, file_list, **kwargs):
         return cls(file_list, **kwargs).start()
     except:
         logger.exception("Uncaught exception:")
-

@@ -81,7 +81,8 @@ async def pre_archive(request):
             k, v = i.split('=')
             cookies[k] = v
 
-    return web.json_response(BiliBili(Data()).tid_archive(cookies))
+    with BiliBili(Data()) as bili:
+        return web.json_response(bili.tid_archive(cookies))
 
 
 @routes.post("/v1/Config/get")

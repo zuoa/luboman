@@ -145,7 +145,7 @@ class AsyncUploadScheduler:
     
     def _init_platform_semaphores(self):
         """初始化平台信号量"""
-        platforms = ['biliweb', 'alipan', 'bdpan', 'telegram', 'local']
+        platforms = ['biliweb', 'biliup-rs', 'alipan', 'bdpan', 'telegram', 'local']
         
         for platform in platforms:
             self.platform_semaphores[platform] = asyncio.Semaphore(
@@ -527,8 +527,9 @@ class UploadEventHandler:
         room_data = event.data.get('room_data', {})
         
         if file_list:
+            from luboman.core.upload import resolve_bili_uploader
             await self.upload_scheduler.schedule_upload_simple(
-                platform='biliweb',
+                platform=resolve_bili_uploader(room_data),
                 file_list=file_list,
                 room_data=room_data,
                 priority=UploadPriority.HIGH  # B站上传优先级较高

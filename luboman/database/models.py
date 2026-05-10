@@ -3,7 +3,10 @@ import logging
 import os.path
 
 from peewee import Model, AutoField, CharField, IntegerField, TextField, DateTimeField
-from playhouse.pool import PooledPostgresqlExtDatabase
+try:
+    from playhouse.pool import PooledPostgresqlExtDatabase
+except ImportError:
+    from playhouse.postgres_ext import PooledPostgresqlExtDatabase
 from playhouse.sqlite_ext import JSONField
 
 logger = logging.getLogger('luboman')

@@ -11,3 +11,4 @@ telebot
 aiohttp
 aiohttp_cors
 gmssl
+biliup

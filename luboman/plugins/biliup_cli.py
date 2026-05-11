@@ -69,6 +69,20 @@ def _line_to_cli(line: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _submit_api_to_cli(submit_api: Optional[str]) -> Optional[str]:
+    if not submit_api:
+        return None
+    normalized = str(submit_api).strip().lower()
+    aliases = {
+        'client': 'app',
+        'app': 'app',
+        'web': 'web',
+        'b-cut-android': 'b-cut-android',
+        'b_cut_android': 'b-cut-android',
+    }
+    return aliases.get(normalized)
+
+
 def _append_option(command: List[str], option: str, value):
     if value is not None and value != '':
         command.extend([option, str(value)])
@@ -138,9 +152,12 @@ class BiliupCliUploader(Uploader):
         biliup_path = _config_get('biliup_path', 'biliup')
         command = [biliup_path, '-u', cookie_file, 'upload']
 
-        submit_api = str(_config_get('submit_api', 'client')).strip().lower()
-        if submit_api in {'client', 'app', 'web'}:
-            command.extend(['--submit', submit_api])
+        submit_api = _config_get('submit_api', 'app')
+        submit_api_cli = _submit_api_to_cli(submit_api)
+        if submit_api_cli:
+            command.extend(['--submit', submit_api_cli])
+        elif submit_api:
+            logger.warning('不支持的 biliup submit_api: %s，已跳过 --submit 参数', submit_api)
 
         line = _line_to_cli(_first_present(template_info, 'lines', default=_config_get('lines')))
         if line:

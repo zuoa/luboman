@@ -29,8 +29,8 @@ notify_token: ''
 #uploader: biliup-rs
 ### biliup CLI 路径。使用 biliup-rs/biliup 上传时需要先安装 biliup，并用 `biliup -u cookies.json login` 获取登录文件
 #biliup_path: biliup
-### b站提交接口，默认自动选择，可选web，client
-#submit_api: client
+### b站提交接口。biliup-rs 可选 app/web/b-cut-android；旧配置 client 会兼容为 app
+#submit_api: app
 ### b站上传线路选择，默认为自动模式，目前可手动切换为bda2, kodo, ws, qn, cos, cos-internal(支持腾讯云内网免流+提速)
 lines: AUTO
 ### 单文件并发上传数，未达到带宽上限时增大此值可提高上传速度

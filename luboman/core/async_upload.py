@@ -1,11 +1,14 @@
 import asyncio
+import itertools
 import logging
 import time
 import os
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import uuid
+
+from luboman.core.async_utils import run_blocking
 
 logger = logging.getLogger('luboman')
 
@@ -55,10 +58,12 @@ class AsyncUploadScheduler:
         
         # 上传队列（按优先级排序）
         self.upload_queue = asyncio.PriorityQueue(maxsize=1000)
+        self._task_sequence = itertools.count()
         self.running = False
         
         # 工作器任务
         self.upload_workers: List[asyncio.Task] = []
+        self.retry_tasks: Set[asyncio.Task] = set()
         
         # 平台并发控制
         self.platform_semaphores: Dict[str, asyncio.Semaphore] = {}
@@ -111,7 +116,7 @@ class AsyncUploadScheduler:
     
     async def stop(self):
         """停止异步上传调度器"""
-        if not self.running:
+        if not self.running and not self.upload_workers and not self.retry_tasks:
             return
         
         logger.info("正在关闭异步上传调度器...")
@@ -135,13 +140,44 @@ class AsyncUploadScheduler:
                 )
             except asyncio.TimeoutError:
                 logger.warning("上传工作器停止超时")
+
+        if self.retry_tasks:
+            logger.info(f"取消 {len(self.retry_tasks)} 个待重试上传任务")
+            for retry_task in list(self.retry_tasks):
+                if not retry_task.done():
+                    retry_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self.retry_tasks, return_exceptions=True),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("上传重试任务停止超时")
+
+        self._drain_upload_queue()
         
         # 清理资源
         self.upload_workers.clear()
+        self.retry_tasks.clear()
         self.active_uploads.clear()
         self.platform_semaphores.clear()
         
         logger.info("异步上传调度器已关闭")
+
+    def _drain_upload_queue(self):
+        """释放关闭时还未执行的上传任务引用。"""
+        drained = 0
+        while True:
+            try:
+                self.upload_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self.upload_queue.task_done()
+            drained += 1
+
+        self.stats['queue_size'] = self.upload_queue.qsize()
+        if drained:
+            logger.info(f"已清理 {drained} 个未执行的上传任务")
     
     def _init_platform_semaphores(self):
         """初始化平台信号量"""
@@ -160,7 +196,7 @@ class AsyncUploadScheduler:
             try:
                 # 获取上传任务
                 try:
-                    priority_value, upload_task = await asyncio.wait_for(
+                    priority_value, sequence, upload_task = await asyncio.wait_for(
                         self.upload_queue.get(),
                         timeout=1.0
                     )
@@ -171,18 +207,19 @@ class AsyncUploadScheduler:
                 self.active_uploads[upload_task.task_id] = upload_task
                 self.stats['current_uploads'] += 1
                 
-                # 执行上传
-                result = await self._execute_upload(upload_task, worker_name)
-                
-                # 处理结果
-                await self._handle_upload_result(upload_task, result)
-                
-                # 清理活跃任务
-                self.active_uploads.pop(upload_task.task_id, None)
-                self.stats['current_uploads'] -= 1
-                
-                # 标记任务完成
-                self.upload_queue.task_done()
+                try:
+                    # 执行上传
+                    result = await self._execute_upload(upload_task, worker_name)
+
+                    # 处理结果
+                    await self._handle_upload_result(upload_task, result)
+                finally:
+                    # 清理活跃任务
+                    self.active_uploads.pop(upload_task.task_id, None)
+                    self.stats['current_uploads'] = max(0, self.stats['current_uploads'] - 1)
+
+                    # 标记任务完成
+                    self.upload_queue.task_done()
                 
             except asyncio.CancelledError:
                 logger.debug(f"上传工作器 {worker_name} 被取消")
@@ -280,9 +317,7 @@ class AsyncUploadScheduler:
             return size
         
         try:
-            total_size = await asyncio.get_event_loop().run_in_executor(
-                None, calculate_size_sync
-            )
+            total_size = await run_blocking(calculate_size_sync)
         except Exception as e:
             logger.warning(f"计算文件大小失败: {e}")
         
@@ -301,18 +336,13 @@ class AsyncUploadScheduler:
             # 导入上传函数
             from luboman.core.upload import upload
             
-            # 准备上传参数
-            upload_kwargs = {}
-            if upload_task.room_data:
-                upload_kwargs.update(upload_task.room_data)
-            
             # 在线程中执行上传（因为原有上传系统是同步的）
             def upload_sync():
-                return upload(platform, file_list, **upload_kwargs)
+                if upload_task.room_data:
+                    return upload(platform, file_list, room_data=upload_task.room_data)
+                return upload(platform, file_list)
             
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, upload_sync
-            )
+            result = await run_blocking(upload_sync)
             
             # 处理上传结果
             if result:
@@ -356,8 +386,7 @@ class AsyncUploadScheduler:
                     f"延迟: {retry_delay}s"
                 )
                 
-                # 延迟后重新加入队列
-                asyncio.create_task(self._schedule_retry(upload_task, retry_delay))
+                self._track_retry_task(upload_task, retry_delay)
         
         # 调用结果回调
         for callback in self.result_callbacks:
@@ -375,6 +404,14 @@ class AsyncUploadScheduler:
         
         if self.running:
             await self.schedule_upload(upload_task)
+
+    def _track_retry_task(self, upload_task: AsyncUploadTask, delay: float):
+        retry_task = asyncio.create_task(
+            self._schedule_retry(upload_task, delay),
+            name=f"upload-retry-{upload_task.task_id}"
+        )
+        self.retry_tasks.add(retry_task)
+        retry_task.add_done_callback(self.retry_tasks.discard)
     
     async def schedule_upload(self, upload_task: AsyncUploadTask):
         """调度上传任务"""
@@ -386,7 +423,7 @@ class AsyncUploadScheduler:
             # 使用优先级值作为队列排序键
             priority_value = upload_task.priority.value
             
-            await self.upload_queue.put((priority_value, upload_task))
+            self.upload_queue.put_nowait((priority_value, next(self._task_sequence), upload_task))
             self.stats['queue_size'] = self.upload_queue.qsize()
             
             logger.debug(
@@ -461,6 +498,7 @@ class AsyncUploadScheduler:
             'queue_size': self.upload_queue.qsize(),
             'active_uploads_count': len(self.active_uploads),
             'active_upload_tasks': list(self.active_uploads.keys()),
+            'retry_tasks_count': len(self.retry_tasks),
             'platform_limits': {
                 platform: semaphore._value 
                 for platform, semaphore in self.platform_semaphores.items()
@@ -479,7 +517,7 @@ class AsyncUploadScheduler:
                 item = self.upload_queue.get_nowait()
                 temp_tasks.append(item)
                 
-                priority_value, upload_task = item
+                priority_value, sequence, upload_task = item
                 platform = upload_task.platform
                 priority_name = upload_task.priority.name
                 
@@ -510,6 +548,9 @@ class UploadEventHandler:
     
     async def handle_upload_event(self, event):
         """处理上传事件"""
+        if getattr(event, 'room_id', None) is not None:
+            return
+
         file_list = event.args[0] if event.args else []
         room_data = event.data.get('room_data', {})
         
@@ -523,6 +564,9 @@ class UploadEventHandler:
     
     async def handle_bili_upload_event(self, event):
         """处理B站上传事件"""
+        if getattr(event, 'room_id', None) is not None:
+            return
+
         file_list = event.args[0] if event.args else []
         room_data = event.data.get('room_data', {})
         

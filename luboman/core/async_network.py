@@ -1,11 +1,9 @@
 import asyncio
-import aiohttp
+import json
 import logging
 import time
-import json
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
-import weakref
 
 logger = logging.getLogger('luboman')
 
@@ -41,7 +39,7 @@ class AsyncNetworkManager:
     def __init__(self, max_concurrent: int = 100, max_per_host: int = 20):
         self.max_concurrent = max_concurrent
         self.max_per_host = max_per_host
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: Optional[Any] = None
         self.semaphore = asyncio.Semaphore(max_concurrent)
         
         # 性能统计
@@ -57,6 +55,8 @@ class AsyncNetworkManager:
         self.cache: Dict[str, Tuple[Any, float]] = {}
         self.cache_ttl = 30.0  # 缓存30秒
         self.max_cache_size = 1000
+        self.max_cache_payload_size = 512 * 1024
+        self.max_response_payload_size = 20 * 1024 * 1024
         
         self._closed = False
     
@@ -73,6 +73,8 @@ class AsyncNetworkManager:
         """启动网络管理器"""
         if self.session and not self.session.closed:
             return
+
+        import aiohttp
         
         # 配置连接器
         connector = aiohttp.TCPConnector(
@@ -116,12 +118,30 @@ class AsyncNetworkManager:
         
         # 清理缓存
         self.cache.clear()
+        self.stats['concurrent_requests'] = 0
         
         logger.info("异步网络管理器已关闭")
     
     def _get_cache_key(self, request: NetworkRequest) -> str:
         """生成缓存键"""
-        return f"{request.method}:{request.url}:{hash(str(request.headers))}"
+        headers = tuple(sorted((request.headers or {}).items()))
+        return f"{request.method}:{request.url}:{hash(headers)}"
+
+    def _is_cacheable(self, request: NetworkRequest, data: Optional[Any] = None) -> bool:
+        """判断请求/响应是否适合放入内存缓存。"""
+        if request.method != 'GET' or request.request_type == 'download':
+            return False
+
+        if data is None:
+            return True
+
+        try:
+            if isinstance(data, (bytes, bytearray, str)) and len(data) > self.max_cache_payload_size:
+                return False
+        except Exception:
+            return False
+
+        return True
     
     def _check_cache(self, cache_key: str) -> Optional[Any]:
         """检查缓存"""
@@ -136,6 +156,9 @@ class AsyncNetworkManager:
     
     def _set_cache(self, cache_key: str, data: Any):
         """设置缓存"""
+        if isinstance(data, (bytes, bytearray, str)) and len(data) > self.max_cache_payload_size:
+            return
+
         # 简单的LRU：如果缓存满了，删除一些旧条目
         if len(self.cache) >= self.max_cache_size:
             # 删除最旧的20%
@@ -145,6 +168,41 @@ class AsyncNetworkManager:
                 del self.cache[items[i][0]]
         
         self.cache[cache_key] = (data, time.time())
+
+    async def _read_limited_response_bytes(self, response) -> bytes:
+        content_length = response.headers.get('Content-Length')
+        if content_length:
+            try:
+                if int(content_length) > self.max_response_payload_size:
+                    raise ValueError(f"响应体过大: {content_length} bytes")
+            except ValueError as e:
+                if "响应体过大" in str(e):
+                    raise
+
+        data = await response.content.read(self.max_response_payload_size + 1)
+        if len(data) > self.max_response_payload_size:
+            raise ValueError(f"响应体超过限制: {self.max_response_payload_size} bytes")
+        return data
+
+    def _decode_response_text(self, response, data: bytes) -> str:
+        charset = response.charset or 'utf-8'
+        return data.decode(charset, errors='replace')
+
+    def _is_binary_response(self, request: NetworkRequest, content_type: str) -> bool:
+        if request.request_type == 'download':
+            return True
+        return any(
+            binary_type in content_type
+            for binary_type in ['image/', 'video/', 'audio/', 'application/octet-stream']
+        )
+
+    async def _read_response_data(self, response, request: NetworkRequest, content_type: str):
+        data = await self._read_limited_response_bytes(response)
+        if 'application/json' in content_type:
+            return json.loads(self._decode_response_text(response, data))
+        if self._is_binary_response(request, content_type):
+            return data
+        return self._decode_response_text(response, data)
     
     async def single_request(self, request: NetworkRequest) -> NetworkResponse:
         """执行单个网络请求"""
@@ -155,11 +213,14 @@ class AsyncNetworkManager:
                 room_id=request.room_id,
                 request_type=request.request_type
             )
+
+        if not self.session or self.session.closed:
+            await self.start()
         
         # 检查缓存
         cache_key = self._get_cache_key(request)
         cached_data = self._check_cache(cache_key)
-        if cached_data is not None and request.method == 'GET':
+        if cached_data is not None and self._is_cacheable(request):
             return NetworkResponse(
                 success=True,
                 status_code=200,
@@ -170,10 +231,14 @@ class AsyncNetworkManager:
             )
         
         start_time = time.time()
+        counted_concurrency = False
         
         try:
             async with self.semaphore:  # 控制并发数
                 self.stats['concurrent_requests'] += 1
+                counted_concurrency = True
+
+                import aiohttp
                 
                 # 准备请求参数
                 kwargs = {
@@ -195,26 +260,28 @@ class AsyncNetworkManager:
                     **kwargs
                 ) as response:
                     response_time = time.time() - start_time
+                    self.stats['requests_total'] += 1
                     
                     # 读取响应数据
                     content_type = response.headers.get('Content-Type', '').lower()
-                    if 'application/json' in content_type:
-                        response_data = await response.json()
-                    elif request.request_type == 'download' or any(binary_type in content_type for binary_type in ['image/', 'video/', 'audio/', 'application/octet-stream']):
-                        # 对于下载请求和二进制内容，读取原始字节
-                        response_data = await response.read()
-                    else:
-                        response_data = await response.text()
-                    
-                    # 更新统计
-                    self.stats['requests_total'] += 1
-                    self.stats['concurrent_requests'] -= 1
+                    try:
+                        response_data = await self._read_response_data(response, request, content_type)
+                    except Exception as e:
+                        self.stats['requests_failed'] += 1
+                        return NetworkResponse(
+                            success=False,
+                            status_code=response.status,
+                            error=f"读取响应失败: {e}",
+                            response_time=response_time,
+                            room_id=request.room_id,
+                            request_type=request.request_type
+                        )
                     
                     if response.status < 400:
                         self.stats['requests_success'] += 1
                         
                         # 缓存成功的GET请求
-                        if request.method == 'GET' and response.status == 200:
+                        if response.status == 200 and self._is_cacheable(request, response_data):
                             self._set_cache(cache_key, response_data)
                         
                         # 更新平均响应时间
@@ -245,7 +312,6 @@ class AsyncNetworkManager:
         
         except asyncio.TimeoutError:
             self.stats['requests_failed'] += 1
-            self.stats['concurrent_requests'] -= 1
             return NetworkResponse(
                 success=False,
                 error="请求超时",
@@ -256,7 +322,6 @@ class AsyncNetworkManager:
         
         except Exception as e:
             self.stats['requests_failed'] += 1
-            self.stats['concurrent_requests'] -= 1
             return NetworkResponse(
                 success=False,
                 error=f"请求异常: {str(e)}",
@@ -264,6 +329,9 @@ class AsyncNetworkManager:
                 room_id=request.room_id,
                 request_type=request.request_type
             )
+        finally:
+            if counted_concurrency:
+                self.stats['concurrent_requests'] = max(0, self.stats['concurrent_requests'] - 1)
     
     async def batch_requests(self, requests: List[NetworkRequest]) -> List[NetworkResponse]:
         """批量执行网络请求"""
@@ -273,25 +341,38 @@ class AsyncNetworkManager:
         # 精简频繁debug日志：批量请求信息会在完成时的info日志中体现
         start_time = time.time()
         
-        # 按优先级排序
-        requests.sort(key=lambda x: x.priority)
-        
-        # 并发执行所有请求
-        tasks = [self.single_request(req) for req in requests]
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # 处理异常
-        final_responses = []
-        for i, response in enumerate(responses):
-            if isinstance(response, Exception):
-                final_responses.append(NetworkResponse(
-                    success=False,
-                    error=f"批量请求异常: {str(response)}",
-                    room_id=requests[i].room_id,
-                    request_type=requests[i].request_type
-                ))
-            else:
-                final_responses.append(response)
+        # 按优先级执行，但保持返回顺序与输入列表一致。
+        indexed_requests = sorted(
+            enumerate(requests),
+            key=lambda item: (item[1].priority, item[0])
+        )
+
+        final_responses: List[Optional[NetworkResponse]] = [None] * len(requests)
+        request_iter = iter(indexed_requests)
+        worker_count = min(len(indexed_requests), max(1, self.max_concurrent))
+
+        async def worker():
+            while True:
+                try:
+                    original_index, request = next(request_iter)
+                except StopIteration:
+                    return
+
+                try:
+                    response = await self.single_request(request)
+                except Exception as e:
+                    response = NetworkResponse(
+                        success=False,
+                        error=f"批量请求异常: {str(e)}",
+                        room_id=request.room_id,
+                        request_type=request.request_type
+                    )
+
+                final_responses[original_index] = response
+
+        await asyncio.gather(*(worker() for _ in range(worker_count)))
+
+        final_responses = [response for response in final_responses if response is not None]
         
         total_time = time.time() - start_time
         success_count = sum(1 for r in final_responses if r.success)

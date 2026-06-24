@@ -1,30 +1,23 @@
-import argparse
 import asyncio
 import atexit
 import datetime
 import functools
 import logging.config
 import os
-import re
 import signal
 import sys
-import time
 
 from playhouse.shortcuts import model_to_dict
 
 import luboman.web
 from luboman.config import config
-from luboman.core.daemon import Daemon
 from luboman.core.decorators import PluginTool
 from luboman.core.live import start_room
 from luboman.core.timer import Timer
-from luboman import __version__, LOG_CONF
-from luboman.core.utils import remove_file, get_video_dir, remove_dir
+from luboman import LOG_CONF
+from luboman.core.utils import get_video_dir, remove_dir
 from luboman.database.models import LiveRoom
-from luboman.plugins.bilibili import Bilibili
-from luboman.plugins.douyu import Douyu
 from luboman.database.db import DB
-from luboman.plugins.huya import Huya
 
 from luboman import plugins
 from luboman.core.thread_pool import thread_pool_manager

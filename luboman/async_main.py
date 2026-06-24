@@ -5,30 +5,30 @@
 
 import asyncio
 import atexit
+import datetime
 import logging.config
+import os
 import signal
 import sys
 import time
 from typing import Dict, List, Optional
 
-from playhouse.shortcuts import model_to_dict
-
 # 导入原有模块
 from luboman.config import config
 from luboman.core.decorators import PluginTool
-from luboman.core.timer import Timer
 from luboman import __version__, LOG_CONF
-from luboman.core.utils import remove_file, get_video_dir, remove_dir
-from luboman.database.models import LiveRoom
+from luboman.core.utils import get_video_dir, remove_dir
 from luboman.database.db import DB
 from luboman import plugins
 
 # 导入新的异步组件
-from luboman.core.async_event import async_event_manager, AsyncEvent, AsyncEventType
+from luboman.core.async_event import async_event_manager, AsyncEventType
 from luboman.core.async_network import async_network_manager
 from luboman.core.async_database import async_database_manager
 from luboman.core.async_live import AsyncLiveBase, async_live_room_manager
 from luboman.core.async_upload import async_upload_scheduler, upload_event_handler
+from luboman.core.async_utils import run_blocking
+from luboman.core.runtime import start_room_runtime
 
 logger = logging.getLogger("luboman")
 
@@ -69,6 +69,8 @@ class AsyncLubomanApplication:
         logger.info("="*60)
         logger.info(f"启动异步化Luboman v{__version__}")
         logger.info("="*60)
+        self.running = True
+        self.cleanup_done = False
         
         try:
             # 启动所有异步组件
@@ -89,7 +91,6 @@ class AsyncLubomanApplication:
             # 启动Web服务
             await self._start_web_service()
             
-            self.running = True
             logger.info("异步化Luboman启动完成")
             
         except Exception as e:
@@ -193,14 +194,19 @@ class AsyncLubomanApplication:
         
         try:
             # 获取所有启用的直播间
-            rooms = list(LiveRoom.select().where(LiveRoom.active_state == 1))
-            logger.info(f"发现 {len(rooms)} 个启用的直播间")
+            room_data_list = await run_blocking(DB.list_active_rooms)
+            logger.info(f"发现 {len(room_data_list)} 个启用的直播间")
             
             # 批量启动直播间
+            startup_semaphore = asyncio.Semaphore(10)
+
+            async def start_with_limit(room_data):
+                async with startup_semaphore:
+                    return await self._start_single_room(room_data)
+
             start_tasks = []
-            for room in rooms:
-                room_data = model_to_dict(room)
-                task = asyncio.create_task(self._start_single_room(room_data))
+            for room_data in room_data_list:
+                task = asyncio.create_task(start_with_limit(room_data))
                 start_tasks.append(task)
             
             if start_tasks:
@@ -209,52 +215,27 @@ class AsyncLubomanApplication:
                 success_count = 0
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
-                        logger.error(f"启动直播间失败 {rooms[i].room_name}: {result}")
+                        logger.error(f"启动直播间失败 {room_data_list[i].get('room_name')}: {result}")
                     else:
                         success_count += 1
                 
-                logger.info(f"直播间启动完成: 成功 {success_count}/{len(rooms)}")
+                logger.info(f"直播间启动完成: 成功 {success_count}/{len(room_data_list)}")
             
         except Exception as e:
             logger.error(f"启动直播间时发生错误: {e}")
     
     async def _start_single_room(self, room_data: Dict):
         """启动单个直播间"""
-        room_name = room_data.get('room_name')
-        room_url = room_data.get('room_url')
         room_id = str(room_data.get('id'))
         
         try:
-            # 查找匹配的插件
-            plugin_class = None
-            for plugin in PluginTool.live_plugins:
-                import re
-                if re.match(plugin.VALID_URL_BASE, room_url):
-                    plugin_class = plugin
-                    break
-            
-            if not plugin_class:
-                logger.warning(f"未找到匹配的插件: {room_name} - {room_url}")
-                return
-            
-            # 使用组合模式创建异步版本的插件实例
-            # 先创建具体插件实例
-            plugin_instance = plugin_class(room_name, room_url, 'mp4')
-            plugin_instance.room_data = room_data
-            
-            # 然后用AsyncLiveBase包装它，避免多重继承冲突
-            live_room = AsyncLiveBase(plugin_instance)
-            
-            logger.info(f"{live_room.log_prefix} 使用异步模式初始化 ({plugin_class.__name__})")
-            
-            # 启动直播间
-            await async_live_room_manager.add_room(live_room)
+            live_room = await start_room_runtime(room_data)
             self.live_rooms[room_id] = live_room
             
-            logger.info(f"直播间启动成功: {room_name} (插件: {plugin_class.__name__})")
+            logger.info(f"直播间启动成功: {room_data.get('room_name')}")
             
         except Exception as e:
-            logger.error(f"启动直播间失败 {room_name}: {e}")
+            logger.error(f"启动直播间失败 {room_data.get('room_name')}: {e}")
             raise
     
     async def _stop_live_rooms(self):
@@ -297,9 +278,7 @@ class AsyncLubomanApplication:
                 logger.info("开始定期清理...")
                 
                 # 在线程中执行清理逻辑
-                await asyncio.get_event_loop().run_in_executor(
-                    None, self._cleanup_old_files
-                )
+                await run_blocking(self._cleanup_old_files)
                 
                 logger.info("定期清理完成")
                 
@@ -312,9 +291,6 @@ class AsyncLubomanApplication:
     def _cleanup_old_files(self):
         """清理旧文件（同步版本）"""
         try:
-            import datetime
-            import os
-            
             local_video_file_remain_days = int(config.get("local_video_file_remain_days", 3))
             video_dir = get_video_dir()
             
@@ -397,6 +373,7 @@ class AsyncLubomanApplication:
             stats['network_manager'] = async_network_manager.get_stats()
             stats['database_manager'] = async_database_manager.get_stats()
             stats['upload_scheduler'] = async_upload_scheduler.get_stats()
+            stats['live_room_manager'] = async_live_room_manager.get_stats()
         except Exception as e:
             logger.error(f"收集统计信息失败: {e}")
         
@@ -442,7 +419,7 @@ class AsyncLubomanApplication:
         """记录系统状态"""
         logger.info(
             f"系统状态报告 - "
-            f"直播间: {stats.get('live_rooms_count', 0)}, "
+            f"直播间: {stats.get('live_room_manager', {}).get('rooms_count', stats.get('live_rooms_count', 0))}, "
             f"事件队列: {stats.get('event_manager', {}).get('queue_size', 0)}, "
             f"网络成功率: {self._calculate_success_rate(stats.get('network_manager', {})):.1f}%, "
             f"上传队列: {stats.get('upload_scheduler', {}).get('queue_size', 0)}"

@@ -1,0 +1,468 @@
+import asyncio
+import json
+import os
+from pathlib import Path
+import tempfile
+import threading
+import unittest
+
+from luboman.core.async_event import AsyncEvent, AsyncEventManager
+from luboman.core.async_network import AsyncNetworkManager, NetworkRequest, NetworkResponse
+from luboman.core.async_utils import run_blocking
+from luboman.core.async_upload import AsyncUploadScheduler, AsyncUploadTask, UploadPriority, UploadResult
+
+try:
+    from luboman.core.async_database import AsyncDatabaseManager, DatabaseOperation
+    from luboman.database.db import DB
+except ModuleNotFoundError:
+    AsyncDatabaseManager = None
+    DatabaseOperation = None
+    DB = None
+
+try:
+    import luboman.web as web_module
+except ModuleNotFoundError:
+    web_module = None
+
+
+class AsyncEventManagerRefactorTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self):
+        await asyncio.sleep(0)
+
+    async def test_room_scoped_handlers_only_receive_matching_events(self):
+        manager = AsyncEventManager(worker_count=1, queue_size=10)
+        received = []
+
+        async def handler(event):
+            received.append(event.room_id)
+
+        manager.register_handler("status", handler, room_id="room-1")
+        await manager.start()
+        try:
+            await manager.send_event(AsyncEvent("status", room_id="room-2"))
+            await manager.send_event(AsyncEvent("status", room_id="room-1"))
+            await asyncio.wait_for(manager.event_queue.join(), timeout=2)
+        finally:
+            await manager.stop()
+
+        self.assertEqual(received, ["room-1"])
+
+    async def test_sync_handler_runs_without_create_task_type_error(self):
+        manager = AsyncEventManager(worker_count=1, queue_size=10)
+        received = []
+
+        def handler(event):
+            received.append(event.type_)
+
+        manager.register_handler("sync", handler)
+        await manager.start()
+        try:
+            await manager.send_event(AsyncEvent("sync"))
+            await asyncio.wait_for(manager.event_queue.join(), timeout=2)
+        finally:
+            await manager.stop()
+
+        self.assertEqual(received, ["sync"])
+
+
+class AsyncUploadSchedulerRefactorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_same_priority_tasks_are_queueable(self):
+        scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
+        scheduler.running = True
+        try:
+            await scheduler.schedule_upload(AsyncUploadTask(platform="local", priority=UploadPriority.NORMAL))
+            await scheduler.schedule_upload(AsyncUploadTask(platform="local", priority=UploadPriority.NORMAL))
+
+            status = await scheduler.get_queue_status()
+        finally:
+            scheduler.running = False
+
+        self.assertEqual(status["queue_size"], 2)
+        self.assertEqual(status["priority_distribution"]["NORMAL"], 2)
+
+    async def test_perform_upload_passes_room_data_as_single_context(self):
+        import luboman.core.upload as upload_module
+
+        scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
+        calls = []
+        original_upload = upload_module.upload
+
+        def fake_upload(platform, file_list, **kwargs):
+            calls.append((platform, file_list, kwargs))
+            return True
+
+        upload_module.upload = fake_upload
+        try:
+            task = AsyncUploadTask(
+                platform="biliup-rs",
+                file_list=[{"video": "/tmp/not-exist.flv"}],
+                room_data={"id": 1, "room_title": "title"},
+            )
+            success, uploaded_files, failed_files, error = await scheduler._perform_upload(task)
+        finally:
+            upload_module.upload = original_upload
+
+        self.assertTrue(success)
+        self.assertEqual(calls[0][0], "biliup-rs")
+        self.assertEqual(calls[0][2], {"room_data": {"id": 1, "room_title": "title"}})
+        self.assertEqual(uploaded_files, ["/tmp/not-exist.flv"])
+        self.assertEqual(failed_files, [])
+        self.assertIsNone(error)
+
+    async def test_stop_cancels_pending_retry_tasks(self):
+        scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
+        scheduler.running = True
+
+        upload_task = AsyncUploadTask(platform="local", max_retries=1)
+        await scheduler._handle_upload_result(
+            upload_task,
+            UploadResult(task_id=upload_task.task_id, success=False, platform="local", error_message="failed"),
+        )
+
+        self.assertEqual(len(scheduler.retry_tasks), 1)
+        await scheduler.stop()
+
+        self.assertFalse(scheduler.retry_tasks)
+        self.assertEqual(scheduler.upload_queue.qsize(), 0)
+
+    def test_upload_filters_kwargs_by_plugin_signature(self):
+        from luboman.core.decorators import PluginTool
+        from luboman.core.upload import upload
+
+        class StorageUploader:
+            received = None
+
+            def __init__(self, file_list):
+                self.file_list = file_list
+
+            def start(self):
+                StorageUploader.received = self.file_list
+                return True
+
+        class BiliUploader:
+            received = None
+
+            def __init__(self, file_list, room_data):
+                self.file_list = file_list
+                self.room_data = room_data
+
+            def start(self):
+                BiliUploader.received = self.room_data
+                return True
+
+        original_plugins = PluginTool.upload_plugins.copy()
+        PluginTool.upload_plugins["storage-test"] = StorageUploader
+        PluginTool.upload_plugins["bili-test"] = BiliUploader
+        try:
+            self.assertTrue(upload("storage-test", [{"video": "a"}], room_data={"id": 1}, ignored=True))
+            self.assertTrue(upload("bili-test", [{"video": "b"}], room_data={"id": 2}, ignored=True))
+        finally:
+            PluginTool.upload_plugins = original_plugins
+
+        self.assertEqual(StorageUploader.received, [{"video": "a"}])
+        self.assertEqual(BiliUploader.received, {"id": 2})
+
+
+class AsyncUtilityRefactorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_run_blocking_executes_sync_callable_with_kwargs(self):
+        main_thread_id = threading.get_ident()
+        worker_thread_ids = []
+
+        def sync_work(value, increment=0):
+            worker_thread_ids.append(threading.get_ident())
+            return value + increment
+
+        result = await run_blocking(sync_work, 2, increment=3)
+
+        self.assertEqual(result, 5)
+        self.assertTrue(worker_thread_ids)
+        self.assertNotEqual(worker_thread_ids[0], main_thread_id)
+
+
+class AsyncNetworkManagerRefactorTest(unittest.IsolatedAsyncioTestCase):
+    class _Content:
+        def __init__(self, data):
+            self.data = data
+
+        async def read(self, size):
+            return self.data[:size]
+
+    class _Response:
+        def __init__(self, data, headers=None, charset="utf-8"):
+            self.headers = headers or {}
+            self.content = AsyncNetworkManagerRefactorTest._Content(data)
+            self.charset = charset
+
+    async def test_limited_response_reader_decodes_json(self):
+        manager = AsyncNetworkManager()
+        response = self._Response(b'{"ok": true}', {"Content-Type": "application/json"})
+
+        data = await manager._read_response_data(
+            response,
+            NetworkRequest(url="https://example.test"),
+            "application/json",
+        )
+
+        self.assertEqual(data, {"ok": True})
+
+    async def test_limited_response_reader_rejects_large_payloads(self):
+        manager = AsyncNetworkManager()
+        manager.max_response_payload_size = 4
+        response = self._Response(b"12345", {"Content-Length": "5"})
+
+        with self.assertRaises(ValueError):
+            await manager._read_limited_response_bytes(response)
+
+    async def test_batch_requests_limits_in_flight_tasks_and_preserves_input_order(self):
+        class FakeNetworkManager(AsyncNetworkManager):
+            def __init__(self):
+                super().__init__(max_concurrent=2)
+                self.active = 0
+                self.max_active = 0
+                self.started = []
+
+            async def single_request(self, request):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                self.started.append(request.room_id)
+                try:
+                    await asyncio.sleep(0.01)
+                    return NetworkResponse(
+                        success=True,
+                        data=request.room_id,
+                        room_id=request.room_id,
+                        request_type=request.request_type,
+                    )
+                finally:
+                    self.active -= 1
+
+        manager = FakeNetworkManager()
+        requests = [
+            NetworkRequest(url="https://example.test/3", room_id="3", priority=3),
+            NetworkRequest(url="https://example.test/1", room_id="1", priority=1),
+            NetworkRequest(url="https://example.test/2", room_id="2", priority=2),
+            NetworkRequest(url="https://example.test/0", room_id="0", priority=0),
+            NetworkRequest(url="https://example.test/4", room_id="4", priority=4),
+        ]
+
+        responses = await manager.batch_requests(requests)
+
+        self.assertEqual([response.data for response in responses], ["3", "1", "2", "0", "4"])
+        self.assertLessEqual(manager.max_active, 2)
+        self.assertEqual(manager.started[:2], ["0", "1"])
+
+
+@unittest.skipIf(web_module is None, "web dependencies are not installed")
+class WebApiRefactorTest(unittest.IsolatedAsyncioTestCase):
+    class _Request:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def json(self):
+            return dict(self.payload)
+
+    def _response_json(self, response):
+        return json.loads(response.text)
+
+    async def test_live_room_add_uses_runtime_and_returns_created_id(self):
+        original_run_db = web_module.run_db
+        original_start_room_runtime = web_module.start_room_runtime
+        calls = []
+
+        async def fake_run_db(func, *args, **kwargs):
+            calls.append(("run_db", func.__name__, args))
+            self.assertEqual(func.__name__, "_create_live_room")
+            return {"id": 12, "room_name": args[0]["room_name"], "room_url": args[0]["room_url"]}
+
+        async def fake_start_room_runtime(room_data):
+            calls.append(("start", room_data))
+
+        web_module.run_db = fake_run_db
+        web_module.start_room_runtime = fake_start_room_runtime
+        try:
+            response = await web_module.add_room(self._Request({"room_name": " room ", "room_url": " url "}))
+        finally:
+            web_module.run_db = original_run_db
+            web_module.start_room_runtime = original_start_room_runtime
+
+        data = self._response_json(response)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["data"], 12)
+        self.assertEqual(calls[0][2][0]["room_name"], "room")
+        self.assertEqual(calls[0][2][0]["room_url"], "url")
+        self.assertEqual(calls[1], ("start", {"id": 12, "room_name": "room", "room_url": "url"}))
+
+    async def test_bili_account_update_route_uses_db_executor(self):
+        original_run_db = web_module.run_db
+        calls = []
+
+        async def fake_run_db(func, *args, **kwargs):
+            calls.append((func.__name__, args))
+            return 1
+
+        web_module.run_db = fake_run_db
+        try:
+            response = await web_module.update_bili_account(self._Request({"id": 9, "state_active": 1}))
+        finally:
+            web_module.run_db = original_run_db
+
+        data = self._response_json(response)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["data"], 1)
+        self.assertEqual(calls, [("_update_bili_account", ({"id": 9, "state_active": 1},))])
+
+
+@unittest.skipIf(AsyncDatabaseManager is None, "database dependencies are not installed")
+class AsyncDatabaseManagerRefactorTest(unittest.TestCase):
+    def test_live_room_updates_are_merged_before_batch_write(self):
+        manager = AsyncDatabaseManager()
+        original = DB.batch_update_live_rooms
+        calls = []
+
+        def fake_batch_update(room_data_list):
+            calls.append(room_data_list)
+            return len(room_data_list)
+
+        DB.batch_update_live_rooms = fake_batch_update
+        try:
+            operations = [
+                DatabaseOperation("update", "live_room", {"id": 1, "room_title": "A"}, room_id="1"),
+                DatabaseOperation("update", "live_room", {"id": 1, "live_state": 1}, room_id="1"),
+                DatabaseOperation("update", "live_room", {"id": 2, "room_title": "B"}, room_id="2"),
+            ]
+
+            results = manager._batch_update_live_rooms(operations)
+        finally:
+            DB.batch_update_live_rooms = original
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls[0]), 2)
+        self.assertEqual(calls[0][0]["id"], 1)
+        self.assertEqual(calls[0][0]["room_title"], "A")
+        self.assertEqual(calls[0][0]["live_state"], 1)
+        self.assertTrue(all(result.success for result in results))
+
+
+@unittest.skipIf(DB is None, "database dependencies are not installed")
+class DatabaseHelperIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        from peewee import SqliteDatabase
+        import luboman.database.db as db_module
+        from luboman.database.models import (
+            BiliAccount,
+            BiliUploadTemplate,
+            GlobalConfig,
+            LiveRoom,
+            RecordFile,
+        )
+
+        self.db_module = db_module
+        self.original_db = db_module.db
+        self.models = [GlobalConfig, LiveRoom, BiliAccount, BiliUploadTemplate, RecordFile]
+        tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
+        self.db_path = tmp.name
+        tmp.close()
+        self.test_db = SqliteDatabase(self.db_path)
+        self.bind_ctx = self.test_db.bind_ctx(self.models)
+        self.bind_ctx.__enter__()
+        db_module.db = self.test_db
+        self.test_db.create_tables(self.models)
+
+    def tearDown(self):
+        self.test_db.drop_tables(self.models)
+        self.db_module.db = self.original_db
+        self.bind_ctx.__exit__(None, None, None)
+        self.test_db.close()
+        os.unlink(self.db_path)
+
+    def test_db_helpers_filter_fields_and_run_real_crud(self):
+        DB.init()
+
+        room = DB.create_live_room({
+            "room_url": "https://example.test/live",
+            "room_name": "Example",
+            "active_state": 1,
+            "ffmpeg_options": {"copy": True},
+            "ignored": "drop-me",
+        })
+        DB.create_live_room({
+            "room_url": "https://example.test/off",
+            "room_name": "Off",
+            "active_state": 0,
+        })
+
+        self.assertEqual(room["room_name"], "Example")
+        self.assertNotIn("ignored", room)
+        self.assertEqual([item["id"] for item in DB.list_active_rooms()], [room["id"]])
+
+        self.assertEqual(DB.update_live_room({"id": room["id"], "room_name": "Renamed", "ignored": "x"}), 1)
+        self.assertEqual(DB.get_live_room_data(room["id"])["room_name"], "Renamed")
+
+        account = DB.create_bili_account({
+            "account_name": "Uploader",
+            "bili_cookies": "SESSDATA=x;",
+            "ignored": "drop-me",
+        })
+        self.assertEqual(account["account_name"], "Uploader")
+        self.assertEqual(DB.update_bili_account({"id": account["id"], "state_active": 0, "ignored": "x"}), 1)
+        self.assertEqual(DB.list_bili_account()[0]["state_active"], 0)
+
+        template_id = DB.create_bili_upload_template({
+            "template_name": "Default",
+            "bili_account_id": account["id"],
+            "tags": ["录播Man"],
+            "ignored": "drop-me",
+        })
+        self.assertEqual(DB.update_bili_upload_template({"id": template_id, "title": "Title", "ignored": "x"}), 1)
+        self.assertEqual(DB.list_bili_upload_template()[0]["title"], "Title")
+        self.assertEqual(DB.delete_bili_upload_template(template_id), 1)
+        self.assertEqual(DB.delete_live_room(room["id"]), 1)
+
+
+class DeploymentRefactorTest(unittest.TestCase):
+    def test_docker_uses_async_entrypoint(self):
+        dockerfile = Path(__file__).with_name("Dockerfile").read_text(encoding="utf-8")
+        self.assertIn('ENTRYPOINT ["python", "async_main.py"]', dockerfile)
+
+    def test_async_main_uses_core_runtime_helpers(self):
+        source = Path(__file__).with_name("luboman").joinpath("async_main.py").read_text(encoding="utf-8")
+
+        self.assertIn("from luboman.core.runtime import start_room_runtime", source)
+        self.assertNotIn("from luboman.web import start_room_runtime", source)
+
+    def test_async_main_loads_rooms_off_event_loop_with_bounded_startup(self):
+        source = Path(__file__).with_name("luboman").joinpath("async_main.py").read_text(encoding="utf-8")
+
+        self.assertIn("room_data_list = await run_blocking(DB.list_active_rooms)", source)
+        self.assertIn("startup_semaphore = asyncio.Semaphore(10)", source)
+        self.assertNotIn("LiveRoom.select()", source)
+        self.assertNotIn("model_to_dict(room)", source)
+
+    def test_web_exposes_bili_account_update_route(self):
+        source = Path(__file__).with_name("luboman").joinpath("web", "__init__.py").read_text(encoding="utf-8")
+
+        self.assertIn('@routes.post("/v1/BiliAccount/update")', source)
+        self.assertIn("await run_db(_update_bili_account, data)", source)
+
+    def test_web_crud_uses_db_helpers(self):
+        source = Path(__file__).with_name("luboman").joinpath("web", "__init__.py").read_text(encoding="utf-8")
+
+        self.assertIn("return DB.create_live_room(data)", source)
+        self.assertIn("return DB.create_bili_account(payload)", source)
+        self.assertIn("return DB.create_bili_upload_template(data)", source)
+        self.assertNotIn("LiveRoom.create", source)
+        self.assertNotIn("BiliAccount.create", source)
+        self.assertNotIn("BiliUploadTemplate.create", source)
+
+    def test_db_init_is_idempotent_and_create_helpers_filter_fields(self):
+        source = Path(__file__).with_name("luboman").joinpath("database", "db.py").read_text(encoding="utf-8")
+
+        self.assertIn("create_table(safe=True)", source)
+        self.assertIn("def filter_model_data", source)
+        self.assertIn("LiveRoom.create(**cls.filter_model_data(LiveRoom, data))", source)
+        self.assertIn("BiliAccount.create(**cls.filter_model_data(BiliAccount, data))", source)
+        self.assertIn("BiliUploadTemplate.create(**cls.filter_model_data(BiliUploadTemplate, data))", source)
+
+
+if __name__ == "__main__":
+    unittest.main()

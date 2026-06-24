@@ -1,7 +1,7 @@
 import atexit
 import functools
+import inspect
 import logging
-import weakref
 from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from queue import Queue
@@ -67,9 +67,12 @@ class EventManager(Thread):
                 self.__active_futures.discard(future)
             
             # 获取异常（如果有的话），避免异常被吞没
-            if future.exception() is not None:
-                exc = future.exception()
-                logger.error(f"事件处理任务执行时发生异常: {exc}", exc_info=True)
+            exc = future.exception()
+            if exc is not None:
+                logger.error(
+                    f"事件处理任务执行时发生异常: {exc}",
+                    exc_info=(type(exc), exc, exc.__traceback__)
+                )
         except Exception as e:
             logger.error(f"清理 Future 对象时出错: {e}")
     
@@ -307,6 +310,24 @@ class EventManager(Thread):
                     logger.error("无法处理队列满的情况")
 
     def register(self, type_, block="NORMAL"):
+        def expects_event_object(fc):
+            try:
+                parameters = list(inspect.signature(fc).parameters.values())
+            except (TypeError, ValueError):
+                return False
+
+            if not parameters:
+                return False
+
+            first = parameters[0]
+            return (
+                first.kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD
+                )
+                and first.name in ("event", "_event")
+            )
+
         def callback(result):
             if not result:
                 pass
@@ -322,10 +343,14 @@ class EventManager(Thread):
 
         def decorator(func):
             block_append(func, block)
+            pass_event_object = expects_event_object(func)
 
             @functools.wraps(func)
             def wrapper(event):
-                _event = func(*event.args)
+                if pass_event_object:
+                    _event = func(event)
+                else:
+                    _event = func(*event.args)
                 callback(_event)
                 return _event
 

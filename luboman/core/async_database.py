@@ -1,13 +1,10 @@
 import asyncio
 import logging
 import time
-import sqlite3
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
-from contextlib import asynccontextmanager
-import weakref
-import json
-from datetime import datetime
+
+from luboman.core.async_utils import run_blocking
 
 logger = logging.getLogger('luboman')
 
@@ -87,6 +84,7 @@ class AsyncDatabaseManager:
             
         logger.info("正在关闭异步数据库管理器...")
         self.running = False
+        self._drain_operation_queue()
         
         # 处理剩余的操作
         if self.pending_operations:
@@ -117,6 +115,7 @@ class AsyncDatabaseManager:
                         timeout=1.0
                     )
                     self.pending_operations.append(operation)
+                    self.operation_queue.task_done()
                 except asyncio.TimeoutError:
                     # 超时，检查是否需要执行批量操作
                     pass
@@ -143,6 +142,16 @@ class AsyncDatabaseManager:
             except Exception as e:
                 logger.error(f"数据库批量处理器错误: {e}")
                 await asyncio.sleep(1)  # 错误后等待1秒
+
+    def _drain_operation_queue(self):
+        """停止前把队列中尚未进入批次缓冲的操作取出。"""
+        while True:
+            try:
+                operation = self.operation_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self.pending_operations.append(operation)
+            self.operation_queue.task_done()
     
     async def _execute_batch(self, operations: List[DatabaseOperation]):
         """执行批量数据库操作"""
@@ -157,11 +166,7 @@ class AsyncDatabaseManager:
             grouped_operations = self._group_operations(operations)
             
             async with self._connection_lock:
-                # 在实际应用中，这里应该使用异步数据库驱动
-                # 目前使用同步操作在线程中执行
-                results = await asyncio.get_event_loop().run_in_executor(
-                    None, self._execute_batch_sync, grouped_operations
-                )
+                results = await run_blocking(self._execute_batch_sync, grouped_operations)
                 
                 success_count = sum(1 for result in results if result.success)
         
@@ -216,10 +221,6 @@ class AsyncDatabaseManager:
         results = []
         
         try:
-            # 这里应该使用实际的数据库连接
-            # 现在使用模拟实现
-            from luboman.database.db import DB
-            
             for group_key, operations in grouped_operations.items():
                 operation_type, table = group_key.split(':', 1)
                 
@@ -249,21 +250,25 @@ class AsyncDatabaseManager:
         try:
             from luboman.database.db import DB
             
-            # 构造批量更新语句
-            updates = []
+            merged_by_id: Dict[str, Dict[str, Any]] = {}
             for op in operations:
                 room_data = op.data
-                if 'id' in room_data:
-                    updates.append(room_data)
+                row_id = room_data.get('id') or op.room_id
+                if row_id:
+                    existing = merged_by_id.setdefault(str(row_id), {'id': row_id})
+                    existing.update(room_data)
             
-            if updates:
+            if merged_by_id:
                 # 执行批量更新
-                success_count = DB.batch_update_live_rooms(updates)
-                
-                for i, op in enumerate(operations):
+                success_count = DB.batch_update_live_rooms(list(merged_by_id.values()))
+                updated_ids = set(list(merged_by_id.keys())[:success_count])
+
+                for op in operations:
+                    row_id = str(op.data.get('id') or op.room_id)
+                    success = row_id in updated_ids
                     results.append(DatabaseResult(
-                        success=i < success_count,
-                        affected_rows=1 if i < success_count else 0,
+                        success=success,
+                        affected_rows=1 if success else 0,
                         operation_id=op.room_id
                     ))
             else:
@@ -288,7 +293,7 @@ class AsyncDatabaseManager:
         results = []
         
         try:
-            from luboman.database.models import RecordFile
+            from luboman.database.models import RecordFile, db
             
             # 批量插入
             records = []
@@ -297,7 +302,11 @@ class AsyncDatabaseManager:
             
             if records:
                 # 执行批量插入
-                success_count = RecordFile.batch_create(records)
+                record_models = [RecordFile(**record) for record in records]
+                with db.connection_context():
+                    with db.atomic():
+                        RecordFile.bulk_create(record_models, batch_size=100)
+                success_count = len(record_models)
                 
                 for i, op in enumerate(operations):
                     results.append(DatabaseResult(
@@ -326,23 +335,128 @@ class AsyncDatabaseManager:
         results = []
         
         for op in operations:
+            start_time = time.time()
             try:
-                # 这里应该根据具体的操作类型执行相应的数据库操作
-                # 现在使用模拟实现
-                time.sleep(0.001)  # 模拟数据库操作延迟
-                
-                results.append(DatabaseResult(
-                    success=True,
-                    affected_rows=1,
-                    operation_id=op.room_id
-                ))
+                result = self._execute_single_operation(op)
+                result.execution_time = time.time() - start_time
+                results.append(result)
             except Exception as e:
                 results.append(DatabaseResult(
                     success=False,
-                    error=str(e)
+                    error=str(e),
+                    operation_id=op.room_id,
+                    execution_time=time.time() - start_time
                 ))
         
         return results
+
+    def _get_model(self, table: str):
+        from luboman.database.models import LiveRoom, RecordFile, GlobalConfig, BiliAccount, BiliUploadTemplate
+
+        model_map = {
+            'live_room': LiveRoom,
+            'record_file': RecordFile,
+            'global_config': GlobalConfig,
+            'bili_account': BiliAccount,
+            'bili_upload_template': BiliUploadTemplate,
+        }
+        return model_map.get(table)
+
+    def _filter_model_data(self, model, data: Dict[str, Any]) -> Dict[str, Any]:
+        fields = model._meta.fields
+        return {key: value for key, value in data.items() if key in fields}
+
+    def _build_where_expression(self, model, where_clause: Optional[Dict[str, Any]]):
+        if not where_clause:
+            return None
+
+        expression = None
+        for key, value in where_clause.items():
+            if key not in model._meta.fields:
+                continue
+            condition = getattr(model, key) == value
+            expression = condition if expression is None else expression & condition
+        return expression
+
+    def _execute_single_operation(self, operation: DatabaseOperation) -> DatabaseResult:
+        from luboman.database.models import db
+
+        model = self._get_model(operation.table)
+        if model is None:
+            return DatabaseResult(
+                success=False,
+                error=f"不支持的表: {operation.table}",
+                operation_id=operation.room_id
+            )
+
+        data = self._filter_model_data(model, operation.data or {})
+
+        with db.connection_context():
+            if operation.operation_type == 'insert':
+                created = model.create(**data)
+                return DatabaseResult(
+                    success=True,
+                    affected_rows=1,
+                    operation_id=str(getattr(created, 'id', operation.room_id))
+                )
+
+            if operation.operation_type == 'update':
+                where_clause = operation.where_clause or {}
+                if not where_clause and 'id' in data:
+                    where_clause = {'id': data['id']}
+                    data = {key: value for key, value in data.items() if key != 'id'}
+
+                expression = self._build_where_expression(model, where_clause)
+                if expression is None or not data:
+                    return DatabaseResult(
+                        success=False,
+                        error="更新操作缺少 where_clause 或更新字段",
+                        operation_id=operation.room_id
+                    )
+
+                affected = model.update(**data).where(expression).execute()
+                return DatabaseResult(
+                    success=True,
+                    affected_rows=affected,
+                    operation_id=operation.room_id
+                )
+
+            if operation.operation_type == 'delete':
+                expression = self._build_where_expression(model, operation.where_clause)
+                if expression is None:
+                    return DatabaseResult(
+                        success=False,
+                        error="删除操作缺少 where_clause",
+                        operation_id=operation.room_id
+                    )
+
+                affected = model.delete().where(expression).execute()
+                return DatabaseResult(
+                    success=True,
+                    affected_rows=affected,
+                    operation_id=operation.room_id
+                )
+
+            if operation.operation_type == 'select':
+                from playhouse.shortcuts import model_to_dict
+
+                expression = self._build_where_expression(model, operation.where_clause)
+                query = model.select()
+                if expression is not None:
+                    query = query.where(expression)
+                rows = [model_to_dict(row) for row in query]
+                return DatabaseResult(
+                    success=True,
+                    affected_rows=len(rows),
+                    operation_id=operation.room_id,
+                    data=rows
+                )
+
+        return DatabaseResult(
+            success=False,
+            error=f"不支持的操作类型: {operation.operation_type}",
+            operation_id=operation.room_id
+        )
     
     async def queue_operation(self, operation: DatabaseOperation):
         """将操作加入队列"""
@@ -351,7 +465,7 @@ class AsyncDatabaseManager:
             return
         
         try:
-            await self.operation_queue.put(operation)
+            self.operation_queue.put_nowait(operation)
         except asyncio.QueueFull:
             logger.error("数据库操作队列已满，丢弃操作")
     
@@ -399,107 +513,5 @@ class AsyncDatabaseManager:
         }
 
 
-# 数据库操作缓存器
-class DatabaseOperationCache:
-    """数据库操作缓存器 - 合并相同的操作以减少数据库负载"""
-    
-    def __init__(self, merge_window: float = 2.0):
-        self.merge_window = merge_window  # 合并窗口时间
-        self.cached_operations: Dict[str, DatabaseOperation] = {}
-        self.cache_timestamps: Dict[str, float] = {}
-    
-    def cache_operation(self, operation: DatabaseOperation) -> Optional[DatabaseOperation]:
-        """缓存操作，如果有相同操作则合并"""
-        cache_key = self._get_cache_key(operation)
-        current_time = time.time()
-        
-        # 检查是否有相同的操作在缓存中
-        if cache_key in self.cached_operations:
-            cached_time = self.cache_timestamps[cache_key]
-            
-            # 如果在合并窗口内，合并操作
-            if current_time - cached_time < self.merge_window:
-                self._merge_operation(self.cached_operations[cache_key], operation)
-                self.cache_timestamps[cache_key] = current_time
-                return None  # 不需要立即执行
-        
-        # 缓存新操作
-        self.cached_operations[cache_key] = operation
-        self.cache_timestamps[cache_key] = current_time
-        
-        return operation
-    
-    def _get_cache_key(self, operation: DatabaseOperation) -> str:
-        """生成缓存键"""
-        if operation.operation_type == 'update' and operation.room_id:
-            return f"update:live_room:{operation.room_id}"
-        else:
-            return f"{operation.operation_type}:{operation.table}:{hash(str(operation.data))}"
-    
-    def _merge_operation(self, cached_op: DatabaseOperation, new_op: DatabaseOperation):
-        """合并操作"""
-        if cached_op.operation_type == 'update' and new_op.operation_type == 'update':
-            # 合并更新数据
-            cached_op.data.update(new_op.data)
-    
-    def flush_expired(self) -> List[DatabaseOperation]:
-        """清理过期的缓存操作"""
-        current_time = time.time()
-        expired_operations = []
-        expired_keys = []
-        
-        for cache_key, timestamp in self.cache_timestamps.items():
-            if current_time - timestamp >= self.merge_window:
-                expired_operations.append(self.cached_operations[cache_key])
-                expired_keys.append(cache_key)
-        
-        # 清理过期项
-        for key in expired_keys:
-            del self.cached_operations[key]
-            del self.cache_timestamps[key]
-        
-        return expired_operations
-
-
 # 全局异步数据库管理器实例
 async_database_manager = AsyncDatabaseManager(batch_size=100, batch_timeout=3.0)
-
-# 数据库操作缓存器实例
-database_operation_cache = DatabaseOperationCache(merge_window=2.0)
-
-
-# 扩展现有的DB类以支持批量操作
-def extend_db_with_batch_operations():
-    """扩展DB类以支持批量操作"""
-    try:
-        from luboman.database.db import DB
-        
-        def batch_update_live_rooms(room_data_list: List[Dict[str, Any]]) -> int:
-            """批量更新直播间数据"""
-            success_count = 0
-            
-            try:
-                # 这里应该实现真正的批量更新SQL
-                for room_data in room_data_list:
-                    try:
-                        DB.update_live_room_operation_data(room_data)
-                        success_count += 1
-                    except Exception as e:
-                        logger.error(f"更新房间数据失败 {room_data.get('id')}: {e}")
-                
-            except Exception as e:
-                logger.error(f"批量更新失败: {e}")
-            
-            return success_count
-        
-        # 添加批量操作方法
-        DB.batch_update_live_rooms = batch_update_live_rooms
-        
-        logger.info("DB类批量操作扩展完成")
-        
-    except ImportError:
-        logger.warning("无法导入DB类，跳过批量操作扩展")
-
-
-# 启动时自动扩展DB类
-extend_db_with_batch_operations()

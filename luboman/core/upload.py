@@ -11,8 +11,6 @@ import sys
 import time
 import urllib
 
-import aiohttp
-import rsa
 from dataclasses import asdict, dataclass, field, InitVar
 from json import JSONDecodeError
 from os.path import splitext, basename
@@ -176,6 +174,8 @@ class BiliBili:
             return r
 
     def login_by_password(self, username, password):
+        import rsa
+
         print('使用账号上传')
         key_hash, pub_key = self.get_key()
         encrypt_password = base64.b64encode(rsa.encrypt(f'{key_hash}{password}'.encode(), pub_key))
@@ -512,6 +512,8 @@ class BiliBili:
 
     @staticmethod
     async def _upload(params, file, chunk_size, afunc, tasks=3):
+        import aiohttp
+
         params['chunk'] = -1
 
         async def upload_chunk():
@@ -725,10 +727,23 @@ def upload(uploader_platform, file_list, **kwargs):
         if cls is None:
             return logger.error(f"No such uploader: {uploader_platform}")
         sig = inspect.signature(cls)
+        accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in sig.parameters.values()
+        )
         for k in sig.parameters:
             v = context.get(k)
             if v:
                 kwargs[k] = v
-        return cls(file_list, **kwargs).start()
+
+        if accepts_kwargs:
+            init_kwargs = kwargs
+        else:
+            init_kwargs = {
+                key: value for key, value in kwargs.items()
+                if key in sig.parameters and key != 'file_list'
+            }
+
+        return cls(file_list, **init_kwargs).start()
     except:
         logger.exception("Uncaught exception:")

@@ -1,12 +1,14 @@
 import asyncio
+import inspect
 import logging
 import time
 import traceback
 from dataclasses import dataclass, field
 from typing import Dict, List, Callable, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
-import weakref
 import itertools
+
+from luboman.core.async_utils import run_blocking
 
 logger = logging.getLogger('luboman')
 
@@ -14,15 +16,25 @@ logger = logging.getLogger('luboman')
 _event_sequence = itertools.count()
 
 
-@dataclass
+@dataclass(slots=True)
 class AsyncEvent:
     """异步事件对象"""
     type_: str  # 事件类型
     args: tuple = ()
     data: dict = field(default_factory=dict)  # 事件数据
+    room_id: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     priority: int = 0  # 优先级，数字越小优先级越高
     sequence: int = field(default_factory=lambda: next(_event_sequence))  # 序列号，用于比较
+
+    def __post_init__(self):
+        if self.room_id is None and isinstance(self.data, dict):
+            room_id = self.data.get('room_id')
+            if room_id is not None:
+                self.room_id = str(room_id)
+        elif self.room_id is not None and isinstance(self.data, dict):
+            self.room_id = str(self.room_id)
+            self.data.setdefault('room_id', self.room_id)
     
     def __lt__(self, other):
         """定义小于比较，首先按优先级，然后按序列号"""
@@ -70,12 +82,14 @@ class AsyncEventManager:
         self.handlers: Dict[str, List[Callable]] = {}
         self.running = False
         self.worker_tasks: List[asyncio.Task] = []
+        self.stats_task: Optional[asyncio.Task] = None
         self.worker_count = worker_count
         
         # 性能统计
         self.stats = {
             'events_processed': 0,
             'events_failed': 0,
+            'events_dropped': 0,
             'average_processing_time': 0.0,
             'queue_size': 0
         }
@@ -85,14 +99,19 @@ class AsyncEventManager:
             max_workers=4, 
             thread_name_prefix='AsyncEvent-Sync'
         )
+        self._thread_pool_shutdown = False
         
-        # 弱引用集合，避免内存泄漏
-        self._cleanup_refs = weakref.WeakSet()
-    
     async def start(self):
         """启动异步事件管理器"""
         if self.running:
             return
+
+        if self._thread_pool_shutdown:
+            self.thread_pool = ThreadPoolExecutor(
+                max_workers=4,
+                thread_name_prefix='AsyncEvent-Sync'
+            )
+            self._thread_pool_shutdown = False
             
         self.running = True
         logger.info(f"启动异步事件管理器，工作进程数: {self.worker_count}")
@@ -106,11 +125,10 @@ class AsyncEventManager:
             self.worker_tasks.append(task)
         
         # 启动统计任务
-        stats_task = asyncio.create_task(
+        self.stats_task = asyncio.create_task(
             self._stats_reporter(),
             name="async-stats-reporter"
         )
-        self.worker_tasks.append(stats_task)
         
         logger.info("异步事件管理器启动完成")
     
@@ -122,18 +140,27 @@ class AsyncEventManager:
         logger.info("正在关闭异步事件管理器...")
         self.running = False
         
-        # 等待所有工作任务完成
-        if self.worker_tasks:
+        if self.stats_task and not self.stats_task.done():
+            self.stats_task.cancel()
+
+        tasks = list(self.worker_tasks)
+        if self.stats_task:
+            tasks.append(self.stats_task)
+
+        # 等待工作器完成当前事件，统计任务直接取消，避免关闭固定等待5分钟睡眠。
+        if tasks:
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*self.worker_tasks, return_exceptions=True),
-                    timeout=10.0
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=5.0
                 )
             except asyncio.TimeoutError:
                 logger.warning("异步事件管理器关闭超时，强制终止")
-                for task in self.worker_tasks:
+                for task in tasks:
                     if not task.done():
                         task.cancel()
+
+        self._drain_event_queue()
         
         # 关闭线程池 - 兼容旧版本Python
         try:
@@ -142,12 +169,29 @@ class AsyncEventManager:
         except TypeError:
             # Python 3.8及以下版本不支持timeout参数
             self.thread_pool.shutdown(wait=True)
+        self._thread_pool_shutdown = True
         
         # 清理处理器
         self.handlers.clear()
         self.worker_tasks.clear()
+        self.stats_task = None
         
         logger.info("异步事件管理器已关闭")
+
+    def _drain_event_queue(self):
+        """释放关闭时仍留在队列中的事件引用。"""
+        drained = 0
+        while True:
+            try:
+                self.event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self.event_queue.task_done()
+            drained += 1
+
+        self.stats['queue_size'] = self.event_queue.qsize()
+        if drained:
+            logger.info(f"已清理 {drained} 个未处理的异步事件")
     
     async def _event_worker(self, worker_name: str):
         """事件处理工作器"""
@@ -155,7 +199,7 @@ class AsyncEventManager:
         
         while self.running:
             try:
-                # 使用优先队列获取事件，带超时避免死锁
+                event = None
                 try:
                     event = await asyncio.wait_for(
                         self.event_queue.get(), 
@@ -166,22 +210,22 @@ class AsyncEventManager:
                 
                 start_time = time.time()
                 
-                # 处理事件
-                await self._process_event_async(event, worker_name)
-                
-                # 更新统计
-                processing_time = time.time() - start_time
-                self.stats['events_processed'] += 1
-                
-                # 计算平均处理时间
-                total_events = self.stats['events_processed']
-                old_avg = self.stats['average_processing_time']
-                self.stats['average_processing_time'] = (
-                    (old_avg * (total_events - 1) + processing_time) / total_events
-                )
-                
-                # 标记任务完成
-                self.event_queue.task_done()
+                try:
+                    # 处理事件
+                    await self._process_event_async(event, worker_name)
+
+                    # 更新统计
+                    processing_time = time.time() - start_time
+                    self.stats['events_processed'] += 1
+
+                    # 计算平均处理时间
+                    total_events = self.stats['events_processed']
+                    old_avg = self.stats['average_processing_time']
+                    self.stats['average_processing_time'] = (
+                        (old_avg * (total_events - 1) + processing_time) / total_events
+                    )
+                finally:
+                    self.event_queue.task_done()
                 
             except asyncio.CancelledError:
                 # 工作器取消是正常关闭流程，不需要debug日志
@@ -197,24 +241,20 @@ class AsyncEventManager:
             return
             
         event_type = event.type_
-        if event_type not in self.handlers:
+        handlers = self.handlers.get(event_type)
+        if not handlers:
             # 精简频繁debug日志：未注册的事件类型可能较多，降级为仅在必要时记录
             return
         
         # 并发执行所有处理器
         handler_tasks = []
-        for handler in self.handlers[event_type]:
-            if asyncio.iscoroutinefunction(handler):
-                # 异步处理器
-                task = asyncio.create_task(handler(event))
-            else:
-                # 同步处理器，在线程池中执行
-                task = asyncio.create_task(
-                    asyncio.get_event_loop().run_in_executor(
-                        self.thread_pool, handler, event
-                    )
-                )
-            handler_tasks.append(task)
+        event_room_id = event.room_id
+        for handler in tuple(handlers):
+            handler_room_id = getattr(handler, '_room_id', None)
+            if handler_room_id is not None and handler_room_id != event_room_id:
+                continue
+
+            handler_tasks.append(asyncio.create_task(self._run_handler(handler, event)))
         
         if handler_tasks:
             # 并发执行所有处理器，收集异常但不中断其他处理器
@@ -232,6 +272,16 @@ class AsyncEventManager:
                         for sub_event in result:
                             if isinstance(sub_event, AsyncEvent):
                                 await self.send_event(sub_event)
+
+    async def _run_handler(self, handler: Callable, event: AsyncEvent):
+        """运行单个事件处理器，统一支持同步、异步和返回 awaitable 的处理器。"""
+        if asyncio.iscoroutinefunction(handler):
+            return await handler(event)
+
+        result = await run_blocking(handler, event, executor=self.thread_pool)
+        if inspect.isawaitable(result):
+            return await result
+        return result
     
     async def send_event(self, event: AsyncEvent):
         """发送事件到异步队列"""
@@ -240,27 +290,31 @@ class AsyncEventManager:
             return
             
         try:
-            # 直接放入事件对象，由AsyncEvent的比较方法处理优先级
-            await self.event_queue.put(event)
+            # 非阻塞入队，避免高负载下发送方被无限挂起并放大内存占用。
+            self.event_queue.put_nowait(event)
             self.stats['queue_size'] = self.event_queue.qsize()
             
         except asyncio.QueueFull:
-            # 队列满时，丢弃优先级最低的事件
-            logger.warning("异步事件队列已满，尝试丢弃低优先级事件")
-            
-            # 尝试清理一些低优先级事件
-            try:
-                # 这是一个简化实现，实际可能需要更复杂的策略
-                await asyncio.sleep(0.001)  # 短暂等待
-                await self.event_queue.put(event)
-            except asyncio.QueueFull:
-                self.stats['events_failed'] += 1
-                logger.error(f"事件队列饱和，丢弃事件: {event.type_}")
+            # 高优先级事件短暂等待一次；低优先级事件直接丢弃，保护常驻内存。
+            if event.priority <= 1:
+                try:
+                    await asyncio.wait_for(self.event_queue.put(event), timeout=0.1)
+                    self.stats['queue_size'] = self.event_queue.qsize()
+                    return
+                except (asyncio.QueueFull, asyncio.TimeoutError):
+                    pass
+
+            self.stats['events_failed'] += 1
+            self.stats['events_dropped'] += 1
+            logger.warning(f"异步事件队列饱和，丢弃事件: {event.type_}")
     
-    def register_handler(self, event_type: str, handler: Callable, priority: int = 0):
+    def register_handler(self, event_type: str, handler: Callable, priority: int = 0,
+                         room_id: Optional[str] = None):
         """注册事件处理器"""
         if event_type not in self.handlers:
             self.handlers[event_type] = []
+
+        scoped_room_id = str(room_id) if room_id is not None else None
         
         # 检查是否是bound method，如果是则包装它
         if hasattr(handler, '__self__') and hasattr(handler, '__func__'):
@@ -276,12 +330,14 @@ class AsyncEventManager:
             
             wrapper.__name__ = getattr(handler, '__name__', str(handler))
             wrapper._priority = priority
+            wrapper._room_id = scoped_room_id
             wrapper._original_handler = original_handler
             actual_handler = wrapper
         else:
             # 普通函数或已经可以设置属性的对象
             try:
                 handler._priority = priority
+                handler._room_id = scoped_room_id
                 actual_handler = handler
             except AttributeError:
                 # 如果仍然无法设置属性，也包装一下
@@ -294,6 +350,7 @@ class AsyncEventManager:
                 
                 wrapper.__name__ = getattr(handler, '__name__', str(handler))
                 wrapper._priority = priority
+                wrapper._room_id = scoped_room_id
                 wrapper._original_handler = handler
                 actual_handler = wrapper
         
@@ -311,6 +368,7 @@ class AsyncEventManager:
             handlers_list.append(actual_handler)
         
         # 精简启动时频繁的debug日志：处理器注册在info级别已有总体报告
+        return actual_handler
     
     def unregister_handler(self, event_type: str, handler: Callable):
         """注销事件处理器"""
@@ -342,21 +400,19 @@ class AsyncEventManager:
             if not self.handlers[event_type]:
                 del self.handlers[event_type]
     
-    def register(self, event_type: str, priority: int = 0, handler_priority: int = 0):
+    def register(self, event_type: str, priority: int = 0,
+                 handler_priority: Optional[int] = None,
+                 room_id: Optional[str] = None):
         """装饰器：注册事件处理器"""
+        actual_priority = priority if handler_priority is None else handler_priority
+
         def decorator(func):
-            # 为处理器设置默认事件优先级
-            async def wrapper(event):
-                # 如果没有显式设置优先级，使用默认值
-                if hasattr(event, 'priority') and event.priority == 0:
-                    event.priority = priority
-                return await func(event) if asyncio.iscoroutinefunction(func) else func(event)
-            
-            wrapper._priority = handler_priority
-            wrapper.__name__ = func.__name__
-            
-            self.register_handler(event_type, wrapper, handler_priority)
-            return wrapper
+            return self.register_handler(
+                event_type,
+                func,
+                priority=actual_priority,
+                room_id=room_id
+            )
         
         return decorator
     
@@ -440,6 +496,7 @@ class AsyncEventAdapter:
                 event.type_, 
                 event.args, 
                 getattr(event, 'data', {}),
+                room_id=getattr(event, 'room_id', None),
                 priority=priority
             )
         else:

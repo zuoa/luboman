@@ -152,7 +152,7 @@ class LiveBase(object):
                     logger.error(f'{self.log_prefix} : 内存监控失败: {e}')
 
             seq += 1
-            await asyncio.sleep(30)
+            await asyncio.sleep(config.get_live_check_interval())  # 检测间隔可配置
 
     def start(self):
         logger.info(f'{self.log_prefix} : 开启直播间')

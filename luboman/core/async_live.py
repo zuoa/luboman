@@ -8,6 +8,7 @@ from luboman.core.async_event import async_event_manager, AsyncEvent, AsyncEvent
 from luboman.core.async_network import async_network_manager, NetworkRequest
 from luboman.core.async_database import async_database_manager
 from luboman.core.async_utils import run_blocking
+from luboman.config import config
 
 logger = logging.getLogger('luboman')
 
@@ -166,6 +167,15 @@ class AsyncLiveBase:
                     priority=1
                 ))
         
+        @self._scoped_handler(AsyncEventType.EVENT_REFRESH_ROOM_INFO, priority=1)
+        async def async_refresh_room_info(event: AsyncEvent):
+            """房间配置刷新处理器：把页面更新后的配置同步到运行中的插件实例。"""
+            room_info = event.args[0] if event.args else None
+            if isinstance(room_info, dict) and room_info:
+                self.room_data.update(room_info)
+                self.plugin_instance.room_data = self.room_data
+                logger.info(f'{self.log_prefix} 房间配置已刷新')
+
         @self._scoped_handler(AsyncEventType.EVENT_DOWNLOAD_ASSET, priority=3)
         async def async_download_assets(event: AsyncEvent):
             """异步下载资源处理器"""
@@ -391,7 +401,7 @@ class AsyncLiveBase:
                     logger.info(f'{self.log_prefix} 状态检查运行中，已执行 {seq} 次')
                 
                 seq += 1
-                await asyncio.sleep(30)  # 30秒检查一次
+                await asyncio.sleep(config.get_live_check_interval())  # 检测间隔可配置
                 
             except asyncio.CancelledError:
                 # 取消操作是正常流程，不需要debug日志

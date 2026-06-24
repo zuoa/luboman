@@ -1,9 +1,12 @@
+import logging
 import re
 import time
 
 from luboman.core.async_utils import run_blocking
 from luboman.core.decorators import PluginTool
 from luboman.core.event import Event, EventType
+
+logger = logging.getLogger('luboman')
 
 
 def collect_runtime_stats():
@@ -77,11 +80,52 @@ async def refresh_room_runtime(room_data):
 
     room_id = str(room_data.get("id", ""))
     if async_live_room_manager.running and room_id in async_live_room_manager.live_rooms:
-        async_live_room_manager.live_rooms[room_id].send_event(
-            Event(EventType.EVENT_REFRESH_ROOM_INFO, (room_data,))
-        )
+        # 异步模式下直接更新共享的 room_data：AsyncLiveBase.room_data 与 plugin_instance.room_data
+        # 是同一个字典对象，且异步事件总线未注册 EVENT_REFRESH_ROOM_INFO 处理器时，发事件会变成 no-op。
+        live_room = async_live_room_manager.live_rooms[room_id]
+        if isinstance(room_data, dict):
+            live_room.room_data.update(room_data)
+            live_room.plugin_instance.room_data = live_room.room_data
         return
 
     running_plugin = PluginTool.running_plugins.get(room_id)
     if running_plugin:
         running_plugin.send_event(Event(EventType.EVENT_REFRESH_ROOM_INFO, (room_data,)))
+
+
+def _is_room_active(room_data):
+    try:
+        return int((room_data or {}).get("active_state", 0) or 0) == 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_room_running(room_id):
+    from luboman.core.async_live import async_live_room_manager
+
+    if async_live_room_manager.running and room_id in async_live_room_manager.live_rooms:
+        return True
+    return room_id in PluginTool.running_plugins
+
+
+async def reconcile_room_runtime(room_data):
+    """页面切换激活状态后，让 worker 运行态与 active_state 保持一致。
+
+    - 激活且未运行 -> 启动
+    - 未激活且运行中 -> 停止
+    - 激活且运行中   -> 仅刷新配置
+    """
+    room_id = str(room_data.get("id", ""))
+    active = _is_room_active(room_data)
+    running = _is_room_running(room_id)
+
+    if active and not running:
+        logger.info(f"激活直播间 {room_id}，启动 worker")
+        await start_room_runtime(room_data)
+    elif not active and running:
+        logger.info(f"停用直播间 {room_id}，停止 worker")
+        await stop_room_runtime(room_id)
+    elif active and running:
+        await refresh_room_runtime(room_data)
+
+    return room_id

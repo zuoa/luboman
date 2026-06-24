@@ -14,7 +14,7 @@ from luboman.core.async_utils import run_blocking
 from luboman.core.async_upload import UploadPriority, async_upload_scheduler
 from luboman.core.runtime import (
     collect_runtime_stats,
-    refresh_room_runtime,
+    reconcile_room_runtime,
     start_room_runtime,
     stop_room_runtime,
 )
@@ -579,7 +579,8 @@ async def update_room(request):
         row, room_data = await run_db(_update_live_room_data, data)
 
         if room_data:
-            await refresh_room_runtime(room_data)
+            # 根据 active_state 对账 worker 运行态：激活/停用/仅刷新配置
+            await reconcile_room_runtime(room_data)
 
         return success(row)
     except Exception as e:

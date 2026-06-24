@@ -1,0 +1,43 @@
+import { request } from '@umijs/max';
+import { REQUEST_HOST } from '@/constants';
+
+/**
+ * 录像文件列表（合并 DB 记录 + 本地磁盘扫描，分页）。
+ * params：page / page_size / live_room_id / room_name(模糊) / platform(精确) /
+ *         date / keyword / exists_only(默认 true，仅磁盘存在)。
+ */
+export async function listRecordFile(
+  params: { [key: string]: any } = {},
+  options?: { [key: string]: any },
+) {
+  return request<API.RecordFilePage>(REQUEST_HOST + '/v1/RecordFile/list', {
+    method: 'POST',
+    data: params,
+    ...(options || {}),
+  });
+}
+
+/**
+ * 手动发布录像到 B 站（异步排队上传，立即返回 task_id）。
+ * body：bili_upload_template_id(必填) + (file_ids | videos 二选一) +
+ *       可选 live_room_id、room_data(仅 room_name/title/url/owner/platform 生效)。
+ */
+export async function publishRecordFileToBili(
+  body: {
+    bili_upload_template_id: number;
+    file_ids?: number[];
+    videos?: string[];
+    live_room_id?: number;
+    room_data?: Record<string, any>;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<API.RecordFilePublishResult>(
+    REQUEST_HOST + '/v1/RecordFile/publishBili',
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}

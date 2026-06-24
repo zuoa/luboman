@@ -1,0 +1,302 @@
+// 直播间管理：表格 + 卡片双视图共用样式。统一引用 global.less 的 --lb-* 令牌。
+
+// ===== 工具栏 =====
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--lb-text);
+}
+
+// ===== 通用辅助 =====
+.muted {
+  color: var(--lb-text-tertiary);
+}
+
+.dangerLink {
+  color: var(--lb-error);
+
+  &:hover {
+    color: #ff7875;
+  }
+}
+
+.codeInline {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--lb-text-secondary);
+  background: var(--lb-bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  padding: 64px 0;
+}
+
+// ===== 表格：领头单元格（头像 + 名称 + 副标题）=====
+.roomCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.roomCellInfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.roomCellName {
+  color: var(--lb-text);
+  font-weight: 500;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+
+  &:hover {
+    color: var(--lb-color-primary-hover);
+    text-decoration: underline;
+  }
+}
+
+.roomCellSub {
+  font-size: 12px;
+  color: var(--lb-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+// ===== 卡片视图 =====
+.cardsRow {
+  margin-top: 0;
+}
+
+.card {
+  border-radius: var(--lb-radius-lg);
+  overflow: hidden;
+  background: var(--lb-bg-container);
+  box-shadow: var(--lb-shadow);
+  transition: all var(--lb-duration);
+  border: 1px solid var(--lb-border-secondary);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--lb-shadow-hover);
+    border-color: rgba(22, 104, 220, 0.4);
+  }
+}
+
+.imageContainer {
+  position: relative;
+  width: 100%;
+  flex-shrink: 0;
+  overflow: hidden;
+
+  // 底部渐变遮罩，保证徽章可读
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0) 0%,
+      rgba(0, 0, 0, 0.1) 70%,
+      rgba(0, 0, 0, 0.3) 100%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    transition: all var(--lb-duration);
+    filter: brightness(0.97) contrast(1.03);
+  }
+
+  &:hover img {
+    transform: scale(1.04);
+    filter: brightness(1.02) contrast(1.06);
+  }
+}
+
+.liveStatusBadge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+}
+
+.liveStatus {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  &.live {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 77, 79, 0.95) 0%,
+      rgba(255, 59, 61, 0.95) 100%
+    );
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(255, 77, 79, 0.4);
+
+    &::before {
+      content: '●';
+      margin-right: 4px;
+      animation: pulse 2s infinite;
+    }
+  }
+
+  &.offline {
+    background: rgba(60, 60, 60, 0.85);
+    color: var(--lb-text-secondary);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.platformBadge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+
+.platformTag {
+  background: var(--lb-color-primary);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.5px;
+}
+
+// 录制中：右上角二级角标
+.recBadge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 2;
+  background: rgba(22, 104, 220, 0.92);
+  color: #fff;
+  padding: 3px 9px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+}
+
+.roomInfo {
+  padding: 14px 16px;
+  background: var(--lb-bg-container);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.streamerInfo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.roomDetails {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.roomName {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  margin-bottom: 2px;
+
+  a {
+    color: var(--lb-text);
+    text-decoration: none;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--lb-color-primary-hover);
+      text-decoration: underline;
+    }
+  }
+}
+
+.roomTitle {
+  font-size: 12px;
+  color: var(--lb-text-secondary);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 1px;
+}
+
+.lastLiveTime {
+  font-size: 11px;
+  color: var(--lb-text-tertiary);
+  line-height: 1.2;
+}
+
+.cardTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 22px;
+}
+
+.cardActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  border-top: 1px solid var(--lb-border-secondary);
+  margin-top: 2px;
+  padding-top: 8px;
+}

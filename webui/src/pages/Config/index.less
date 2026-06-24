@@ -1,0 +1,80 @@
+// 分区标题：主色左边框强调 + 名称 + 灰色描述（令牌驱动，替代旧硬编码蓝条）
+.sectionTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 3px solid var(--lb-color-primary);
+}
+
+.sectionName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--lb-text);
+  line-height: 1.2;
+}
+
+.sectionDesc {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--lb-text-tertiary);
+}
+
+// 字段网格：自适应两列
+.fieldGroup {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  column-gap: 24px;
+}
+
+// 提示文案：替代旧蓝框 helpText
+.tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: var(--lb-radius);
+  background: var(--lb-bg-elevated);
+  color: var(--lb-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+
+  > :global(.anticon) {
+    color: var(--lb-color-primary);
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
+}
+
+// 提交操作栏
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--lb-border-secondary);
+}
+
+// 响应式
+@media (max-width: 768px) {
+  .fieldGroup {
+    grid-template-columns: 1fr;
+  }
+
+  .formActions {
+    justify-content: stretch;
+
+    :global(.ant-space) {
+      width: 100%;
+      display: flex;
+
+      .ant-space-item {
+        flex: 1;
+
+        .ant-btn {
+          width: 100%;
+        }
+      }
+    }
+  }
+}

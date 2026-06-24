@@ -19,6 +19,10 @@ services:
 
   app:
     image: ghcr.io/zuoa/luboman:main
+    # image: 生产拉取已发布镜像；build: 供本地 `docker compose build` 从源码构建
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: luboman
     restart: "always"
     environment:
@@ -40,6 +44,9 @@ services:
 
   webui:
     image: ghcr.io/zuoa/luboman-webui:main
+    # image: 生产拉取已发布镜像；build: 供本地 `docker compose build` 从 webui/ 源码构建
+    build:
+      context: ./webui
     container_name: luboman-webui
     restart: "always"
     environment:

@@ -1,0 +1,283 @@
+// 工具栏 / 标题
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--lb-text);
+}
+
+// 数据看板
+.statsRow {
+  margin-bottom: 20px;
+}
+
+.statCard {
+  border-radius: var(--lb-radius-lg);
+  background: var(--lb-bg-container);
+  box-shadow: var(--lb-shadow);
+  transition: all var(--lb-duration);
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--lb-shadow-hover);
+  }
+}
+
+.statRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.statIcon {
+  font-size: 26px;
+  display: flex;
+  align-items: center;
+}
+
+// 房间卡片
+.card {
+  border-radius: var(--lb-radius-lg);
+  overflow: hidden;
+  background: var(--lb-bg-container);
+  box-shadow: var(--lb-shadow);
+  transition: all var(--lb-duration);
+  margin-bottom: 12px;
+  border: 1px solid var(--lb-border-secondary);
+  cursor: pointer;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--lb-shadow-hover);
+    border-color: rgba(22, 104, 220, 0.4);
+  }
+
+  &:active {
+    transform: translateY(-1px);
+    transition: all 0.1s ease;
+  }
+}
+
+.imageContainer {
+  position: relative;
+  width: 100%;
+  flex-shrink: 0;
+  overflow: hidden;
+
+  // 底部渐变遮罩，保证徽章可读
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0) 0%,
+      rgba(0, 0, 0, 0.1) 70%,
+      rgba(0, 0, 0, 0.3) 100%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    transition: all var(--lb-duration);
+    filter: brightness(0.97) contrast(1.03);
+  }
+
+  &:hover img {
+    transform: scale(1.04);
+    filter: brightness(1.02) contrast(1.06);
+  }
+}
+
+.liveStatusBadge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+}
+
+.liveStatus {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  &.live {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 77, 79, 0.95) 0%,
+      rgba(255, 59, 61, 0.95) 100%
+    );
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(255, 77, 79, 0.4);
+
+    &::before {
+      content: '●';
+      margin-right: 4px;
+      animation: pulse 2s infinite;
+    }
+  }
+
+  &.offline {
+    background: rgba(60, 60, 60, 0.85);
+    color: var(--lb-text-secondary);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.platformBadge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+
+.platformTag {
+  background: var(--lb-color-primary);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.5px;
+}
+
+.roomInfo {
+  padding: 14px 16px;
+  background: var(--lb-bg-container);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 64px;
+  position: relative;
+}
+
+.streamerInfo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  height: 100%;
+}
+
+.roomDetails {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.roomName {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  margin-bottom: 2px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+
+  a {
+    color: var(--lb-text);
+    text-decoration: none;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+
+    &:hover {
+      color: var(--lb-color-primary-hover);
+      text-decoration: underline;
+    }
+  }
+}
+
+.roomTitle {
+  font-size: 12px;
+  color: var(--lb-text-secondary);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 1px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+}
+
+.lastLiveTime {
+  font-size: 11px;
+  color: var(--lb-text-tertiary);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: 13px;
+  display: flex;
+  align-items: center;
+  margin-top: auto;
+}
+
+// 响应式优化
+@media (max-width: 768px) {
+  .card {
+    margin-bottom: 8px;
+  }
+
+  .roomInfo {
+    padding: 8px 10px;
+    min-height: 56px;
+  }
+
+  .streamerInfo {
+    gap: 6px;
+  }
+
+  .roomName {
+    font-size: 13px;
+    height: 16px;
+  }
+
+  .roomTitle {
+    font-size: 11px;
+    height: 13px;
+  }
+
+  .lastLiveTime {
+    font-size: 10px;
+    height: 12px;
+  }
+}

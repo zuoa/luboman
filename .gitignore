@@ -133,3 +133,6 @@ dmypy.json
 *.iml
 .idea
 *.part
+
+# macOS
+.DS_Store

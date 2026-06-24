@@ -1,0 +1,107 @@
+// =====================================================================
+// 录播Man 全局样式
+// 组件级深色/配色由 antd 设计令牌驱动（见 src/theme/tokens.ts → .umirc.ts antd.theme）。
+// 这里只保留：令牌镜像变量（供页面 LESS 引用）、基础 reset、滚动条、pro-layout 兜底、打印。
+// 不再手写 .ant-xxx 内部覆盖（旧实现 580 行已移除，改由令牌统一接管）。
+// =====================================================================
+
+// 令牌镜像：必须与 src/theme/tokens.ts 的 palette 保持一致（LESS 无法 import TS）。
+:root {
+  --lb-color-primary: #1668dc;
+  --lb-color-primary-hover: #2f86e6;
+  --lb-bg-base: #0f0f0f;
+  --lb-bg-container: #1a1a1a;
+  --lb-bg-elevated: #222222;
+  --lb-bg-spotlight: #2a2a2a;
+  --lb-bg-sider: #161616;
+  --lb-border: #2a2a2a;
+  --lb-border-secondary: #1f1f1f;
+  --lb-text: rgba(255, 255, 255, 0.85);
+  --lb-text-secondary: rgba(255, 255, 255, 0.65);
+  --lb-text-tertiary: rgba(255, 255, 255, 0.45);
+  --lb-success: #52c41a;
+  --lb-warning: #faad14;
+  --lb-error: #ff4d4f;
+  --lb-radius: 8px;
+  --lb-radius-lg: 12px;
+  --lb-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --lb-shadow-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --lb-duration: 0.25s;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--lb-text);
+  background-color: var(--lb-bg-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+// 滚动条（antd 无对应令牌，故保留并引用令牌变量）
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--lb-bg-base);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--lb-border);
+  border-radius: 3px;
+
+  &:hover {
+    background: var(--lb-text-tertiary);
+  }
+}
+
+// Pro Layout 兜底：部分版本 ProLayout 不完全跟随 Layout 令牌，显式钉死深色背景。
+.ant-pro-sider,
+.ant-pro-sider .ant-layout-sider {
+  background: var(--lb-bg-sider) !important;
+}
+
+.ant-pro-global-header {
+  background: var(--lb-bg-elevated) !important;
+  border-bottom: 1px solid var(--lb-border-secondary);
+}
+
+// 品牌标题渐变（可选点缀，仅用于一处标题强调）
+.lb-text-gradient {
+  background: linear-gradient(
+    135deg,
+    var(--lb-color-primary) 0%,
+    var(--lb-color-primary-hover) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+// 打印样式
+@media print {
+  .ant-pro-global-header,
+  .ant-pro-sider,
+  .ant-btn,
+  .ant-pagination {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+}

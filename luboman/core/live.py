@@ -231,13 +231,18 @@ class LiveBase(object):
 
         logger.info(f'{self.log_prefix} :  启动录制线程')
 
+        # 是否已输出过"等待中"日志，避免在轮询循环里重复刷屏
+        logged_waiting = False
         while self._active:
             # 未启动录制
             if not self.is_recording:
-                logger.debug(f'{self.log_prefix} :  录制线程等待中: is_recording={self.is_recording}, is_living={self.is_living}')
+                if not logged_waiting:
+                    logger.debug(f'{self.log_prefix} :  录制线程等待中: is_recording={self.is_recording}, is_living={self.is_living}')
+                    logged_waiting = True
                 time.sleep(3)
                 continue
-            
+
+            logged_waiting = False
             logger.info(f'{self.log_prefix} :  录制线程开始执行录制: is_recording={self.is_recording}')
 
             recording_context = {

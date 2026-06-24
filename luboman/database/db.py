@@ -209,6 +209,44 @@ class DB:
             return [model_to_dict(item) for item in BiliUploadTemplate.select()]
 
     @classmethod
+    def list_record_file(cls, filters=None, page=None, page_size=None):
+        """查询录像文件记录。
+
+        服务端目前只按 live_room_id 做精确过滤（最具选择性、且与直播间强绑定）；
+        room_name / platform / date / keyword / exists_only 这类需要结合磁盘扫描或
+        跨表字段判断的筛选交给 Web 合并层统一处理，避免 SQL 过滤与合并层过滤语义不一致。
+
+        每条记录会合并所属直播间的 room_name / room_platform，便于列表直接展示。
+        page / page_size 为可选分页；不传时返回全部匹配记录，供 Web 层合并磁盘文件后再分页。
+        返回 (records, total)，total 为匹配的数据库记录总数（分页前）。
+        """
+        filters = filters or {}
+        with db.connection_context():
+            query = RecordFile.select()
+            if filters.get('live_room_id') is not None:
+                query = query.where(RecordFile.live_room_id == filters['live_room_id'])
+
+            total = query.count()
+            query = query.order_by(RecordFile.begin_time.desc())
+            if page and page_size:
+                query = query.paginate(page, page_size)
+
+            records = [model_to_dict(rf) for rf in query]
+
+            room_ids = {r['live_room_id'] for r in records if r.get('live_room_id') is not None}
+            room_map = {}
+            if room_ids:
+                for room in LiveRoom.select().where(LiveRoom.id.in_(list(room_ids))):
+                    room_map[room.id] = model_to_dict(room)
+
+            for record in records:
+                room = room_map.get(record.get('live_room_id')) or {}
+                record['room_name'] = room.get('room_name')
+                record['room_platform'] = room.get('room_platform')
+
+            return records, total
+
+    @classmethod
     def get_first_bili_account(cls):
         with db.connection_context():
             return BiliAccount.select().where(BiliAccount.state_active == 1).first()

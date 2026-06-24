@@ -1,10 +1,12 @@
 import asyncio
+import datetime
 import json
 import os
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from luboman.core.async_event import AsyncEvent, AsyncEventManager
 from luboman.core.async_network import AsyncNetworkManager, NetworkRequest, NetworkResponse
@@ -462,6 +464,336 @@ class DeploymentRefactorTest(unittest.TestCase):
         self.assertIn("LiveRoom.create(**cls.filter_model_data(LiveRoom, data))", source)
         self.assertIn("BiliAccount.create(**cls.filter_model_data(BiliAccount, data))", source)
         self.assertIn("BiliUploadTemplate.create(**cls.filter_model_data(BiliUploadTemplate, data))", source)
+
+
+class _FakeRequest:
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+
+def _swap_database_to_sqlite():
+    """把所有模型临时绑定到临时文件 SQLite 并替换 db 全局引用，返回恢复函数。
+
+    用文件而非 :memory:，因为发布流程通过 run_db 在线程池里执行 DB 操作，
+    而每个线程对 :memory: 都会得到一个空的全新库；文件库则可被所有线程共享。
+    DB 类与 BaseModel 的辅助方法都通过各自模块里的 db 全局调用
+    connection_context()，因此需要同时替换 models.db 与 db.db 两个引用。
+    """
+    from playhouse.sqlite_ext import SqliteExtDatabase
+    from luboman.database import models as models_module
+    from luboman.database import db as db_module
+    from luboman.database.models import (
+        GlobalConfig, LiveRoom, BiliAccount, BiliUploadTemplate, RecordFile,
+    )
+
+    db_path = tempfile.mktemp(suffix='.db')
+    test_db = SqliteExtDatabase(db_path)
+    original = (models_module.db, db_module.db)
+    models_module.db = test_db
+    db_module.db = test_db
+    models = [GlobalConfig, LiveRoom, BiliAccount, BiliUploadTemplate, RecordFile]
+    for model in models:
+        model.bind(test_db)
+    test_db.connect(reuse_if_open=True)
+    test_db.create_tables(models)
+
+    def restore():
+        test_db.close()
+        for model in models:
+            model.bind(original[0])
+        models_module.db = original[0]
+        db_module.db = original[1]
+        try:
+            os.remove(db_path)
+        except OSError:
+            pass
+
+    return restore
+
+
+class RecordFileDatabaseHelperTest(unittest.TestCase):
+    """DB.list_record_file 字段、过滤与分页。"""
+
+    def setUp(self):
+        self._restore_db = _swap_database_to_sqlite()
+
+    def tearDown(self):
+        self._restore_db()
+
+    def _create_room_and_records(self):
+        from luboman.database.models import LiveRoom, RecordFile
+
+        room = LiveRoom.create(room_url='http://t/1', room_name='streamerA', room_platform='douyin')
+        other = LiveRoom.create(room_url='http://t/2', room_name='streamerB', room_platform='bilibili')
+        now = datetime.datetime.now()
+        RecordFile.create(live_room_id=room.id, begin_time=now, end_time=now,
+                          video='/data/video/douyin/1-streamerA/2026-01-01/a.flv')
+        RecordFile.create(live_room_id=room.id, begin_time=now, end_time=now,
+                          video='/data/video/douyin/1-streamerA/2026-01-02/b.flv')
+        RecordFile.create(live_room_id=other.id, begin_time=now, end_time=now,
+                          video='/data/video/bilibili/2-streamerB/2026-01-01/c.flv')
+        return room
+
+    def test_list_returns_all_with_expected_fields(self):
+        from luboman.database.db import DB
+
+        self._create_room_and_records()
+        records, total = DB.list_record_file()
+
+        self.assertEqual(total, 3)
+        self.assertEqual(len(records), 3)
+        for field in ('id', 'video', 'begin_time', 'end_time', 'series_code',
+                      'upload_info', 'room_name', 'room_platform'):
+            self.assertIn(field, records[0])
+
+    def test_list_merges_room_name_and_platform(self):
+        from luboman.database.db import DB
+
+        room = self._create_room_and_records()
+        records, _ = DB.list_record_file()
+
+        room_records = [r for r in records if r['live_room_id'] == room.id]
+        self.assertEqual(len(room_records), 2)
+        for record in room_records:
+            self.assertEqual(record['room_name'], 'streamerA')
+            self.assertEqual(record['room_platform'], 'douyin')
+
+    def test_list_filters_by_live_room_id(self):
+        from luboman.database.db import DB
+
+        room = self._create_room_and_records()
+        records, total = DB.list_record_file({'live_room_id': room.id})
+
+        self.assertEqual(total, 2)
+        self.assertTrue(all(r['live_room_id'] == room.id for r in records))
+
+    def test_list_paginates(self):
+        from luboman.database.db import DB
+
+        room = self._create_room_and_records()
+        page1, total = DB.list_record_file({'live_room_id': room.id}, page=1, page_size=1)
+        page2, _ = DB.list_record_file({'live_room_id': room.id}, page=2, page_size=1)
+
+        self.assertEqual(total, 2)
+        self.assertEqual(len(page1), 1)
+        self.assertEqual(len(page2), 1)
+        self.assertNotEqual(page1[0]['id'], page2[0]['id'])
+
+
+class RecordFileListMergeTest(unittest.TestCase):
+    """列表合并策略：磁盘补齐未入库文件 + 与数据库路径去重。"""
+
+    def _db_rows(self, records):
+        return records, len(records)
+
+    def _patched_list(self, web, video_dir, db_records):
+        return patch.object(web, 'get_video_dir', return_value=video_dir), \
+            patch.object(web.DB, 'list_record_file', return_value=self._db_rows(db_records))
+
+    def _base_record(self, video, **extra):
+        record = {
+            'id': 1, 'live_room_id': 1, 'video': video,
+            'begin_time': None, 'end_time': None,
+            'series_code': None, 'upload_info': None,
+            'room_name': 'streamerA', 'room_platform': 'douyin',
+        }
+        record.update(extra)
+        return record
+
+    def test_disk_only_files_returned_and_deduped_with_db(self):
+        import luboman.web as web
+
+        with tempfile.TemporaryDirectory() as tmp:
+            room_dir = os.path.join(tmp, 'video', 'douyin', '1-streamerA', '2026-01-01')
+            os.makedirs(room_dir)
+            tracked = os.path.join(room_dir, 'tracked.flv')
+            extra = os.path.join(room_dir, 'extra.mp4')
+            for path in (tracked, extra):
+                with open(path, 'wb') as fh:
+                    fh.write(b'x' * 10)
+
+            db_records = [self._base_record(tracked)]
+            get_dir_patch, list_patch = self._patched_list(web, os.path.join(tmp, 'video'), db_records)
+            with get_dir_patch, list_patch:
+                entries, total, _ = web._list_record_files_data({})
+
+            by_video = {entry['video']: entry for entry in entries}
+            self.assertEqual(total, 2)
+            self.assertIn(os.path.realpath(tracked), by_video)
+            self.assertIn(os.path.realpath(extra), by_video)
+
+            tracked_entry = by_video[os.path.realpath(tracked)]
+            self.assertEqual(tracked_entry['source'], 'database')
+            self.assertTrue(tracked_entry['exists'])
+            self.assertEqual(tracked_entry['id'], 1)
+
+            extra_entry = by_video[os.path.realpath(extra)]
+            self.assertEqual(extra_entry['source'], 'disk')
+            self.assertEqual(extra_entry['room_platform'], 'douyin')
+            self.assertEqual(extra_entry['room_name'], 'streamerA')
+
+    def test_exists_only_hides_missing_db_records_by_default(self):
+        import luboman.web as web
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video_dir = os.path.join(tmp, 'video')
+            os.makedirs(video_dir)
+            ghost = os.path.join(video_dir, 'ghost.flv')  # 数据库有记录但磁盘不存在
+            db_records = [self._base_record(ghost, id=9)]
+
+            get_dir_patch, list_patch = self._patched_list(web, video_dir, db_records)
+            with get_dir_patch, list_patch:
+                entries, total, _ = web._list_record_files_data({})
+            self.assertEqual(total, 0)
+
+            with get_dir_patch, list_patch:
+                entries, total, _ = web._list_record_files_data({'exists_only': False})
+            self.assertEqual(total, 1)
+            self.assertFalse(entries[0]['exists'])
+
+
+class RecordFilePublishValidationTest(unittest.TestCase):
+    """手动发布文件路径校验。"""
+
+    def setUp(self):
+        import luboman.web as web
+
+        self.web = web
+        self.tmp = tempfile.TemporaryDirectory()
+        self.video_dir = os.path.realpath(os.path.join(self.tmp.name, 'video'))
+        os.makedirs(self.video_dir)
+        self.good = os.path.join(self.video_dir, 'a.flv')
+        with open(self.good, 'wb') as fh:
+            fh.write(b'x' * (6 * 1024 * 1024))
+        self.threshold = 5 * 1024 * 1024
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_missing_file_rejected(self):
+        with self.assertRaises(ValueError):
+            self.web._validate_publish_video_path(
+                os.path.join(self.video_dir, 'nope.flv'), self.video_dir, self.threshold)
+
+    def test_directory_traversal_rejected(self):
+        outside = os.path.join(self.tmp.name, 'outside.flv')
+        with open(outside, 'wb') as fh:
+            fh.write(b'x' * (6 * 1024 * 1024))
+        traversal = os.path.join(self.video_dir, '..', 'outside.flv')
+        with self.assertRaises(ValueError):
+            self.web._validate_publish_video_path(traversal, self.video_dir, self.threshold)
+
+    def test_non_video_dir_rejected(self):
+        with self.assertRaises(ValueError):
+            self.web._validate_publish_video_path('/tmp/elsewhere.flv', self.video_dir, self.threshold)
+
+    def test_below_threshold_rejected(self):
+        small = os.path.join(self.video_dir, 'small.flv')
+        with open(small, 'wb') as fh:
+            fh.write(b'x')
+        with self.assertRaises(ValueError):
+            self.web._validate_publish_video_path(small, self.video_dir, self.threshold)
+
+    def test_valid_file_normalized(self):
+        real = self.web._validate_publish_video_path(self.good, self.video_dir, self.threshold)
+        self.assertEqual(real, os.path.realpath(self.good))
+
+
+class RecordFilePublishBiliTest(unittest.IsolatedAsyncioTestCase):
+    """手动发布入队：mock 调度器与上传插件解析，验证上下文、优先级与返回值。"""
+
+    def setUp(self):
+        from luboman.database.models import LiveRoom, BiliAccount, BiliUploadTemplate
+
+        self._restore_db = _swap_database_to_sqlite()
+        self.account = BiliAccount.create(account_name='acc', bili_cookies='k=v;', state_active=1)
+        self.template = BiliUploadTemplate.create(
+            template_name='tpl', bili_account_id=self.account.id,
+            tags=['x'], title='{room_name}')
+        self.room = LiveRoom.create(
+            room_url='http://t/1', room_name='streamerA',
+            room_platform='douyin', room_title='title')
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.video_dir = os.path.realpath(os.path.join(self.tmp.name, 'video'))
+        os.makedirs(self.video_dir)
+        self.video = os.path.join(self.video_dir, 'a.flv')
+        with open(self.video, 'wb') as fh:
+            fh.write(b'x' * (6 * 1024 * 1024))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        self._restore_db()
+
+    async def test_publish_enqueues_with_high_priority_and_template_context(self):
+        import luboman.web as web
+
+        captured = {}
+
+        async def fake_schedule(platform, file_list, room_data=None, priority=None):
+            captured['platform'] = platform
+            captured['file_list'] = file_list
+            captured['room_data'] = room_data
+            captured['priority'] = priority
+            return 'task-123'
+
+        request = _FakeRequest({
+            'videos': [self.video],
+            'bili_upload_template_id': self.template.id,
+            'live_room_id': self.room.id,
+        })
+
+        orig_running = web.async_upload_scheduler.running
+        orig_schedule = web.async_upload_scheduler.schedule_upload_simple
+        orig_resolve = web.resolve_bili_uploader
+        web.async_upload_scheduler.running = True
+        web.async_upload_scheduler.schedule_upload_simple = fake_schedule
+        web.resolve_bili_uploader = lambda room_data: 'biliup-rs'
+        try:
+            with patch.object(web, 'get_video_dir', return_value=self.video_dir):
+                response = await web.publish_record_file_to_bili(request)
+        finally:
+            web.async_upload_scheduler.running = orig_running
+            web.async_upload_scheduler.schedule_upload_simple = orig_schedule
+            web.resolve_bili_uploader = orig_resolve
+
+        body = json.loads(response.text)
+        self.assertTrue(body['success'], body)
+        self.assertEqual(body['data'], {
+            'task_id': 'task-123', 'file_count': 1, 'uploader': 'biliup-rs',
+        })
+        self.assertEqual(captured['platform'], 'biliup-rs')
+        self.assertEqual(captured['file_list'], [{'video': os.path.realpath(self.video)}])
+        self.assertEqual(captured['priority'], web.UploadPriority.HIGH)
+
+        template_info = captured['room_data']['bili_upload_template']
+        self.assertEqual(template_info['id'], self.template.id)
+        self.assertEqual(template_info['bili_account']['id'], self.account.id)
+        self.assertEqual(captured['room_data']['room_name'], 'streamerA')
+
+    async def test_publish_returns_error_when_scheduler_not_running(self):
+        import luboman.web as web
+
+        request = _FakeRequest({
+            'videos': [self.video],
+            'bili_upload_template_id': self.template.id,
+            'live_room_id': self.room.id,
+        })
+
+        orig_running = web.async_upload_scheduler.running
+        web.async_upload_scheduler.running = False
+        try:
+            with patch.object(web, 'get_video_dir', return_value=self.video_dir):
+                response = await web.publish_record_file_to_bili(request)
+        finally:
+            web.async_upload_scheduler.running = orig_running
+
+        body = json.loads(response.text)
+        self.assertFalse(body['success'])
+        self.assertIn('not running', body['message'])
 
 
 if __name__ == "__main__":

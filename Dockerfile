@@ -1,4 +1,4 @@
-FROM python:3.9-slim as tools
+FROM python:3.11-slim as tools
 RUN \
   set -eux; \
   apt-get update; \
@@ -7,7 +7,7 @@ RUN \
   unzip /tmp/aliyunpan.zip -d /opt &&  mv /opt/aliyunpan-v0.2.9-linux-amd64 /opt/aliyunpan
 
 
-FROM python:3.9-slim
+FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN  set -eux; \

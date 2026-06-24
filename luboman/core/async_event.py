@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import sys
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -14,9 +15,10 @@ logger = logging.getLogger('luboman')
 
 # 全局序列号生成器，确保事件的唯一性
 _event_sequence = itertools.count()
+_dataclass_kwargs = {'slots': True} if sys.version_info >= (3, 10) else {}
 
 
-@dataclass(slots=True)
+@dataclass(**_dataclass_kwargs)
 class AsyncEvent:
     """异步事件对象"""
     type_: str  # 事件类型

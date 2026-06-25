@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -30,13 +31,37 @@ class DB:
         BiliAccount.create_table(safe=True)
         BiliUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
-        # 兼容已有库：显式补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
-        # 不会为已存在的表补索引）。加速"按房间过滤 + begin_time 倒序分页"的列表查询，防表膨胀后变慢
+        # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
+        # 不会为已存在的表补索引）。大表上建索引耗时，放后台守护线程异步进行，绝不阻塞/阻断启动。
+        threading.Thread(target=cls._ensure_record_file_index, daemon=True, name='recordfile-index').start()
+
+    @classmethod
+    def _ensure_record_file_index(cls):
+        """后台建 RecordFile(live_room_id, begin_time) 索引；大表上耗时，故事务内临时关闭
+        statement_timeout，并用 try/except 兜底——失败仅影响列表性能，不应让应用起不来。
+        成功一次后 IF NOT EXISTS 使后续启动近乎零成本。"""
         table = RecordFile._meta.table_name
-        db.execute_sql(
-            f'CREATE INDEX IF NOT EXISTS "idx_{table}_live_room_begin" '
-            f'ON "{table}" (live_room_id, begin_time)'
-        )
+        try:
+            with db.atomic():
+                # SET LOCAL 仅在事务内有效，退出即回退，不会污染连接池里该连接后续的默认超时
+                db.execute_sql('SET LOCAL statement_timeout = 0')
+                db.execute_sql(
+                    f'CREATE INDEX IF NOT EXISTS "idx_{table}_live_room_begin" '
+                    f'ON "{table}" (live_room_id, begin_time)'
+                )
+            logger.info('RecordFile(live_room_id, begin_time) 索引就绪')
+        except Exception:
+            logger.warning(
+                '创建 RecordFile(live_room_id, begin_time) 索引失败，'
+                '录像列表仍可用但可能偏慢；表越大建索引越久，可稍后重试或手动清理死记录',
+                exc_info=True,
+            )
+        finally:
+            # 后台线程用完即归还连接，避免连接泄漏
+            try:
+                db.close()
+            except Exception:
+                pass
 
     @staticmethod
     def filter_model_data(model, data, allowed_columns=None, include_id=False):

@@ -28,20 +28,20 @@ db_password = os.environ.get('DATABASE_PASSWORD', 'luboman@2024#Hangzhou')
 # - keepalives*：让 OS 在约 60s 内探测到被防火墙/对端悄悄掐断的死连接并快速失败，
 #   避免连接池复用一个已死 socket 导致查询挂死到 OS 级 TCP 超时（十几分钟）。
 # 三者缺一不可：stale_timeout 是懒回收，挡不住"死而未回收"的连接。
+# peewee 会把这些额外的顶层 kwargs 连同 host/port 一起作为 psycopg2 连接参数透传，
+# 切勿包在 connect_params= 字典里（会被当成名为 connect_params 的非法连接选项）。
 # 全部经环境变量可覆盖。
 db_connect_timeout = int(os.environ.get('DATABASE_CONNECT_TIMEOUT', 5))
 db_statement_timeout = int(os.environ.get('DATABASE_STATEMENT_TIMEOUT', 15000))
 db = PooledPostgresqlExtDatabase(
     db_name, host=db_host, port=db_port, user=db_user, password=db_password,
     stale_timeout=300, max_connections=100,
-    connect_params={
-        'connect_timeout': db_connect_timeout,
-        'options': f'-c statement_timeout={db_statement_timeout}',
-        'keepalives': 1,
-        'keepalives_idle': 30,
-        'keepalives_interval': 10,
-        'keepalives_count': 3,
-    },
+    connect_timeout=db_connect_timeout,
+    options=f'-c statement_timeout={db_statement_timeout}',
+    keepalives=1,
+    keepalives_idle=30,
+    keepalives_interval=10,
+    keepalives_count=3,
 )
 
 

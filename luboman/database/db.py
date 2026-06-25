@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from datetime import datetime
 
@@ -243,6 +244,8 @@ class DB:
                 room = room_map.get(record.get('live_room_id')) or {}
                 record['room_name'] = room.get('room_name')
                 record['room_platform'] = room.get('room_platform')
+                # 预计算规范化绝对路径，供 Web 合并层在缓存命中时直接复用，免去逐条 realpath
+                record['_video_real'] = os.path.realpath(record.get('video') or '')
 
             return records, total
 

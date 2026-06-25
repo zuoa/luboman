@@ -586,6 +586,11 @@ class RecordFileDatabaseHelperTest(unittest.TestCase):
 class RecordFileListMergeTest(unittest.TestCase):
     """列表合并策略：磁盘补齐未入库文件 + 与数据库路径去重。"""
 
+    def setUp(self):
+        import luboman.web as web
+        # 列表层带 TTL 缓存，每个用例使用各自的临时目录与 mock 数据，清理缓存避免互相污染
+        web._scan_cache.clear()
+
     def _db_rows(self, records):
         return records, len(records)
 

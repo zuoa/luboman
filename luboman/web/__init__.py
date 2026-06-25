@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 
 import aiohttp_cors
 from aiohttp import web
@@ -174,6 +176,36 @@ def _delete_bili_upload_template(template_id):
 # 录像文件列表/手动发布相关常量与辅助方法
 RECORD_FILE_VIDEO_EXTENSIONS = ('.flv', '.mp4', '.mkv', '.webm', '.ts')
 RECORD_FILE_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+# 录像列表的磁盘扫描与全表加载变化极慢（仅在开播/下播时增删），用短 TTL 进程内缓存
+# 消除每次请求的重复扫描。key -> (expires_at_monotonic, value)。
+_scan_cache = {}
+_scan_cache_lock = threading.Lock()
+
+
+def _scan_cache_ttl(default=15):
+    """录像列表缓存 TTL（秒），读取配置 record_file_scan_cache_ttl；0 表示禁用缓存。"""
+    try:
+        return max(0, int(config.get('record_file_scan_cache_ttl', default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cached(key, ttl, producer):
+    """带 TTL 的进程内缓存。producer 仅在缓存缺失（或 TTL=0）时调用。"""
+    if ttl <= 0:
+        return producer()
+    now = time.monotonic()
+    hit = _scan_cache.get(key)
+    if hit and now < hit[0]:
+        return hit[1]
+    value = producer()
+    with _scan_cache_lock:
+        _scan_cache[key] = (now + ttl, value)
+    return value
+
+
 # 手动发布时允许通过 room_data 覆盖的标题模板相关字段
 BILI_PUBLISH_ROOM_DATA_FIELDS = ('room_name', 'room_title', 'room_url', 'room_owner', 'room_platform')
 
@@ -309,14 +341,27 @@ def _list_record_files_data(params):
         exists_only = exists_only.strip().lower() not in ('false', '0', 'no', 'none', '')
 
     video_dir = os.path.realpath(get_video_dir())
-    disk_entries = _scan_local_video_files(video_dir)
+    scan_ttl = _scan_cache_ttl()
+
+    # 磁盘扫描与全表加载都变化极慢，用 TTL 缓存避免每次请求重复扫描
+    disk_entries = _cached(
+        ('disk_scan', video_dir),
+        scan_ttl,
+        lambda: _scan_local_video_files(video_dir),
+    )
 
     # 仅用 live_room_id 在数据库层缩小范围，其余筛选交给统一过滤层，保证语义一致
-    records, _db_total = DB.list_record_file({'live_room_id': filters['live_room_id']})
+    records, _db_total = _cached(
+        ('db_records', filters['live_room_id']),
+        scan_ttl,
+        lambda: DB.list_record_file({'live_room_id': filters['live_room_id']}),
+    )
 
     merged = dict(disk_entries)
     for record in records:
-        path = os.path.realpath(record.get('video') or '')
+        # DB 层已在缓存构建时预计算 _video_real，命中缓存时免去每请求逐条 realpath；
+        # 缺失时（如 mock 或其它来源）回退到即时计算，保证健壮
+        path = record.get('_video_real') or os.path.realpath(record.get('video') or '')
         if not path:
             continue
         on_disk = path in disk_entries

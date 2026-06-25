@@ -15,8 +15,10 @@ from typing import Dict, List, Optional
 
 # 导入原有模块
 from luboman.config import config
+from luboman.core import bili_account_health
 from luboman.core.decorators import PluginTool
 from luboman import __version__, LOG_CONF
+from luboman.core.notify import notify_message
 from luboman.core.utils import get_video_dir, remove_dir
 from luboman.database.db import DB
 from luboman import plugins
@@ -51,6 +53,9 @@ class AsyncLubomanApplication:
         
         # 定时任务
         self.timer_tasks: List[asyncio.Task] = []
+
+        # 已告警过的失效账号 id 集合，避免对同一个死账号反复推送；账号恢复后自动移出
+        self._alerted_account_ids: set = set()
         
         # 监控任务
         self.monitor_task: Optional[asyncio.Task] = None
@@ -263,7 +268,14 @@ class AsyncLubomanApplication:
             name="periodic-cleanup"
         )
         self.timer_tasks.append(cleanup_task)
-        
+
+        # B站投稿账号登录态巡检任务
+        account_check_task = asyncio.create_task(
+            self._periodic_account_check(),
+            name="periodic-account-check"
+        )
+        self.timer_tasks.append(account_check_task)
+
         logger.info("定时任务启动完成")
     
     async def _periodic_cleanup(self):
@@ -287,7 +299,53 @@ class AsyncLubomanApplication:
                 break
             except Exception as e:
                 logger.error(f"定期清理失败: {e}")
-    
+
+    def _account_check_interval(self):
+        """账号登录态巡检间隔（秒），可通过配置 bili_account_check_interval 覆盖，默认 6 小时。"""
+        try:
+            return max(300, int(config.get('bili_account_check_interval', 21600)))
+        except (TypeError, ValueError):
+            return 21600
+
+    async def _periodic_account_check(self):
+        """定期检查 B站投稿账号登录态，失效则通过通知插件告警。
+
+        只在「由有效变失效」时告警一次，避免对同一个死账号周期性刷屏；
+        账号恢复后自动移出告警集合，下次再次失效会重新告警。
+        """
+        # 启动后稍等再首次检查，避免与启动流程挤在一起
+        await asyncio.sleep(30)
+        while self.running:
+            try:
+                if not self.running:
+                    break
+
+                active_count, invalid = await run_blocking(bili_account_health.check_active_accounts)
+                invalid_ids = {a.get('id') for a in invalid}
+
+                newly_invalid = [a for a in invalid if a.get('id') not in self._alerted_account_ids]
+                for acc in newly_invalid:
+                    name = acc.get('account_name') or f"id={acc.get('id')}"
+                    notify_message(
+                        'B站投稿账号登录态失效',
+                        f'账号「{name}」登录态已失效，请尽快重新获取 cookie，否则该账号的自动投稿会失败。'
+                    )
+
+                # 用本轮失效集合刷新去重：恢复的账号自动移出，可再次告警
+                self._alerted_account_ids = invalid_ids
+
+                logger.info(
+                    f"B站账号登录态巡检完成: 启用账号 {active_count} 个，失效 {len(invalid)} 个"
+                    + (f"，新增告警 {len(newly_invalid)} 个" if newly_invalid else "")
+                )
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"B站账号登录态巡检失败: {e}")
+
+            await asyncio.sleep(self._account_check_interval())
+
     def _cleanup_old_files(self):
         """清理旧文件（同步版本）"""
         try:

@@ -145,6 +145,18 @@ declare namespace API {
     upload_info?: any | null;
   }
 
+  /** RecordFile/roomSummary 单个直播间维度汇总 */
+  interface RecordFileRoomSummary {
+    live_room_id?: number | null;
+    room_name?: string | null;
+    room_platform?: string | null;
+    room_owner?: string | null;
+    room_url?: string | null;
+    live_state?: 0 | 1 | null;
+    file_count: number;
+    last_begin_time?: string | null;
+  }
+
   /** RecordFile/list 响应 data */
   interface RecordFilePage {
     list: RecordFileInfo[];

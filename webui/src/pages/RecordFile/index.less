@@ -1,5 +1,95 @@
 // 录像文件管理页样式。表格主体由 antd 令牌驱动，这里仅放少量辅助样式。
 
+.pageShell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.roomPanel {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 128px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--lb-border-secondary);
+  border-radius: var(--lb-radius);
+  background: var(--lb-bg-container);
+}
+
+.roomPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  margin-bottom: 8px;
+  color: var(--lb-text);
+  font-weight: 600;
+}
+
+.roomList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.roomItem {
+  display: block;
+  width: 100%;
+  min-height: 70px;
+  padding: 10px;
+  color: var(--lb-text-secondary);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color var(--lb-duration),
+    background-color var(--lb-duration), color var(--lb-duration);
+
+  &:hover {
+    color: var(--lb-text);
+    background: var(--lb-bg-elevated);
+  }
+}
+
+.roomItemActive {
+  color: var(--lb-text);
+  background: rgba(22, 104, 220, 0.16);
+  border-color: rgba(47, 134, 230, 0.5);
+}
+
+.roomItemTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.roomItemName {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.roomItemMeta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--lb-text-tertiary);
+  font-size: 12px;
+}
+
+.tablePanel {
+  min-width: 0;
+}
+
 .muted {
   color: var(--lb-text-tertiary);
 }
@@ -10,4 +100,25 @@
   border-top: 1px solid var(--lb-border-secondary);
   font-size: 13px;
   color: var(--lb-text-secondary);
+}
+
+@media (max-width: 960px) {
+  .pageShell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .roomPanel {
+    position: static;
+    max-height: none;
+  }
+
+  .roomList {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .roomItem {
+    min-width: 190px;
+  }
 }

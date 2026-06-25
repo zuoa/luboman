@@ -1,4 +1,5 @@
 import services from '@/services/luboman';
+import { CloudUploadOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   ActionType,
   ModalForm,
@@ -8,16 +9,32 @@ import {
   ProTable,
 } from '@ant-design/pro-components';
 import {
-  CloudUploadOutlined,
-  ReloadOutlined,
-} from '@ant-design/icons';
-import { Alert, Button, Space, Tag, Tooltip, message } from 'antd';
-import React, { useRef, useState } from 'react';
+  Alert,
+  Badge,
+  Button,
+  Empty,
+  Space,
+  Spin,
+  Tag,
+  Tooltip,
+  message,
+} from 'antd';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import styles from './index.less';
 
-const { listRecordFile, publishRecordFileToBili } = services.RecordFile;
+const { listRecordFile, listRecordFileRoomSummary, publishRecordFileToBili } =
+  services.RecordFile;
 const { listLiveRoom } = services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
+
+const ALL_ROOM_KEY = 'all';
+type RoomFilterKey = typeof ALL_ROOM_KEY | number;
 
 // 平台码 → 中文名（用于筛选项 + 来源展示）。Record 类型允许用字符串下标取值。
 const PLATFORM_VALUE_ENUM: Record<string, { text: string }> = {
@@ -61,6 +78,19 @@ function relFromMs(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+function relFromDateValue(value?: string | null): string {
+  if (!value) return '-';
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? value : relFromMs(ms);
+}
+
+function roomSummaryName(room: API.RecordFileRoomSummary): string {
+  return (
+    room.room_name ||
+    (room.live_room_id ? `#${room.live_room_id}` : '未命名直播间')
+  );
+}
+
 /** 防御性渲染 upload_info：尝试取 bvid 拼链接，否则仅显示「已投稿」 */
 function renderPublishStatus(info?: any) {
   if (!info) return <span className={styles.muted}>未投稿</span>;
@@ -83,10 +113,62 @@ function renderPublishStatus(info?: any) {
 
 const RecordFileList: React.FC = () => {
   const actionRef = useRef<ActionType>();
+  const [roomSummary, setRoomSummary] = useState<API.RecordFileRoomSummary[]>(
+    [],
+  );
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [activeRoomKey, setActiveRoomKey] =
+    useState<RoomFilterKey>(ALL_ROOM_KEY);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [selectedRows, setSelectedRows] = useState<API.RecordFileInfo[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<API.RecordFileInfo[]>([]);
+
+  const activeRoomId =
+    activeRoomKey === ALL_ROOM_KEY ? undefined : activeRoomKey;
+  const tableParams = useMemo(
+    () => ({ roomDimension: activeRoomKey }),
+    [activeRoomKey],
+  );
+  const activeRoom = useMemo(
+    () =>
+      activeRoomId == null
+        ? undefined
+        : roomSummary.find((room) => room.live_room_id === activeRoomId),
+    [activeRoomId, roomSummary],
+  );
+  const totalFileCount = useMemo(
+    () => roomSummary.reduce((sum, room) => sum + (room.file_count || 0), 0),
+    [roomSummary],
+  );
+
+  const publishDefaultRoomId = useMemo(() => {
+    if (activeRoomId != null) return activeRoomId;
+    const roomIds = Array.from(
+      new Set(
+        publishTarget
+          .map((row) => row.live_room_id)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    return roomIds.length === 1 ? roomIds[0] : undefined;
+  }, [activeRoomId, publishTarget]);
+
+  const fetchRoomSummary = useCallback(async () => {
+    setRoomsLoading(true);
+    try {
+      const list = await listRecordFileRoomSummary();
+      setRoomSummary(Array.isArray(list) ? list : []);
+    } catch {
+      setRoomSummary([]);
+    } finally {
+      setRoomsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRoomSummary();
+  }, [fetchRoomSummary]);
 
   const openPublish = (rows: API.RecordFileInfo[]) => {
     if (!rows.length) return;
@@ -99,12 +181,21 @@ const RecordFileList: React.FC = () => {
     setSelectedRows([]);
   };
 
+  const switchRoom = (roomKey: RoomFilterKey) => {
+    setActiveRoomKey(roomKey);
+    clearSelection();
+  };
+
+  const reloadRecordFiles = () => {
+    fetchRoomSummary();
+    actionRef.current?.reload();
+  };
+
   const handlePublish = async (values: any) => {
     const { bili_upload_template_id, live_room_id, room_data } = values;
     const target = publishTarget;
     // 后端单次调用只接受 file_ids 或 videos：全部有 id 用 file_ids，否则统一用 video 路径
-    const allHaveId =
-      target.length > 0 && target.every((r) => r.id != null);
+    const allHaveId = target.length > 0 && target.every((r) => r.id != null);
     const roomData = room_data
       ? Object.fromEntries(
           Object.entries(room_data).filter(([, v]) => v != null && v !== ''),
@@ -135,19 +226,6 @@ const RecordFileList: React.FC = () => {
 
   const columns: ProColumns<API.RecordFileInfo>[] = [
     // ---------- 仅筛选项（不在表格显示）----------
-    {
-      title: '房间',
-      dataIndex: 'live_room_id',
-      valueType: 'select',
-      hideInTable: true,
-      request: async () => {
-        const list = await listLiveRoom();
-        return (list || []).map((r) => ({
-          label: r.room_name || `#${r.id}`,
-          value: r.id,
-        }));
-      },
-    },
     {
       title: '平台',
       dataIndex: 'platform',
@@ -194,7 +272,11 @@ const RecordFileList: React.FC = () => {
       render: (_, r) => (
         <Space direction="vertical" size={0}>
           <span>{r.room_name || <span className={styles.muted}>-</span>}</span>
-          <Tag>{PLATFORM_VALUE_ENUM[r.room_platform || '']?.text || r.room_platform || '-'}</Tag>
+          <Tag>
+            {PLATFORM_VALUE_ENUM[r.room_platform || '']?.text ||
+              r.room_platform ||
+              '-'}
+          </Tag>
         </Space>
       ),
     },
@@ -249,82 +331,165 @@ const RecordFileList: React.FC = () => {
 
   return (
     <>
-      <ProTable<API.RecordFileInfo>
-        headerTitle="录像文件"
-        actionRef={actionRef}
-        rowKey="video"
-        search={{ labelWidth: 80, defaultCollapsed: false }}
-        pagination={{ pageSize: 50, showSizeChanger: true, pageSizeOptions: ['20','50','100','200'] }}
-        size="middle"
-        options={false}
-        rowSelection={{
-          selectedRowKeys,
-          onChange: (keys, rows) => {
-            setSelectedRowKeys(keys);
-            setSelectedRows(rows);
-          },
-        }}
-        tableAlertRender={({ selectedRowKeys: keys }) =>
-          `已选 ${keys.length} 个文件`
-        }
-        tableAlertOptionRender={() => (
-          <Space>
-            <a onClick={clearSelection}>取消选择</a>
-          </Space>
-        )}
-        toolBarRender={() => [
-          <Button
-            key="reload"
-            icon={<ReloadOutlined />}
-            onClick={() => actionRef.current?.reload()}
-          >
-            刷新
-          </Button>,
-          <Button
-            key="publish"
-            type="primary"
-            icon={<CloudUploadOutlined />}
-            disabled={!selectedRows.length}
-            onClick={() => openPublish(selectedRows)}
-          >
-            发布到 B 站{selectedRows.length ? ` (${selectedRows.length})` : ''}
-          </Button>,
-        ]}
-        request={async (params) => {
-          try {
-            const {
-              current = 1,
-              pageSize = 50,
-              live_room_id,
-              platform,
-              keyword,
-              date,
-              exists_only,
-            } = params as any;
-            const dateStr =
-              date && typeof date.format === 'function'
-                ? date.format('YYYY-MM-DD')
-                : date || undefined;
-            const res = await listRecordFile({
-              page: current,
-              page_size: pageSize,
-              live_room_id,
-              platform,
-              keyword,
-              date: dateStr,
-              exists_only: exists_only === undefined ? true : exists_only,
-            });
-            return {
-              data: res?.list || [],
-              total: res?.total || 0,
-              success: true,
-            };
-          } catch {
-            return { data: [], total: 0, success: false };
-          }
-        }}
-        columns={columns}
-      />
+      <div className={styles.pageShell}>
+        <aside className={styles.roomPanel}>
+          <div className={styles.roomPanelHeader}>
+            <span>直播间</span>
+            {roomsLoading ? <Spin size="small" /> : null}
+          </div>
+          <div className={styles.roomList}>
+            <button
+              type="button"
+              className={`${styles.roomItem} ${
+                activeRoomKey === ALL_ROOM_KEY ? styles.roomItemActive : ''
+              }`}
+              onClick={() => switchRoom(ALL_ROOM_KEY)}
+            >
+              <div className={styles.roomItemTop}>
+                <span className={styles.roomItemName}>全部录像</span>
+                <Badge count={totalFileCount} overflowCount={9999} showZero />
+              </div>
+              <div className={styles.roomItemMeta}>
+                {roomSummary.length} 个直播间
+              </div>
+            </button>
+            {roomSummary.length ? (
+              roomSummary
+                .filter((room) => typeof room.live_room_id === 'number')
+                .map((room) => {
+                  const roomId = room.live_room_id as number;
+                  const active = activeRoomKey === roomId;
+                  return (
+                    <button
+                      key={roomId}
+                      type="button"
+                      className={`${styles.roomItem} ${
+                        active ? styles.roomItemActive : ''
+                      }`}
+                      onClick={() => switchRoom(roomId)}
+                    >
+                      <div className={styles.roomItemTop}>
+                        <span
+                          className={styles.roomItemName}
+                          title={roomSummaryName(room)}
+                        >
+                          {roomSummaryName(room)}
+                        </span>
+                        <Badge
+                          count={room.file_count || 0}
+                          overflowCount={9999}
+                          showZero
+                        />
+                      </div>
+                      <div className={styles.roomItemMeta}>
+                        <span>
+                          {PLATFORM_VALUE_ENUM[room.room_platform || '']
+                            ?.text ||
+                            room.room_platform ||
+                            '未知平台'}
+                        </span>
+                        <span>{relFromDateValue(room.last_begin_time)}</span>
+                      </div>
+                    </button>
+                  );
+                })
+            ) : (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="暂无直播间"
+              />
+            )}
+          </div>
+        </aside>
+
+        <div className={styles.tablePanel}>
+          <ProTable<API.RecordFileInfo>
+            headerTitle={
+              activeRoom
+                ? `${roomSummaryName(activeRoom)} · 录像文件`
+                : '全部录像文件'
+            }
+            actionRef={actionRef}
+            rowKey="video"
+            params={tableParams}
+            search={{ labelWidth: 80, defaultCollapsed: false }}
+            pagination={{
+              pageSize: 50,
+              showSizeChanger: true,
+              pageSizeOptions: ['20', '50', '100', '200'],
+            }}
+            size="middle"
+            options={false}
+            rowSelection={{
+              selectedRowKeys,
+              onChange: (keys, rows) => {
+                setSelectedRowKeys(keys);
+                setSelectedRows(rows);
+              },
+            }}
+            tableAlertRender={({ selectedRowKeys: keys }) =>
+              `已选 ${keys.length} 个文件`
+            }
+            tableAlertOptionRender={() => (
+              <Space>
+                <a onClick={clearSelection}>取消选择</a>
+              </Space>
+            )}
+            toolBarRender={() => [
+              <Button
+                key="reload"
+                icon={<ReloadOutlined />}
+                onClick={reloadRecordFiles}
+              >
+                刷新
+              </Button>,
+              <Button
+                key="publish"
+                type="primary"
+                icon={<CloudUploadOutlined />}
+                disabled={!selectedRows.length}
+                onClick={() => openPublish(selectedRows)}
+              >
+                发布到 B 站
+                {selectedRows.length ? ` (${selectedRows.length})` : ''}
+              </Button>,
+            ]}
+            request={async (params) => {
+              try {
+                const {
+                  current = 1,
+                  pageSize = 50,
+                  platform,
+                  keyword,
+                  date,
+                  exists_only,
+                } = params as any;
+                const dateStr =
+                  date && typeof date.format === 'function'
+                    ? date.format('YYYY-MM-DD')
+                    : date || undefined;
+                const res = await listRecordFile({
+                  page: current,
+                  page_size: pageSize,
+                  live_room_id: activeRoomId,
+                  platform,
+                  keyword,
+                  date: dateStr,
+                  exists_only: exists_only === undefined ? true : exists_only,
+                });
+                return {
+                  data: res?.list || [],
+                  total: res?.total || 0,
+                  success: true,
+                };
+              } catch {
+                return { data: [], total: 0, success: false };
+              }
+            }}
+            columns={columns}
+          />
+        </div>
+      </div>
 
       <ModalForm
         title={`发布到 B 站（${publishTarget.length} 个文件）`}
@@ -333,7 +498,7 @@ const RecordFileList: React.FC = () => {
         onOpenChange={setPublishOpen}
         modalProps={{ destroyOnClose: true }}
         onFinish={handlePublish}
-        initialValues={{ live_room_id: undefined }}
+        initialValues={{ live_room_id: publishDefaultRoomId }}
       >
         <Alert
           type="info"
@@ -367,7 +532,9 @@ const RecordFileList: React.FC = () => {
           }}
           placeholder="可选，用于回填分区 / 标签等上下文"
         />
-        <div className={styles.overrideTitle}>覆盖信息（可选，留空则用模板/房间默认值）</div>
+        <div className={styles.overrideTitle}>
+          覆盖信息（可选，留空则用模板/房间默认值）
+        </div>
         <ProFormText
           name={['room_data', 'room_name']}
           label="房间名"

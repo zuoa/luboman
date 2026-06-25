@@ -1,8 +1,8 @@
-import { request } from '@umijs/max';
 import { REQUEST_HOST } from '@/constants';
+import { request } from '@umijs/max';
 
 /**
- * 录像文件列表（合并 DB 记录 + 本地磁盘扫描，分页）。
+ * 录像文件列表（DB 记录分页，后端仅对当前页补齐磁盘状态）。
  * params：page / page_size / live_room_id / room_name(模糊) / platform(精确) /
  *         date / keyword / exists_only(默认 true，仅磁盘存在)。
  */
@@ -17,6 +17,20 @@ export async function listRecordFile(
     timeout: 30000,
     ...(options || {}),
   });
+}
+
+/** 按直播间汇总录像文件数量，用于文件管理页的直播间维度入口。 */
+export async function listRecordFileRoomSummary(options?: {
+  [key: string]: any;
+}) {
+  return request<API.RecordFileRoomSummary[]>(
+    REQUEST_HOST + '/v1/RecordFile/roomSummary',
+    {
+      method: 'POST',
+      data: {},
+      ...(options || {}),
+    },
+  );
 }
 
 /**

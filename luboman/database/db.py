@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from peewee import JOIN
+from peewee import JOIN, fn
 from playhouse.shortcuts import model_to_dict
 
 from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
@@ -310,6 +310,60 @@ class DB:
                 record['_video_real'] = os.path.realpath(record.get('video') or '')
 
             return records, total
+
+    @classmethod
+    def list_record_file_room_summary(cls):
+        """按直播间汇总录像文件数量，用于文件管理页的直播间维度入口。"""
+        with db.connection_context():
+            summary_map = {}
+            rooms = LiveRoom.select().order_by(
+                LiveRoom.live_state.desc(),
+                LiveRoom.last_living_time.desc(),
+                LiveRoom.id.asc(),
+            )
+            for room in rooms:
+                summary_map[room.id] = {
+                    'live_room_id': room.id,
+                    'room_name': room.room_name,
+                    'room_platform': room.room_platform,
+                    'room_owner': room.room_owner,
+                    'room_url': room.room_url,
+                    'live_state': room.live_state,
+                    'file_count': 0,
+                    'last_begin_time': None,
+                }
+
+            rows = (
+                RecordFile.select(
+                    RecordFile.live_room_id,
+                    fn.COUNT(RecordFile.id).alias('file_count'),
+                    fn.MAX(RecordFile.begin_time).alias('last_begin_time'),
+                )
+                .group_by(RecordFile.live_room_id)
+                .dicts()
+            )
+
+            orphaned = []
+            for row in rows:
+                room_id = row.get('live_room_id')
+                target = summary_map.get(room_id)
+                if target is None:
+                    target = {
+                        'live_room_id': room_id,
+                        'room_name': f'未关联直播间 #{room_id}' if room_id is not None else '未关联直播间',
+                        'room_platform': None,
+                        'room_owner': None,
+                        'room_url': None,
+                        'live_state': None,
+                        'file_count': 0,
+                        'last_begin_time': None,
+                    }
+                    orphaned.append(target)
+
+                target['file_count'] = row.get('file_count') or 0
+                target['last_begin_time'] = row.get('last_begin_time')
+
+            return list(summary_map.values()) + orphaned
 
     @classmethod
     def delete_record_files_under_path(cls, path_prefix):

@@ -245,6 +245,10 @@ def _list_record_files_data(params):
     return entries, total, page
 
 
+def _list_record_file_room_summary_data():
+    return DB.list_record_file_room_summary()
+
+
 def _resolve_publish_video_path(raw_path, video_dir):
     """规范化并校验路径必须位于 video 目录下，返回规范化绝对路径。"""
     if not raw_path or not isinstance(raw_path, str):
@@ -636,6 +640,15 @@ async def list_record_file(request):
         params = await request.json()
         page_entries, total, page = await run_db(_list_record_files_data, params)
         return resp_page_list(page_entries, total, page)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/RecordFile/roomSummary')
+async def list_record_file_room_summary(request):
+    try:
+        return success(await run_db(_list_record_file_room_summary_data))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

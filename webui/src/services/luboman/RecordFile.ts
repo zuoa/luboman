@@ -33,6 +33,11 @@ export async function listRecordFileRoomSummary(options?: {
   );
 }
 
+/** 录像文件在线播放地址。 */
+export function getRecordFileStreamUrl(id: number) {
+  return `${REQUEST_HOST}/v1/RecordFile/stream/${id}`;
+}
+
 /**
  * 手动发布录像到 B 站（异步排队上传，立即返回 task_id）。
  * body：bili_upload_template_id(必填) + (file_ids | videos 二选一) +

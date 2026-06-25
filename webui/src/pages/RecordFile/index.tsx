@@ -1,5 +1,9 @@
 import services from '@/services/luboman';
-import { CloudUploadOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  CloudUploadOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
 import {
   ActionType,
   ModalForm,
@@ -13,6 +17,7 @@ import {
   Badge,
   Button,
   Empty,
+  Modal,
   Space,
   Spin,
   Tag,
@@ -28,8 +33,12 @@ import React, {
 } from 'react';
 import styles from './index.less';
 
-const { listRecordFile, listRecordFileRoomSummary, publishRecordFileToBili } =
-  services.RecordFile;
+const {
+  getRecordFileStreamUrl,
+  listRecordFile,
+  listRecordFileRoomSummary,
+  publishRecordFileToBili,
+} = services.RecordFile;
 const { listLiveRoom } = services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
 
@@ -139,6 +148,7 @@ const RecordFileList: React.FC = () => {
   const [selectedRows, setSelectedRows] = useState<API.RecordFileInfo[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<API.RecordFileInfo[]>([]);
+  const [playTarget, setPlayTarget] = useState<API.RecordFileInfo>();
 
   const activeRoomId =
     activeRoomKey === ALL_ROOM_KEY ? undefined : activeRoomKey;
@@ -160,6 +170,8 @@ const RecordFileList: React.FC = () => {
   const hasRecordingSelection = selectedRows.some(
     (row) => !isRecordCompleted(row),
   );
+  const playUrl =
+    playTarget?.id != null ? getRecordFileStreamUrl(playTarget.id) : undefined;
 
   const publishDefaultRoomId = useMemo(() => {
     if (activeRoomId != null) return activeRoomId;
@@ -193,6 +205,11 @@ const RecordFileList: React.FC = () => {
     if (!rows.length) return;
     setPublishTarget(rows);
     setPublishOpen(true);
+  };
+
+  const openPlayer = (row: API.RecordFileInfo) => {
+    if (row.id == null || !row.exists || !isRecordCompleted(row)) return;
+    setPlayTarget(row);
   };
 
   const clearSelection = () => {
@@ -365,14 +382,20 @@ const RecordFileList: React.FC = () => {
     {
       title: '操作',
       valueType: 'option',
-      width: 70,
+      width: 120,
       search: false,
-      render: (_, r) =>
-        isRecordCompleted(r) ? (
-          <a onClick={() => openPublish([r])}>发布</a>
-        ) : (
-          <span className={styles.muted}>录制中</span>
-        ),
+      render: (_, r) => {
+        const canOperate = r.id != null && r.exists && isRecordCompleted(r);
+        if (!canOperate) {
+          return <span className={styles.muted}>不可操作</span>;
+        }
+        return (
+          <Space size={8}>
+            <a onClick={() => openPlayer(r)}>播放</a>
+            <a onClick={() => openPublish([r])}>发布</a>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -491,6 +514,19 @@ const RecordFileList: React.FC = () => {
                 刷新
               </Button>,
               <Button
+                key="play"
+                icon={<PlayCircleOutlined />}
+                disabled={
+                  selectedRows.length !== 1 ||
+                  selectedRows[0]?.id == null ||
+                  !selectedRows[0]?.exists ||
+                  !isRecordCompleted(selectedRows[0])
+                }
+                onClick={() => openPlayer(selectedRows[0])}
+              >
+                播放
+              </Button>,
+              <Button
                 key="publish"
                 type="primary"
                 icon={<CloudUploadOutlined />}
@@ -540,6 +576,26 @@ const RecordFileList: React.FC = () => {
           />
         </div>
       </div>
+
+      <Modal
+        title={playTarget?.filename || '在线播放'}
+        width={900}
+        open={!!playTarget}
+        footer={null}
+        destroyOnClose
+        onCancel={() => setPlayTarget(undefined)}
+      >
+        {playUrl ? (
+          <video
+            className={styles.player}
+            src={playUrl}
+            controls
+            playsInline
+            preload="metadata"
+          />
+        ) : null}
+        <div className={styles.playerMeta}>{playTarget?.video || ''}</div>
+      </Modal>
 
       <ModalForm
         title={`发布到 B 站（${publishTarget.length} 个文件）`}

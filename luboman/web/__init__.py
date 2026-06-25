@@ -4,6 +4,7 @@ import functools
 import json
 import logging
 import os
+from urllib.parse import quote
 
 import aiohttp_cors
 from aiohttp import web
@@ -275,6 +276,25 @@ def _resolve_publish_video_path(raw_path, video_dir):
     if not os.path.isfile(real):
         raise ValueError(f'file not found or not a regular file: {raw_path}')
     return real
+
+
+def _resolve_record_file_stream_path(file_id):
+    """按录像记录 ID 解析可在线播放的文件路径。"""
+    if not file_id:
+        raise ValueError('id is required')
+
+    try:
+        record = RecordFile.get_by_id_(file_id)
+    except RecordFile.DoesNotExist:
+        raise ValueError(f'record file not found: {file_id}')
+
+    if record.status and record.status != RECORD_FILE_STATUS_COMPLETED:
+        raise ValueError(f'record file is still recording: {file_id}')
+    if not record.video:
+        raise ValueError(f'record file has no video path: {file_id}')
+
+    video_dir = os.path.realpath(get_video_dir())
+    return _resolve_publish_video_path(record.video, video_dir)
 
 
 def _validate_publish_video_path(raw_path, video_dir, min_size):
@@ -663,6 +683,25 @@ async def list_record_file(request):
 async def list_record_file_room_summary(request):
     try:
         return success(await run_db(_list_record_file_room_summary_data))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.get('/v1/RecordFile/stream/{file_id}')
+async def stream_record_file(request):
+    try:
+        file_id = _as_int(request.match_info.get('file_id'))
+        path = await run_db(_resolve_record_file_stream_path, file_id)
+        return web.FileResponse(
+            path,
+            headers={
+                'Accept-Ranges': 'bytes',
+                'Content-Disposition': f"inline; filename*=UTF-8''{quote(os.path.basename(path))}",
+            },
+        )
+    except ValueError as e:
+        return error(1, str(e))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

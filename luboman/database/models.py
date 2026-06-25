@@ -22,7 +22,27 @@ db_name = os.environ.get('DATABASE_NAME', 'luboman')
 db_user = os.environ.get('DATABASE_USER', 'luboman')
 db_password = os.environ.get('DATABASE_PASSWORD', 'luboman@2024#Hangzhou')
 
-db = PooledPostgresqlExtDatabase(db_name, host=db_host, port=db_port, user=db_user, password=db_password, stale_timeout=300, max_connections=100)
+# 连接级超时，确保任何 DB 调用都"快速失败"而非无限挂起：
+# - connect_timeout：建连阶段卡住时快速失败（秒）
+# - statement_timeout：单条查询在服务端执行的超时（毫秒），慢查询快速失败
+# - keepalives*：让 OS 在约 60s 内探测到被防火墙/对端悄悄掐断的死连接并快速失败，
+#   避免连接池复用一个已死 socket 导致查询挂死到 OS 级 TCP 超时（十几分钟）。
+# 三者缺一不可：stale_timeout 是懒回收，挡不住"死而未回收"的连接。
+# 全部经环境变量可覆盖。
+db_connect_timeout = int(os.environ.get('DATABASE_CONNECT_TIMEOUT', 5))
+db_statement_timeout = int(os.environ.get('DATABASE_STATEMENT_TIMEOUT', 15000))
+db = PooledPostgresqlExtDatabase(
+    db_name, host=db_host, port=db_port, user=db_user, password=db_password,
+    stale_timeout=300, max_connections=100,
+    connect_params={
+        'connect_timeout': db_connect_timeout,
+        'options': f'-c statement_timeout={db_statement_timeout}',
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 3,
+    },
+)
 
 
 class BaseModel(Model):

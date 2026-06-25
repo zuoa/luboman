@@ -301,9 +301,12 @@ def _cached(key, ttl, stale, producer):
         finally:
             rebuild_lock.release()
 
-    # 没抢到重建锁：等重建者完成后重读；仍未就绪（重建者失败）则降级自重建
-    with rebuild_lock:
-        pass
+    # 没抢到重建锁：等重建者完成后重读；仍未就绪（重建者失败）则降级自重建。
+    # 等待设上限：万一持有者因 DB 挂死等原因永不释放锁，本请求也不会被永久拖死，
+    # 而是超时后降级走重读/自重建（DB 已加 statement_timeout/keepalive，自重建同样不会无限挂）。
+    got = rebuild_lock.acquire(timeout=30)
+    if got:
+        rebuild_lock.release()
     with _scan_cache_lock:
         entry = _scan_cache.get(key)
         if entry is not None and entry['value'] is not None and time.monotonic() < entry['stale_until']:

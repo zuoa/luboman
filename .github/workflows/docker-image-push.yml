@@ -43,7 +43,7 @@ jobs:
   # 前端镜像：构建上下文为 webui/，镜像名固定为 zuoa/luboman-webui（与 docker-compose 引用一致）。
   # 注意：该包当前由旧仓库 zuoa/luboman-webui 发布，需在 GitHub 包设置中给本仓库 zuoa/luboman 授予 Write 权限。
   build-webui:
-    name: Build & push frontend image (luboman-webui)
+    name: Build & push frontend image (luboman-web)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,7 +61,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/luboman-webui
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/luboman-web
       - name: Build and push Docker image
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:

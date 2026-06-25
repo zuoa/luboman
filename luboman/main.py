@@ -34,6 +34,11 @@ def check_runtime_state():
     logger.info("检查运行状态")
     try:
         local_video_file_remain_days = int(config.get("local_video_file_remain_days", 3))
+        stale_completed = DB.cleanup_stale_recording_files(
+            config.get("record_file_stale_timeout_seconds", 3600)
+        )
+        if stale_completed:
+            logger.info(f"修复了 {stale_completed} 条超时录制中文件记录")
 
         video_dir = get_video_dir()
 

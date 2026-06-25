@@ -1,3 +1,9 @@
+import services from '@/services/luboman';
+import {
+  InfoCircleOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+} from '@ant-design/icons';
 import {
   PageContainer,
   ProCard,
@@ -7,13 +13,7 @@ import {
   ProFormText,
 } from '@ant-design/pro-components';
 import { Button, Space, message } from 'antd';
-import {
-  InfoCircleOutlined,
-  ReloadOutlined,
-  SaveOutlined,
-} from '@ant-design/icons';
 import { useState } from 'react';
-import services from '@/services/luboman';
 import styles from './index.less';
 
 const ConfigPage: React.FC = () => {
@@ -28,6 +28,7 @@ const ConfigPage: React.FC = () => {
     segment_duration: '01:00:00',
     filtering_threshold_file_size: 10,
     local_video_file_remain_days: 3,
+    record_file_stale_timeout_seconds: 3600,
     douyin_cookies: '',
     afreecatv_username: '',
     afreecatv_password: '',
@@ -103,8 +104,8 @@ const ConfigPage: React.FC = () => {
           <div className={styles.tip}>
             <InfoCircleOutlined />
             <span>
-              文件名格式支持变量：{'{room_name}'} - 房间名，{'{title}'} - 直播标题，
-              %Y_%m_%d_%H_%M_%S - 时间格式
+              文件名格式支持变量：{'{room_name}'} - 房间名，{'{title}'} -
+              直播标题， %Y_%m_%d_%H_%M_%S - 时间格式
             </span>
           </div>
           <div className={styles.fieldGroup}>
@@ -130,6 +131,14 @@ const ConfigPage: React.FC = () => {
               min={1}
               max={365}
               extra="超过指定天数的文件将被自动清理"
+            />
+            <ProFormDigit
+              name="record_file_stale_timeout_seconds"
+              label="录制状态超时（秒）"
+              placeholder="3600"
+              min={60}
+              max={86400}
+              extra="录制中文件超过该时间无写入活动时自动标记为已完成"
             />
           </div>
         </ProCard>

@@ -35,6 +35,8 @@ const { listBiliUploadTemplate } = services.BiliUploadTemplate;
 
 const ALL_ROOM_KEY = 'all';
 type RoomFilterKey = typeof ALL_ROOM_KEY | number;
+const RECORD_STATUS_RECORDING = 'RECORDING';
+const RECORD_STATUS_COMPLETED = 'COMPLETED';
 
 // 平台码 → 中文名（用于筛选项 + 来源展示）。Record 类型允许用字符串下标取值。
 const PLATFORM_VALUE_ENUM: Record<string, { text: string }> = {
@@ -64,6 +66,16 @@ function humanSize(bytes?: number | null): string {
   return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
+function humanDuration(totalSeconds?: number | null): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds || 0));
+  const hr = Math.floor(seconds / 3600);
+  const min = Math.floor((seconds % 3600) / 60);
+  const sec = seconds % 60;
+  if (hr > 0) return `${hr}时${min.toString().padStart(2, '0')}分`;
+  if (min > 0) return `${min}分${sec.toString().padStart(2, '0')}秒`;
+  return `${sec}秒`;
+}
+
 /** 毫秒时间戳 → 相对时间 */
 function relFromMs(ms: number): string {
   const diff = Date.now() - ms;
@@ -89,6 +101,10 @@ function roomSummaryName(room: API.RecordFileRoomSummary): string {
     room.room_name ||
     (room.live_room_id ? `#${room.live_room_id}` : '未命名直播间')
   );
+}
+
+function isRecordCompleted(row: API.RecordFileInfo): boolean {
+  return (row.status || RECORD_STATUS_COMPLETED) === RECORD_STATUS_COMPLETED;
 }
 
 /** 防御性渲染 upload_info：尝试取 bvid 拼链接，否则仅显示「已投稿」 */
@@ -140,6 +156,9 @@ const RecordFileList: React.FC = () => {
   const totalFileCount = useMemo(
     () => roomSummary.reduce((sum, room) => sum + (room.file_count || 0), 0),
     [roomSummary],
+  );
+  const hasRecordingSelection = selectedRows.some(
+    (row) => !isRecordCompleted(row),
   );
 
   const publishDefaultRoomId = useMemo(() => {
@@ -194,6 +213,10 @@ const RecordFileList: React.FC = () => {
   const handlePublish = async (values: any) => {
     const { bili_upload_template_id, live_room_id, room_data } = values;
     const target = publishTarget;
+    if (target.some((row) => !isRecordCompleted(row))) {
+      message.warning('录制中的文件不能发布');
+      return false;
+    }
     // 后端单次调用只接受 file_ids 或 videos：全部有 id 用 file_ids，否则统一用 video 路径
     const allHaveId = target.length > 0 && target.every((r) => r.id != null);
     const roomData = room_data
@@ -281,6 +304,25 @@ const RecordFileList: React.FC = () => {
       ),
     },
     {
+      title: '状态',
+      dataIndex: 'status',
+      width: 90,
+      search: false,
+      render: (_, r) =>
+        r.status === RECORD_STATUS_RECORDING ? (
+          <Tag color="processing">录制中</Tag>
+        ) : (
+          <Tag color="success">已完成</Tag>
+        ),
+    },
+    {
+      title: '录制时长',
+      dataIndex: 'duration_seconds',
+      width: 110,
+      search: false,
+      render: (_, r) => humanDuration(r.duration_seconds),
+    },
+    {
       title: '大小',
       dataIndex: 'size',
       width: 100,
@@ -325,7 +367,12 @@ const RecordFileList: React.FC = () => {
       valueType: 'option',
       width: 70,
       search: false,
-      render: (_, r) => <a onClick={() => openPublish([r])}>发布</a>,
+      render: (_, r) =>
+        isRecordCompleted(r) ? (
+          <a onClick={() => openPublish([r])}>发布</a>
+        ) : (
+          <span className={styles.muted}>录制中</span>
+        ),
     },
   ];
 
@@ -447,7 +494,10 @@ const RecordFileList: React.FC = () => {
                 key="publish"
                 type="primary"
                 icon={<CloudUploadOutlined />}
-                disabled={!selectedRows.length}
+                disabled={!selectedRows.length || hasRecordingSelection}
+                title={
+                  hasRecordingSelection ? '录制中的文件不能发布' : undefined
+                }
                 onClick={() => openPublish(selectedRows)}
               >
                 发布到 B 站

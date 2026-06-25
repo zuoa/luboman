@@ -23,7 +23,7 @@ from luboman.core.event import EventManager, Event, EventType
 from luboman.core.upload import resolve_bili_uploader, upload
 from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename, get_public_dir, download_file
 from luboman.database.db import DB
-from luboman.database.models import RecordFile, BiliUploadTemplate, BiliAccount
+from luboman.database.models import BiliUploadTemplate, BiliAccount
 
 logger = logging.getLogger('luboman')
 
@@ -254,7 +254,7 @@ class LiveBase(object):
 
             try:
                 # 阻塞下载，流没中断，会一直录制
-                ret, filepath = self.record()
+                ret, filepath = self.record(recording_context)
             except Exception as e:
                 logger.exception(f'{self.log_prefix} :  Uncaught exception:{e}')
             finally:
@@ -268,17 +268,22 @@ class LiveBase(object):
 
                 recording_context["end_time"] = datetime.datetime.now()
                 recording_context["video"] = filepath
-                record_file_list.append(recording_context)
-                self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
-
                 recording_context['live_room_id'] = self.room_data.get('id')
+                record_file_list.append(recording_context)
 
-                # 数据库记录
+                # 数据库记录：录制开始时已创建，这里只更新状态、结束时间和时长。
                 try:
                     logger.info(recording_context)
-                    RecordFile.create_(**recording_context)
+                    record_id = recording_context.get('id')
+                    if record_id:
+                        DB.complete_record_file(record_id, recording_context)
+                    else:
+                        created = DB.create_record_file_started(recording_context)
+                        DB.complete_record_file(created.get('id'), recording_context)
                 except Exception as e:
                     logger.exception(f'{self.log_prefix} :  | Uncaught exception:{e}')
+
+                self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
 
                 try:
                     ## 录像最后一个时间减去第一个起始时间大于24小时
@@ -290,6 +295,14 @@ class LiveBase(object):
                     logger.exception(f'{self.log_prefix} :  Uncaught exception:{ex}')
 
             else:
+                record_id = recording_context.get('id')
+                if record_id:
+                    try:
+                        recording_context["end_time"] = datetime.datetime.now()
+                        DB.complete_record_file(record_id, recording_context)
+                    except Exception as e:
+                        logger.exception(f'{self.log_prefix} :  更新失败录制记录失败:{e}')
+
                 if retry_count < 3:
                     retry_count += 1
                     logger.info(f'{self.log_prefix} :  获取流失败：重试次数 {retry_count} / 3，等待 3 秒')
@@ -322,7 +335,7 @@ class LiveBase(object):
     def check_live(self, is_check_status=False):
         raise NotImplementedError()
 
-    def record(self):
+    def record(self, recording_context=None):
         logger.debug(f'{self.log_prefix} :  进入record()方法，检查直播状态')
         
         if not self.check_live():
@@ -337,9 +350,21 @@ class LiveBase(object):
             
         filepath = self.get_filepath()
         logger.debug(f'{self.log_prefix} :  录制文件路径: {filepath}')
+
+        if recording_context is not None:
+            recording_context['live_room_id'] = self.room_data.get('id')
+            recording_context['video'] = filepath
+            try:
+                created = DB.create_record_file_started(recording_context)
+                recording_context['id'] = created.get('id')
+                logger.info(f'{self.log_prefix} :  录制文件记录已创建: {recording_context["id"]}')
+            except Exception as e:
+                logger.exception(f'{self.log_prefix} :  创建录制文件记录失败:{e}')
         
         try:
-            self.ffmpeg_download(filepath)
+            if not self.ffmpeg_download(filepath):
+                logger.error(f'{self.log_prefix} :  ffmpeg 录制失败: {filepath}')
+                return False, filepath
             rename(filepath)
             logger.info(f'{self.log_prefix} :  片段录制结束: {filepath}')
             return True, filepath

@@ -140,6 +140,8 @@ declare namespace API {
     room_platform?: string | null;
     begin_time?: string | null;
     end_time?: string | null;
+    status?: 'RECORDING' | 'COMPLETED' | string | null;
+    duration_seconds?: number;
     series_code?: string | null;
     /** B 站上传结果（JSON，结构不定；未发布为 null） */
     upload_info?: any | null;

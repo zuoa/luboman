@@ -20,7 +20,7 @@ from luboman.core.runtime import (
 )
 from luboman.core.upload import BiliBili, Data, resolve_bili_uploader
 from luboman.core.utils import get_video_dir
-from luboman.database.db import DB
+from luboman.database.db import DB, RECORD_FILE_STATUS_COMPLETED, RECORD_FILE_STATUS_RECORDING
 from luboman.database.models import (
     BiliAccount,
     BiliUploadTemplate,
@@ -213,14 +213,24 @@ def _list_record_files_data(params):
     entries = []
     for record in records:
         path = record.get('_video_real') or os.path.realpath(record.get('video') or '')
+        status = record.get('status')
         size = mtime = None
         exists = False
+        stat_path = path
         if path:
             try:
-                st = os.stat(path)
+                st = os.stat(stat_path)
                 exists, size, mtime = True, st.st_size, st.st_mtime
             except OSError:
-                exists, size, mtime = False, None, None
+                if status == RECORD_FILE_STATUS_RECORDING:
+                    try:
+                        stat_path = f'{path}.part'
+                        st = os.stat(stat_path)
+                        exists, size, mtime = True, st.st_size, st.st_mtime
+                    except OSError:
+                        exists, size, mtime = False, None, None
+                else:
+                    exists, size, mtime = False, None, None
         entries.append({
             'id': record.get('id'),
             'video': path,
@@ -234,6 +244,8 @@ def _list_record_files_data(params):
             'room_platform': record.get('room_platform'),
             'begin_time': record.get('begin_time'),
             'end_time': record.get('end_time'),
+            'status': status,
+            'duration_seconds': record.get('duration_seconds') or 0,
             'series_code': record.get('series_code'),
             'upload_info': record.get('upload_info'),
         })
@@ -282,6 +294,8 @@ def _resolve_publish_video_paths_from_ids(file_ids):
                 record = RecordFile.get_by_id_(file_id)
             except RecordFile.DoesNotExist:
                 raise ValueError(f'record file not found: {file_id}')
+            if record.status and record.status != RECORD_FILE_STATUS_COMPLETED:
+                raise ValueError(f'record file is still recording: {file_id}')
             if not record.video:
                 raise ValueError(f'record file has no video path: {file_id}')
             paths.append(record.video)

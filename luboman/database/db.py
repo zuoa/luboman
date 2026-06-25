@@ -11,6 +11,9 @@ from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate,
 
 logger = logging.getLogger('luboman')
 
+RECORD_FILE_STATUS_RECORDING = 'RECORDING'
+RECORD_FILE_STATUS_COMPLETED = 'COMPLETED'
+
 
 def struct_time_to_datetime(date: time.struct_time):
     return datetime.fromtimestamp(time.mktime(date))
@@ -31,9 +34,32 @@ class DB:
         BiliAccount.create_table(safe=True)
         BiliUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
+        cls._ensure_record_file_schema()
         # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
         # 不会为已存在的表补索引）。大表上建索引耗时，放后台守护线程异步进行，绝不阻塞/阻断启动。
         threading.Thread(target=cls._ensure_record_file_index, daemon=True, name='recordfile-index').start()
+
+    @classmethod
+    def _ensure_record_file_schema(cls):
+        """兼容旧库：补齐 RecordFile 录制状态字段，并允许 end_time 在录制中为空。"""
+        table = RecordFile._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    f"ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT '{RECORD_FILE_STATUS_COMPLETED}'"
+                )
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS duration_seconds INTEGER NOT NULL DEFAULT 0'
+                )
+                db.execute_sql(f'ALTER TABLE "{table}" ALTER COLUMN end_time DROP NOT NULL')
+            logger.info('RecordFile 录制状态字段就绪')
+        except Exception:
+            logger.warning(
+                '补齐 RecordFile 录制状态字段失败，正在录制文件可能无法进入文件管理列表',
+                exc_info=True,
+            )
 
     @classmethod
     def _ensure_record_file_index(cls):
@@ -242,6 +268,109 @@ class DB:
         with db.connection_context():
             return [model_to_dict(item) for item in BiliUploadTemplate.select()]
 
+    @staticmethod
+    def _record_duration_seconds(begin_time, end_time=None):
+        if not begin_time:
+            return 0
+        end_time = end_time or datetime.now()
+        try:
+            return max(0, int((end_time - begin_time).total_seconds()))
+        except Exception:
+            return 0
+
+    @classmethod
+    def create_record_file_started(cls, data):
+        """录制片段开始时立即创建文件记录，供文件管理页展示 RECORDING 状态。"""
+        with db.connection_context():
+            payload = cls.filter_model_data(RecordFile, data)
+            payload.setdefault('begin_time', datetime.now())
+            payload.setdefault('end_time', None)
+            payload['status'] = RECORD_FILE_STATUS_RECORDING
+            payload['duration_seconds'] = 0
+            record = RecordFile.create(**payload)
+            return model_to_dict(record)
+
+    @classmethod
+    def complete_record_file(cls, record_id, data=None):
+        """录制片段结束时把记录标记为 COMPLETED，并固化结束时间与时长。"""
+        if not record_id:
+            return 0
+
+        data = data or {}
+        end_time = data.get('end_time') or datetime.now()
+
+        with db.connection_context():
+            try:
+                record = RecordFile.get_by_id(record_id)
+            except RecordFile.DoesNotExist:
+                return 0
+
+            update_data = cls.filter_model_data(
+                RecordFile,
+                data,
+                allowed_columns=['video', 'end_time', 'duration_seconds', 'status', 'upload_info', 'series_code'],
+            )
+            update_data['end_time'] = end_time
+            update_data['duration_seconds'] = cls._record_duration_seconds(record.begin_time, end_time)
+            update_data['status'] = RECORD_FILE_STATUS_COMPLETED
+
+            return (
+                RecordFile.update(**update_data)
+                .where(RecordFile.id == record_id)
+                .execute()
+            )
+
+    @classmethod
+    def cleanup_stale_recording_files(cls, timeout_seconds=3600):
+        """把长时间无文件写入活动的 RECORDING 记录收敛为 COMPLETED。
+
+        判断依据优先使用最终文件或 .part 文件的 mtime。只看 begin_time 会误伤长直播；
+        mtime 超过 timeout_seconds 未变化才认为录制进程已经异常退出。
+        """
+        try:
+            timeout_seconds = max(60, int(timeout_seconds or 3600))
+        except (TypeError, ValueError):
+            timeout_seconds = 3600
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=timeout_seconds)
+        completed = 0
+
+        with db.connection_context():
+            query = RecordFile.select().where(RecordFile.status == RECORD_FILE_STATUS_RECORDING)
+            for record in query:
+                latest_mtime = None
+                for path in (record.video, f'{record.video}.part' if record.video else None):
+                    if not path:
+                        continue
+                    try:
+                        mtime = os.path.getmtime(path)
+                    except OSError:
+                        continue
+                    latest_mtime = max(latest_mtime or mtime, mtime)
+
+                if latest_mtime is not None:
+                    latest_dt = datetime.fromtimestamp(latest_mtime)
+                    if latest_dt > cutoff:
+                        continue
+                    end_time = latest_dt
+                else:
+                    if record.begin_time and record.begin_time > cutoff:
+                        continue
+                    end_time = now
+
+                duration_seconds = cls._record_duration_seconds(record.begin_time, end_time)
+                completed += (
+                    RecordFile.update(
+                        status=RECORD_FILE_STATUS_COMPLETED,
+                        end_time=end_time,
+                        duration_seconds=duration_seconds,
+                    )
+                    .where(RecordFile.id == record.id)
+                    .execute()
+                )
+
+        return completed
+
     @classmethod
     def list_record_file(cls, filters=None, page=None, page_size=None):
         """查询录像文件记录（纯数据库驱动，过滤+排序+分页全部下推 SQL）。
@@ -305,9 +434,15 @@ class DB:
 
             for record in records:
                 room = room_map.get(record.get('live_room_id')) or {}
+                record_status = record.get('status') or RECORD_FILE_STATUS_COMPLETED
                 record['room_name'] = room.get('room_name')
                 record['room_platform'] = room.get('room_platform')
                 record['_video_real'] = os.path.realpath(record.get('video') or '')
+                record['status'] = record_status
+                record['duration_seconds'] = cls._record_duration_seconds(
+                    record.get('begin_time'),
+                    record.get('end_time') if record_status != RECORD_FILE_STATUS_RECORDING else None,
+                )
 
             return records, total
 

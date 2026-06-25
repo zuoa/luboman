@@ -145,8 +145,10 @@ class RecordFile(BaseModel):
     id = AutoField(primary_key=True)  # 自增主键
     live_room_id = IntegerField()
     begin_time = DateTimeField()
-    end_time = DateTimeField()
+    end_time = DateTimeField(null=True)
     video = CharField()
+    status = CharField(default='COMPLETED')  # RECORDING / COMPLETED
+    duration_seconds = IntegerField(default=0)
     upload_info = JSONField(null=True)
     series_code = CharField(null=True)
 

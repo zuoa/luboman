@@ -282,8 +282,6 @@ class AsyncLubomanApplication:
         """定期清理任务"""
         while self.running:
             try:
-                await asyncio.sleep(1800)  # 30分钟执行一次
-                
                 if not self.running:
                     break
                 
@@ -299,6 +297,8 @@ class AsyncLubomanApplication:
                 break
             except Exception as e:
                 logger.error(f"定期清理失败: {e}")
+
+            await asyncio.sleep(1800)  # 30分钟执行一次
 
     def _account_check_interval(self):
         """账号登录态巡检间隔（秒），可通过配置 bili_account_check_interval 覆盖，默认 6 小时。"""
@@ -350,6 +350,12 @@ class AsyncLubomanApplication:
         """清理旧文件（同步版本）"""
         try:
             local_video_file_remain_days = int(config.get("local_video_file_remain_days", 3))
+            stale_completed = DB.cleanup_stale_recording_files(
+                config.get("record_file_stale_timeout_seconds", 3600)
+            )
+            if stale_completed:
+                logger.info(f"修复了 {stale_completed} 条超时录制中文件记录")
+
             video_dir = get_video_dir()
             
             if not os.path.exists(video_dir):

@@ -1,8 +1,9 @@
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from peewee import JOIN
 from playhouse.shortcuts import model_to_dict
 
 from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
@@ -29,6 +30,13 @@ class DB:
         BiliAccount.create_table(safe=True)
         BiliUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
+        # 兼容已有库：显式补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
+        # 不会为已存在的表补索引）。加速"按房间过滤 + begin_time 倒序分页"的列表查询，防表膨胀后变慢
+        table = RecordFile._meta.table_name
+        db.execute_sql(
+            f'CREATE INDEX IF NOT EXISTS "idx_{table}_live_room_begin" '
+            f'ON "{table}" (live_room_id, begin_time)'
+        )
 
     @staticmethod
     def filter_model_data(model, data, allowed_columns=None, include_id=False):
@@ -211,14 +219,15 @@ class DB:
 
     @classmethod
     def list_record_file(cls, filters=None, page=None, page_size=None):
-        """查询录像文件记录。
+        """查询录像文件记录（纯数据库驱动，过滤+排序+分页全部下推 SQL）。
 
-        服务端目前只按 live_room_id 做精确过滤（最具选择性、且与直播间强绑定）；
-        room_name / platform / date / keyword / exists_only 这类需要结合磁盘扫描或
-        跨表字段判断的筛选交给 Web 合并层统一处理，避免 SQL 过滤与合并层过滤语义不一致。
+        列表不再做全盘 os.walk 合并磁盘文件（曾导致请求挂死）。磁盘信息（exists/size/mtime）
+        由 Web 层仅对本页结果逐个 stat 补齐。exists 过滤无法在 SQL 表达（依赖磁盘），
+        也由 Web 层对本页处理；配合定期清理死记录，DB 行≈磁盘文件，分页 total 仍近似准确。
 
-        每条记录会合并所属直播间的 room_name / room_platform，便于列表直接展示。
-        page / page_size 为可选分页；不传时返回全部匹配记录，供 Web 层合并磁盘文件后再分页。
+        支持 filters：live_room_id（精确）、date（YYYY-MM-DD，按 begin_time 日期）、
+        room_name（LiveRoom.room_name 模糊）、platform（LiveRoom.room_platform 精确）、
+        keyword（video 路径或 room_name 模糊）。room_name/platform/keyword 经 LEFT JOIN LiveRoom。
         返回 (records, total)，total 为匹配的数据库记录总数（分页前）。
         """
         filters = filters or {}
@@ -226,6 +235,35 @@ class DB:
             query = RecordFile.select()
             if filters.get('live_room_id') is not None:
                 query = query.where(RecordFile.live_room_id == filters['live_room_id'])
+
+            date_str = (filters.get('date') or '').strip()
+            if date_str:
+                try:
+                    day = datetime.strptime(date_str, '%Y-%m-%d')
+                    day_start = datetime(day.year, day.month, day.day)
+                    day_end = day_start + timedelta(days=1)
+                    query = query.where(
+                        (RecordFile.begin_time >= day_start) & (RecordFile.begin_time < day_end)
+                    )
+                except ValueError:
+                    pass
+
+            room_name = (filters.get('room_name') or '').strip()
+            platform = (filters.get('platform') or '').strip()
+            keyword = (filters.get('keyword') or '').strip()
+            # room_name / platform / keyword(房间名) 需要关联 LiveRoom
+            if room_name or platform or keyword:
+                query = query.join(
+                    LiveRoom, JOIN.LEFT_OUTER, on=(RecordFile.live_room_id == LiveRoom.id)
+                )
+                if room_name:
+                    query = query.where(LiveRoom.room_name.contains(room_name))
+                if platform:
+                    query = query.where(LiveRoom.room_platform == platform)
+                if keyword:
+                    query = query.where(
+                        RecordFile.video.contains(keyword) | LiveRoom.room_name.contains(keyword)
+                    )
 
             total = query.count()
             query = query.order_by(RecordFile.begin_time.desc())
@@ -244,10 +282,17 @@ class DB:
                 room = room_map.get(record.get('live_room_id')) or {}
                 record['room_name'] = room.get('room_name')
                 record['room_platform'] = room.get('room_platform')
-                # 预计算规范化绝对路径，供 Web 合并层在缓存命中时直接复用，免去逐条 realpath
                 record['_video_real'] = os.path.realpath(record.get('video') or '')
 
             return records, total
+
+    @classmethod
+    def delete_record_files_under_path(cls, path_prefix):
+        """删除 video 路径位于 path_prefix 之下的录像记录（清理过期目录时配套清理死记录）。"""
+        if not path_prefix:
+            return 0
+        with db.connection_context():
+            return RecordFile.delete().where(RecordFile.video.startswith(path_prefix)).execute()
 
     @classmethod
     def get_first_bili_account(cls):

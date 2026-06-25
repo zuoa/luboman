@@ -584,24 +584,14 @@ class RecordFileDatabaseHelperTest(unittest.TestCase):
         self.assertNotEqual(page1[0]['id'], page2[0]['id'])
 
 
-class RecordFileListMergeTest(unittest.TestCase):
-    """列表合并策略：磁盘补齐未入库文件 + 与数据库路径去重。"""
+class RecordFileListDbDrivenTest(unittest.TestCase):
+    """列表为纯数据库驱动：直接展示 DB 记录，仅对本页 stat 磁盘补 exists/size；
+    exists_only 默认隐藏磁盘已不存在的记录；磁盘上未入库的文件不再出现。"""
 
-    def setUp(self):
-        import luboman.web as web
-        # 列表层带 TTL 缓存，每个用例使用各自的临时目录与 mock 数据，清理缓存避免互相污染
-        web._scan_cache.clear()
-
-    def _db_rows(self, records):
-        return records, len(records)
-
-    def _patched_list(self, web, video_dir, db_records):
-        return patch.object(web, 'get_video_dir', return_value=video_dir), \
-            patch.object(web.DB, 'list_record_file', return_value=self._db_rows(db_records))
-
-    def _base_record(self, video, **extra):
+    def _record(self, video, **extra):
         record = {
             'id': 1, 'live_room_id': 1, 'video': video,
+            '_video_real': os.path.realpath(video),
             'begin_time': None, 'end_time': None,
             'series_code': None, 'upload_info': None,
             'room_name': 'streamerA', 'room_platform': 'douyin',
@@ -609,169 +599,61 @@ class RecordFileListMergeTest(unittest.TestCase):
         record.update(extra)
         return record
 
-    def test_disk_only_files_returned_and_deduped_with_db(self):
+    def _patch_list(self, web, records):
+        return patch.object(web.DB, 'list_record_file', return_value=(records, len(records)))
+
+    def test_returns_db_record_with_disk_info(self):
         import luboman.web as web
-
         with tempfile.TemporaryDirectory() as tmp:
-            room_dir = os.path.join(tmp, 'video', 'douyin', '1-streamerA', '2026-01-01')
-            os.makedirs(room_dir)
-            tracked = os.path.join(room_dir, 'tracked.flv')
-            extra = os.path.join(room_dir, 'extra.mp4')
-            for path in (tracked, extra):
-                with open(path, 'wb') as fh:
-                    fh.write(b'x' * 10)
-
-            db_records = [self._base_record(tracked)]
-            get_dir_patch, list_patch = self._patched_list(web, os.path.join(tmp, 'video'), db_records)
-            with get_dir_patch, list_patch:
+            video = os.path.join(tmp, 'tracked.flv')
+            with open(video, 'wb') as fh:
+                fh.write(b'x' * 100)
+            with self._patch_list(web, [self._record(video)]):
                 entries, total, _ = web._list_record_files_data({})
-
-            by_video = {entry['video']: entry for entry in entries}
-            self.assertEqual(total, 2)
-            self.assertIn(os.path.realpath(tracked), by_video)
-            self.assertIn(os.path.realpath(extra), by_video)
-
-            tracked_entry = by_video[os.path.realpath(tracked)]
-            self.assertEqual(tracked_entry['source'], 'database')
-            self.assertTrue(tracked_entry['exists'])
-            self.assertEqual(tracked_entry['id'], 1)
-
-            extra_entry = by_video[os.path.realpath(extra)]
-            self.assertEqual(extra_entry['source'], 'disk')
-            self.assertEqual(extra_entry['room_platform'], 'douyin')
-            self.assertEqual(extra_entry['room_name'], 'streamerA')
+            self.assertEqual(total, 1)
+            self.assertEqual(len(entries), 1)
+            entry = entries[0]
+            self.assertEqual(entry['source'], 'database')
+            self.assertTrue(entry['exists'])
+            self.assertEqual(entry['size'], 100)
+            self.assertEqual(entry['id'], 1)
 
     def test_exists_only_hides_missing_db_records_by_default(self):
         import luboman.web as web
-
         with tempfile.TemporaryDirectory() as tmp:
-            video_dir = os.path.join(tmp, 'video')
-            os.makedirs(video_dir)
-            ghost = os.path.join(video_dir, 'ghost.flv')  # 数据库有记录但磁盘不存在
-            db_records = [self._base_record(ghost, id=9)]
-
-            get_dir_patch, list_patch = self._patched_list(web, video_dir, db_records)
-            with get_dir_patch, list_patch:
+            ghost = os.path.join(tmp, 'ghost.flv')  # 数据库有记录但磁盘不存在
+            records = [self._record(ghost, id=9)]
+            with self._patch_list(web, records):
+                # exists_only 默认 True：本页 stat 判 exists=False 后过滤掉；total 仍是 DB 计数
                 entries, total, _ = web._list_record_files_data({})
-            self.assertEqual(total, 0)
+            self.assertEqual(total, 1)
+            self.assertEqual(entries, [])
 
-            with get_dir_patch, list_patch:
+            with self._patch_list(web, records):
                 entries, total, _ = web._list_record_files_data({'exists_only': False})
             self.assertEqual(total, 1)
             self.assertFalse(entries[0]['exists'])
 
-
-class RecordFileCacheSWRTest(unittest.TestCase):
-    """stale-while-revalidate 缓存：命中即返回旧值、后台刷新、同步兜底去重。"""
-
-    def setUp(self):
+    def test_disk_only_files_not_returned(self):
+        """行为变化：磁盘上有、但未入库的文件不再出现在列表（列表改为纯 DB 驱动）。"""
         import luboman.web as web
-        web._scan_cache.clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            extra = os.path.join(tmp, 'extra.flv')  # 仅在磁盘、未入库
+            with open(extra, 'wb') as fh:
+                fh.write(b'x' * 10)
+            with self._patch_list(web, []):  # DB 无记录
+                entries, total, _ = web._list_record_files_data({})
+            self.assertEqual(total, 0)
+            self.assertEqual(entries, [])
 
-    def _stale_entry(self, web, key, value):
-        """构造一个 fresh 已过、stale 未过的缓存条目。"""
-        now = time.monotonic()
-        web._scan_cache[key] = web._new_cache_entry()
-        entry = web._scan_cache[key]
-        entry['value'] = value
-        entry['fresh_until'] = now - 1
-        entry['stale_until'] = now + 100
-        entry['refreshing'] = False
-        return entry
-
-    def test_ttl_zero_bypasses_cache(self):
+    def test_passes_filters_and_pagination_to_db(self):
         import luboman.web as web
-        calls = []
-
-        def producer():
-            calls.append(1)
-            return 'v'
-
-        result = web._cached('ttlzero', 0, 30, producer)
-        self.assertEqual(result, 'v')
-        self.assertEqual(len(calls), 1)
-        # ttl<=0 直接返回 producer 结果，不写缓存
-        self.assertNotIn('ttlzero', web._scan_cache)
-
-    def test_stale_returns_old_value_and_refreshes_in_background(self):
-        import luboman.web as web
-        refreshed = threading.Event()
-
-        def producer():
-            refreshed.set()
-            return 'new'
-
-        self._stale_entry(web, 'stale-key', 'old')
-        submitted = []
-
-        def sync_submit(fn):
-            submitted.append(1)
-            fn()
-
-        with patch.object(web, '_submit_refresh', sync_submit):
-            result = web._cached('stale-key', 10, 30, producer)
-
-        self.assertEqual(result, 'old')            # 立即返回旧值
-        self.assertEqual(len(submitted), 1)        # 触发了一次后台刷新
-        self.assertTrue(refreshed.is_set())        # 刷新执行了 producer
-        self.assertEqual(web._scan_cache['stale-key']['value'], 'new')
-        self.assertFalse(web._scan_cache['stale-key']['refreshing'])
-
-    def test_refresh_failure_keeps_stale_value_and_retries(self):
-        import luboman.web as web
-        attempts = []
-
-        def producer():
-            attempts.append(1)
-            raise RuntimeError('boom')
-
-        self._stale_entry(web, 'fail-key', 'old')
-
-        with patch.object(web, '_submit_refresh', lambda fn: fn()):
-            result1 = web._cached('fail-key', 10, 30, producer)
-        self.assertEqual(result1, 'old')
-        self.assertEqual(web._scan_cache['fail-key']['value'], 'old')
-        self.assertFalse(web._scan_cache['fail-key']['refreshing'])
-        self.assertEqual(len(attempts), 1)
-
-        # 下次请求仍命中 stale 区，再次触发刷新
-        with patch.object(web, '_submit_refresh', lambda fn: fn()):
-            result2 = web._cached('fail-key', 10, 30, producer)
-        self.assertEqual(result2, 'old')
-        self.assertEqual(len(attempts), 2)
-
-    def test_sync_rebuild_dedups_concurrent_callers(self):
-        import luboman.web as web
-        barrier = threading.Barrier(8)
-        calls = []
-        calls_lock = threading.Lock()
-
-        def producer():
-            with calls_lock:
-                calls.append(1)
-            time.sleep(0.05)
-            return 'built'
-
-        results = []
-        errors = []
-
-        def worker():
-            try:
-                barrier.wait()
-                results.append(web._cached('dedup', 10, 0, producer))
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        threads = [threading.Thread(target=worker) for _ in range(8)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        self.assertEqual(errors, [])
-        self.assertEqual(len(calls), 1)            # 冷启动并发，producer 仅执行一次
-        self.assertEqual(len(results), 8)
-        self.assertTrue(all(r == 'built' for r in results))
+        with patch.object(web.DB, 'list_record_file', return_value=([], 0)) as mocked:
+            web._list_record_files_data({'live_room_id': 7, 'page': 2, 'page_size': 5, 'keyword': 'k'})
+        passed_filters = mocked.call_args.args[0]
+        self.assertEqual(passed_filters['live_room_id'], 7)
+        self.assertEqual(passed_filters['keyword'], 'k')
+        self.assertEqual(mocked.call_args.kwargs, {'page': 2, 'page_size': 5})
 
 
 class RecordFilePublishValidationTest(unittest.TestCase):

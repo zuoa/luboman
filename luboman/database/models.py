@@ -149,3 +149,6 @@ class RecordFile(BaseModel):
     video = CharField()
     upload_info = JSONField(null=True)
     series_code = CharField(null=True)
+
+# 注：(live_room_id, begin_time) 复合索引由 DB.init 用 CREATE INDEX IF NOT EXISTS 显式补建，
+# 兼容已存在的库（create_table(safe=True) 不会为旧表补索引）。

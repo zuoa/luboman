@@ -4,10 +4,6 @@ import functools
 import json
 import logging
 import os
-import re
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp_cors
 from aiohttp import web
@@ -176,142 +172,6 @@ def _delete_bili_upload_template(template_id):
 
 
 # 录像文件列表/手动发布相关常量与辅助方法
-RECORD_FILE_VIDEO_EXTENSIONS = ('.flv', '.mp4', '.mkv', '.webm', '.ts')
-RECORD_FILE_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-
-
-# 录像列表的磁盘扫描与全表加载变化极慢（仅在开播/下播时增删），用 stale-while-revalidate
-# 缓存消除请求路径上的同步重建：命中（含过期旧值）即返回，重建放到后台线程，避免周期性超时。
-# key -> {'value', 'fresh_until', 'stale_until', 'refreshing', 'rebuild_lock'}
-_scan_cache = {}
-_scan_cache_lock = threading.Lock()
-
-# 后台刷新专用线程池，与 run_db 的默认线程池隔离，避免阻塞型 os.walk / DB 调用饿死请求线程
-_refresh_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='scan-refresh')
-
-
-def _scan_cache_ttl(default=15):
-    """录像列表缓存新鲜期（秒），读取配置 record_file_scan_cache_ttl；0 表示禁用缓存。"""
-    try:
-        return max(0, int(config.get('record_file_scan_cache_ttl', default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _scan_cache_stale(default=30):
-    """录像列表缓存 stale 宽限（秒），读取配置 record_file_scan_cache_stale。
-    新鲜期过期后此时间内仍返回旧值并后台刷新；0 退化为"过期即同步重建"（应急回退）。"""
-    try:
-        return max(0, int(config.get('record_file_scan_cache_stale', default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _submit_refresh(fn):
-    """把后台刷新任务投递到独立线程池。测试可 patch 成同步执行以避免时序抖动。"""
-    _refresh_executor.submit(fn)
-
-
-def _new_cache_entry():
-    return {'value': None, 'fresh_until': 0.0, 'stale_until': 0.0,
-            'refreshing': False, 'rebuild_lock': threading.Lock()}
-
-
-def _write_back_cache(key, value, ttl, stale):
-    """持锁写回缓存条目（不存在则创建）。"""
-    now = time.monotonic()
-    with _scan_cache_lock:
-        entry = _scan_cache.get(key)
-        if entry is None:
-            entry = _new_cache_entry()
-            _scan_cache[key] = entry
-        entry['value'] = value
-        entry['fresh_until'] = now + ttl
-        entry['stale_until'] = now + ttl + stale
-        entry['refreshing'] = False
-
-
-def _do_refresh(key, producer, ttl, stale):
-    """后台刷新：跑 producer、写回、记耗时日志；失败只复位 refreshing 并保留旧值，下次请求重试。"""
-    start = time.monotonic()
-    try:
-        value = producer()
-    except Exception:
-        logger.exception('[scan-cache] refresh failed key=%s', key)
-        with _scan_cache_lock:
-            entry = _scan_cache.get(key)
-            if entry is not None:
-                entry['refreshing'] = False
-        return
-    elapsed = time.monotonic() - start
-    _write_back_cache(key, value, ttl, stale)
-    logger.info('[scan-cache] refresh key=%s elapsed=%.2fs', key, elapsed)
-
-
-def _rebuild_sync(key, producer, ttl, stale):
-    """同步重建并写回，返回 value（请求路径专用，含耗时日志）。"""
-    start = time.monotonic()
-    value = producer()
-    elapsed = time.monotonic() - start
-    _write_back_cache(key, value, ttl, stale)
-    logger.info('[scan-cache] sync rebuild key=%s elapsed=%.2fs', key, elapsed)
-    return value
-
-
-def _cached(key, ttl, stale, producer):
-    """带 stale-while-revalidate 的进程内缓存。
-
-    - ttl<=0：禁用缓存，直接 producer()。
-    - 命中新鲜值：立即返回。
-    - 过期但在 stale 宽限内：立即返回旧值，后台异步刷新（同 key 只起一个刷新）。
-    - 从未缓存或 stale 宽限也已过：同步重建（用 rebuild_lock 去重，防冷启动 thundering herd）。
-    """
-    if ttl <= 0:
-        return producer()
-
-    now = time.monotonic()
-    with _scan_cache_lock:
-        entry = _scan_cache.get(key)
-        if entry is not None and now < entry['fresh_until']:
-            return entry['value']
-        if entry is not None and stale > 0 and now < entry['stale_until']:
-            need_refresh = not entry['refreshing']
-            if need_refresh:
-                entry['refreshing'] = True
-            stale_value = entry['value']
-        else:
-            need_refresh = False
-            stale_value = None
-
-    if need_refresh:
-        _submit_refresh(lambda: _do_refresh(key, producer, ttl, stale))
-        return stale_value
-
-    # 同步重建路径（从未缓存 / stale 宽限已过 / stale=0 退化）
-    with _scan_cache_lock:
-        entry = _scan_cache.get(key)
-        if entry is None:
-            entry = _new_cache_entry()
-            _scan_cache[key] = entry
-        rebuild_lock = entry['rebuild_lock']
-
-    if rebuild_lock.acquire(blocking=False):
-        try:
-            return _rebuild_sync(key, producer, ttl, stale)
-        finally:
-            rebuild_lock.release()
-
-    # 没抢到重建锁：等重建者完成后重读；仍未就绪（重建者失败）则降级自重建。
-    # 等待设上限：万一持有者因 DB 挂死等原因永不释放锁，本请求也不会被永久拖死，
-    # 而是超时后降级走重读/自重建（DB 已加 statement_timeout/keepalive，自重建同样不会无限挂）。
-    got = rebuild_lock.acquire(timeout=30)
-    if got:
-        rebuild_lock.release()
-    with _scan_cache_lock:
-        entry = _scan_cache.get(key)
-        if entry is not None and entry['value'] is not None and time.monotonic() < entry['stale_until']:
-            return entry['value']
-    return _rebuild_sync(key, producer, ttl, stale)
 
 
 # 手动发布时允许通过 room_data 覆盖的标题模板相关字段
@@ -325,113 +185,13 @@ def _as_int(value):
         return None
 
 
-def _parse_video_rel_path(rel_path):
-    """从相对 video_dir 的路径中尽力解析平台/房间名/日期。
-
-    录像目录结构为 {video_dir}/{platform}/{room_id}-{room_name}/{day}/{file}，
-    解析失败时返回空字典，磁盘补齐条目相应字段留空。
-    """
-    info = {}
-    parts = [part for part in rel_path.split(os.sep) if part]
-    if len(parts) >= 4:
-        info['platform'] = parts[0]
-        if RECORD_FILE_DATE_RE.match(parts[-2]):
-            info['date'] = parts[-2]
-        room_folder = parts[1]
-        if '-' in room_folder:
-            info['room_name'] = room_folder.split('-', 1)[1]
-    return info
-
-
-def _scan_local_video_files(video_dir):
-    """扫描本地录像目录，返回 {规范化绝对路径: 磁盘条目}。"""
-    result = {}
-    for root, _dirs, files in os.walk(video_dir):
-        for name in files:
-            if not name.lower().endswith(RECORD_FILE_VIDEO_EXTENSIONS):
-                continue
-            full = os.path.realpath(os.path.join(root, name))
-            try:
-                stat = os.stat(full)
-            except OSError:
-                continue
-            parsed = _parse_video_rel_path(os.path.relpath(full, video_dir))
-            result[full] = {
-                'id': None,
-                'video': full,
-                'filename': name,
-                'size': stat.st_size,
-                'mtime': stat.st_mtime,
-                'exists': True,
-                'source': 'disk',
-                'live_room_id': None,
-                'room_name': parsed.get('room_name'),
-                'room_platform': parsed.get('platform'),
-                'begin_time': None,
-                'end_time': None,
-                'series_code': None,
-                'upload_info': None,
-            }
-    return result
-
-
-def _datetime_to_epoch(value):
-    if isinstance(value, datetime.datetime):
-        try:
-            return value.timestamp()
-        except (OSError, OverflowError, ValueError):
-            return 0
-    return 0
-
-
-def _entry_matches_date(entry, date_str):
-    if date_str in (entry.get('video') or ''):
-        return True
-    begin_time = entry.get('begin_time')
-    if isinstance(begin_time, datetime.datetime) and begin_time.strftime('%Y-%m-%d') == date_str:
-        return True
-    return False
-
-
-def _record_file_matches(entry, filters, exists_only):
-    """合并后的统一过滤条件，对数据库条目与磁盘补齐条目一视同仁。"""
-    if exists_only and not entry.get('exists'):
-        return False
-
-    live_room_id = filters.get('live_room_id')
-    if live_room_id is not None and str(entry.get('live_room_id')) != str(live_room_id):
-        return False
-
-    room_name = filters.get('room_name')
-    if room_name and room_name not in (entry.get('room_name') or ''):
-        return False
-
-    platform = filters.get('platform')
-    if platform and entry.get('room_platform') != platform:
-        return False
-
-    date_str = filters.get('date')
-    if date_str and not _entry_matches_date(entry, date_str):
-        return False
-
-    keyword = filters.get('keyword')
-    if keyword:
-        haystack = ' '.join(
-            str(value) for value in (
-                entry.get('filename'),
-                entry.get('video'),
-                entry.get('room_name'),
-                entry.get('room_platform'),
-            ) if value
-        ).lower()
-        if keyword.lower() not in haystack:
-            return False
-
-    return True
-
-
 def _list_record_files_data(params):
-    """合并数据库录像记录与本地磁盘扫描，返回分页后的 (list, total, page)。"""
+    """纯数据库驱动的录像列表：SQL 过滤+分页查询，仅对本页 stat 磁盘补 exists/size/mtime。
+
+    不再全盘 os.walk 合并磁盘文件（曾导致请求挂死）。磁盘信息只在本页范围内 stat 获取；
+    exists 过滤因依赖磁盘无法在 SQL 表达，亦对本页处理。配合定期清理死记录，DB 行≈磁盘文件，
+    分页 total 近似准确。返回 (list, total, page)。
+    """
     page = max(1, _as_int(params.get('page')) or 1)
     page_size = _as_int(params.get('page_size')) or 50
     page_size = min(max(1, page_size), 200)
@@ -448,59 +208,41 @@ def _list_record_files_data(params):
     if isinstance(exists_only, str):
         exists_only = exists_only.strip().lower() not in ('false', '0', 'no', 'none', '')
 
-    video_dir = os.path.realpath(get_video_dir())
-    scan_ttl = _scan_cache_ttl()
-    scan_stale = _scan_cache_stale()
+    records, total = DB.list_record_file(filters, page=page, page_size=page_size)
 
-    # 磁盘扫描与全表加载都变化极慢，用 stale-while-revalidate 缓存避免请求路径上的同步重建
-    disk_entries = _cached(
-        ('disk_scan', video_dir),
-        scan_ttl,
-        scan_stale,
-        lambda: _scan_local_video_files(video_dir),
-    )
-
-    # 仅用 live_room_id 在数据库层缩小范围，其余筛选交给统一过滤层，保证语义一致
-    records, _db_total = _cached(
-        ('db_records', filters['live_room_id']),
-        scan_ttl,
-        scan_stale,
-        lambda: DB.list_record_file({'live_room_id': filters['live_room_id']}),
-    )
-
-    merged = dict(disk_entries)
+    entries = []
     for record in records:
-        # DB 层已在缓存构建时预计算 _video_real，命中缓存时免去每请求逐条 realpath；
-        # 缺失时（如 mock 或其它来源）回退到即时计算，保证健壮
         path = record.get('_video_real') or os.path.realpath(record.get('video') or '')
-        if not path:
-            continue
-        on_disk = path in disk_entries
-        disk_entry = disk_entries.get(path, {})
-        merged[path] = {
+        size = mtime = None
+        exists = False
+        if path:
+            try:
+                st = os.stat(path)
+                exists, size, mtime = True, st.st_size, st.st_mtime
+            except OSError:
+                exists, size, mtime = False, None, None
+        entries.append({
             'id': record.get('id'),
             'video': path,
-            'filename': os.path.basename(path),
-            'size': disk_entry.get('size') if on_disk else None,
-            'mtime': disk_entry.get('mtime') if on_disk else _datetime_to_epoch(record.get('end_time') or record.get('begin_time')),
-            'exists': on_disk,
+            'filename': os.path.basename(path) if path else None,
+            'size': size,
+            'mtime': mtime,
+            'exists': exists,
             'source': 'database',
             'live_room_id': record.get('live_room_id'),
-            'room_name': record.get('room_name') or disk_entry.get('room_name'),
-            'room_platform': record.get('room_platform') or disk_entry.get('room_platform'),
+            'room_name': record.get('room_name'),
+            'room_platform': record.get('room_platform'),
             'begin_time': record.get('begin_time'),
             'end_time': record.get('end_time'),
             'series_code': record.get('series_code'),
             'upload_info': record.get('upload_info'),
-        }
+        })
 
-    entries = [entry for entry in merged.values() if _record_file_matches(entry, filters, exists_only)]
-    entries.sort(key=lambda entry: entry.get('mtime') or 0, reverse=True)
+    if exists_only:
+        # 仅显示磁盘仍在的；死记录已被定期清理，DB 行≈磁盘文件，过滤后 total 仍近似准确
+        entries = [entry for entry in entries if entry['exists']]
 
-    total = len(entries)
-    start = (page - 1) * page_size
-    page_entries = entries[start:start + page_size]
-    return page_entries, total, page
+    return entries, total, page
 
 
 def _resolve_publish_video_path(raw_path, video_dir):
@@ -943,39 +685,6 @@ async def error_middleware(request, handler):
 
 app = web.Application(logger=logger, middlewares=[error_middleware])
 app.add_routes(routes)
-
-
-async def _prewarm_record_caches(_app):
-    """启动时在独立线程池预填磁盘扫描与全表 DB 缓存，使首批请求即命中。
-    仅预热"查看全部"场景的两个 key；按房间筛选的 key 不预热（记录少、重建快）。"""
-    ttl = _scan_cache_ttl()
-    if ttl <= 0:
-        return
-    stale = _scan_cache_stale()
-    video_dir = os.path.realpath(get_video_dir())
-    loop = asyncio.get_running_loop()
-
-    async def _one(key, fn):
-        try:
-            await loop.run_in_executor(_refresh_executor, _do_refresh, key, fn, ttl, stale)
-        except Exception:
-            logger.exception('[scan-cache] prewarm failed key=%s', key)
-
-    try:
-        await asyncio.wait_for(asyncio.gather(
-            _one(('disk_scan', video_dir), lambda: _scan_local_video_files(video_dir)),
-            _one(('db_records', None), lambda: DB.list_record_file({'live_room_id': None})),
-        ), timeout=20)
-    except asyncio.TimeoutError:
-        logger.warning('[scan-cache] prewarm timed out, first requests may rebuild synchronously')
-
-
-async def _shutdown_refresh(_app):
-    _refresh_executor.shutdown(wait=False)
-
-
-app.on_startup.append(_prewarm_record_caches)
-app.on_cleanup.append(_shutdown_refresh)
 
 
 async def serve(host='127.0.0.1', port=5005):

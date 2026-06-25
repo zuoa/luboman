@@ -378,6 +378,11 @@ class AsyncLubomanApplication:
                             day_time = datetime.datetime.strptime(day_dir, "%Y-%m-%d")
                             if day_time < cutoff_time:
                                 remove_dir(day_path)
+                                # 配套清理该目录下的 RecordFile 死记录，避免列表里出现文件已删的幽灵条目
+                                try:
+                                    DB.delete_record_files_under_path(day_path)
+                                except Exception as e:
+                                    logger.error(f"清理录像记录失败: {day_path} {e}")
                                 cleaned_count += 1
                         except ValueError:
                             continue

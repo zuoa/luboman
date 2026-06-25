@@ -13,6 +13,8 @@ export async function listRecordFile(
   return request<API.RecordFilePage>(REQUEST_HOST + '/v1/RecordFile/list', {
     method: 'POST',
     data: params,
+    // 录像列表重建（磁盘扫描 + 全表加载）可能较慢，单独放宽；调用方可经 options.timeout 覆盖
+    timeout: 30000,
     ...(options || {}),
   });
 }

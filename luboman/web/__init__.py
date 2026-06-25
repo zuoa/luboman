@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import functools
 import json
@@ -6,6 +7,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp_cors
 from aiohttp import web
@@ -178,32 +180,135 @@ RECORD_FILE_VIDEO_EXTENSIONS = ('.flv', '.mp4', '.mkv', '.webm', '.ts')
 RECORD_FILE_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
-# 录像列表的磁盘扫描与全表加载变化极慢（仅在开播/下播时增删），用短 TTL 进程内缓存
-# 消除每次请求的重复扫描。key -> (expires_at_monotonic, value)。
+# 录像列表的磁盘扫描与全表加载变化极慢（仅在开播/下播时增删），用 stale-while-revalidate
+# 缓存消除请求路径上的同步重建：命中（含过期旧值）即返回，重建放到后台线程，避免周期性超时。
+# key -> {'value', 'fresh_until', 'stale_until', 'refreshing', 'rebuild_lock'}
 _scan_cache = {}
 _scan_cache_lock = threading.Lock()
 
+# 后台刷新专用线程池，与 run_db 的默认线程池隔离，避免阻塞型 os.walk / DB 调用饿死请求线程
+_refresh_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='scan-refresh')
+
 
 def _scan_cache_ttl(default=15):
-    """录像列表缓存 TTL（秒），读取配置 record_file_scan_cache_ttl；0 表示禁用缓存。"""
+    """录像列表缓存新鲜期（秒），读取配置 record_file_scan_cache_ttl；0 表示禁用缓存。"""
     try:
         return max(0, int(config.get('record_file_scan_cache_ttl', default)))
     except (TypeError, ValueError):
         return default
 
 
-def _cached(key, ttl, producer):
-    """带 TTL 的进程内缓存。producer 仅在缓存缺失（或 TTL=0）时调用。"""
+def _scan_cache_stale(default=30):
+    """录像列表缓存 stale 宽限（秒），读取配置 record_file_scan_cache_stale。
+    新鲜期过期后此时间内仍返回旧值并后台刷新；0 退化为"过期即同步重建"（应急回退）。"""
+    try:
+        return max(0, int(config.get('record_file_scan_cache_stale', default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _submit_refresh(fn):
+    """把后台刷新任务投递到独立线程池。测试可 patch 成同步执行以避免时序抖动。"""
+    _refresh_executor.submit(fn)
+
+
+def _new_cache_entry():
+    return {'value': None, 'fresh_until': 0.0, 'stale_until': 0.0,
+            'refreshing': False, 'rebuild_lock': threading.Lock()}
+
+
+def _write_back_cache(key, value, ttl, stale):
+    """持锁写回缓存条目（不存在则创建）。"""
+    now = time.monotonic()
+    with _scan_cache_lock:
+        entry = _scan_cache.get(key)
+        if entry is None:
+            entry = _new_cache_entry()
+            _scan_cache[key] = entry
+        entry['value'] = value
+        entry['fresh_until'] = now + ttl
+        entry['stale_until'] = now + ttl + stale
+        entry['refreshing'] = False
+
+
+def _do_refresh(key, producer, ttl, stale):
+    """后台刷新：跑 producer、写回、记耗时日志；失败只复位 refreshing 并保留旧值，下次请求重试。"""
+    start = time.monotonic()
+    try:
+        value = producer()
+    except Exception:
+        logger.exception('[scan-cache] refresh failed key=%s', key)
+        with _scan_cache_lock:
+            entry = _scan_cache.get(key)
+            if entry is not None:
+                entry['refreshing'] = False
+        return
+    elapsed = time.monotonic() - start
+    _write_back_cache(key, value, ttl, stale)
+    logger.info('[scan-cache] refresh key=%s elapsed=%.2fs', key, elapsed)
+
+
+def _rebuild_sync(key, producer, ttl, stale):
+    """同步重建并写回，返回 value（请求路径专用，含耗时日志）。"""
+    start = time.monotonic()
+    value = producer()
+    elapsed = time.monotonic() - start
+    _write_back_cache(key, value, ttl, stale)
+    logger.info('[scan-cache] sync rebuild key=%s elapsed=%.2fs', key, elapsed)
+    return value
+
+
+def _cached(key, ttl, stale, producer):
+    """带 stale-while-revalidate 的进程内缓存。
+
+    - ttl<=0：禁用缓存，直接 producer()。
+    - 命中新鲜值：立即返回。
+    - 过期但在 stale 宽限内：立即返回旧值，后台异步刷新（同 key 只起一个刷新）。
+    - 从未缓存或 stale 宽限也已过：同步重建（用 rebuild_lock 去重，防冷启动 thundering herd）。
+    """
     if ttl <= 0:
         return producer()
+
     now = time.monotonic()
-    hit = _scan_cache.get(key)
-    if hit and now < hit[0]:
-        return hit[1]
-    value = producer()
     with _scan_cache_lock:
-        _scan_cache[key] = (now + ttl, value)
-    return value
+        entry = _scan_cache.get(key)
+        if entry is not None and now < entry['fresh_until']:
+            return entry['value']
+        if entry is not None and stale > 0 and now < entry['stale_until']:
+            need_refresh = not entry['refreshing']
+            if need_refresh:
+                entry['refreshing'] = True
+            stale_value = entry['value']
+        else:
+            need_refresh = False
+            stale_value = None
+
+    if need_refresh:
+        _submit_refresh(lambda: _do_refresh(key, producer, ttl, stale))
+        return stale_value
+
+    # 同步重建路径（从未缓存 / stale 宽限已过 / stale=0 退化）
+    with _scan_cache_lock:
+        entry = _scan_cache.get(key)
+        if entry is None:
+            entry = _new_cache_entry()
+            _scan_cache[key] = entry
+        rebuild_lock = entry['rebuild_lock']
+
+    if rebuild_lock.acquire(blocking=False):
+        try:
+            return _rebuild_sync(key, producer, ttl, stale)
+        finally:
+            rebuild_lock.release()
+
+    # 没抢到重建锁：等重建者完成后重读；仍未就绪（重建者失败）则降级自重建
+    with rebuild_lock:
+        pass
+    with _scan_cache_lock:
+        entry = _scan_cache.get(key)
+        if entry is not None and entry['value'] is not None and time.monotonic() < entry['stale_until']:
+            return entry['value']
+    return _rebuild_sync(key, producer, ttl, stale)
 
 
 # 手动发布时允许通过 room_data 覆盖的标题模板相关字段
@@ -342,11 +447,13 @@ def _list_record_files_data(params):
 
     video_dir = os.path.realpath(get_video_dir())
     scan_ttl = _scan_cache_ttl()
+    scan_stale = _scan_cache_stale()
 
-    # 磁盘扫描与全表加载都变化极慢，用 TTL 缓存避免每次请求重复扫描
+    # 磁盘扫描与全表加载都变化极慢，用 stale-while-revalidate 缓存避免请求路径上的同步重建
     disk_entries = _cached(
         ('disk_scan', video_dir),
         scan_ttl,
+        scan_stale,
         lambda: _scan_local_video_files(video_dir),
     )
 
@@ -354,6 +461,7 @@ def _list_record_files_data(params):
     records, _db_total = _cached(
         ('db_records', filters['live_room_id']),
         scan_ttl,
+        scan_stale,
         lambda: DB.list_record_file({'live_room_id': filters['live_room_id']}),
     )
 
@@ -832,6 +940,39 @@ async def error_middleware(request, handler):
 
 app = web.Application(logger=logger, middlewares=[error_middleware])
 app.add_routes(routes)
+
+
+async def _prewarm_record_caches(_app):
+    """启动时在独立线程池预填磁盘扫描与全表 DB 缓存，使首批请求即命中。
+    仅预热"查看全部"场景的两个 key；按房间筛选的 key 不预热（记录少、重建快）。"""
+    ttl = _scan_cache_ttl()
+    if ttl <= 0:
+        return
+    stale = _scan_cache_stale()
+    video_dir = os.path.realpath(get_video_dir())
+    loop = asyncio.get_running_loop()
+
+    async def _one(key, fn):
+        try:
+            await loop.run_in_executor(_refresh_executor, _do_refresh, key, fn, ttl, stale)
+        except Exception:
+            logger.exception('[scan-cache] prewarm failed key=%s', key)
+
+    try:
+        await asyncio.wait_for(asyncio.gather(
+            _one(('disk_scan', video_dir), lambda: _scan_local_video_files(video_dir)),
+            _one(('db_records', None), lambda: DB.list_record_file({'live_room_id': None})),
+        ), timeout=20)
+    except asyncio.TimeoutError:
+        logger.warning('[scan-cache] prewarm timed out, first requests may rebuild synchronously')
+
+
+async def _shutdown_refresh(_app):
+    _refresh_executor.shutdown(wait=False)
+
+
+app.on_startup.append(_prewarm_record_caches)
+app.on_cleanup.append(_shutdown_refresh)
 
 
 async def serve(host='127.0.0.1', port=5005):

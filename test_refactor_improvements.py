@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -658,6 +659,119 @@ class RecordFileListMergeTest(unittest.TestCase):
                 entries, total, _ = web._list_record_files_data({'exists_only': False})
             self.assertEqual(total, 1)
             self.assertFalse(entries[0]['exists'])
+
+
+class RecordFileCacheSWRTest(unittest.TestCase):
+    """stale-while-revalidate 缓存：命中即返回旧值、后台刷新、同步兜底去重。"""
+
+    def setUp(self):
+        import luboman.web as web
+        web._scan_cache.clear()
+
+    def _stale_entry(self, web, key, value):
+        """构造一个 fresh 已过、stale 未过的缓存条目。"""
+        now = time.monotonic()
+        web._scan_cache[key] = web._new_cache_entry()
+        entry = web._scan_cache[key]
+        entry['value'] = value
+        entry['fresh_until'] = now - 1
+        entry['stale_until'] = now + 100
+        entry['refreshing'] = False
+        return entry
+
+    def test_ttl_zero_bypasses_cache(self):
+        import luboman.web as web
+        calls = []
+
+        def producer():
+            calls.append(1)
+            return 'v'
+
+        result = web._cached('ttlzero', 0, 30, producer)
+        self.assertEqual(result, 'v')
+        self.assertEqual(len(calls), 1)
+        # ttl<=0 直接返回 producer 结果，不写缓存
+        self.assertNotIn('ttlzero', web._scan_cache)
+
+    def test_stale_returns_old_value_and_refreshes_in_background(self):
+        import luboman.web as web
+        refreshed = threading.Event()
+
+        def producer():
+            refreshed.set()
+            return 'new'
+
+        self._stale_entry(web, 'stale-key', 'old')
+        submitted = []
+
+        def sync_submit(fn):
+            submitted.append(1)
+            fn()
+
+        with patch.object(web, '_submit_refresh', sync_submit):
+            result = web._cached('stale-key', 10, 30, producer)
+
+        self.assertEqual(result, 'old')            # 立即返回旧值
+        self.assertEqual(len(submitted), 1)        # 触发了一次后台刷新
+        self.assertTrue(refreshed.is_set())        # 刷新执行了 producer
+        self.assertEqual(web._scan_cache['stale-key']['value'], 'new')
+        self.assertFalse(web._scan_cache['stale-key']['refreshing'])
+
+    def test_refresh_failure_keeps_stale_value_and_retries(self):
+        import luboman.web as web
+        attempts = []
+
+        def producer():
+            attempts.append(1)
+            raise RuntimeError('boom')
+
+        self._stale_entry(web, 'fail-key', 'old')
+
+        with patch.object(web, '_submit_refresh', lambda fn: fn()):
+            result1 = web._cached('fail-key', 10, 30, producer)
+        self.assertEqual(result1, 'old')
+        self.assertEqual(web._scan_cache['fail-key']['value'], 'old')
+        self.assertFalse(web._scan_cache['fail-key']['refreshing'])
+        self.assertEqual(len(attempts), 1)
+
+        # 下次请求仍命中 stale 区，再次触发刷新
+        with patch.object(web, '_submit_refresh', lambda fn: fn()):
+            result2 = web._cached('fail-key', 10, 30, producer)
+        self.assertEqual(result2, 'old')
+        self.assertEqual(len(attempts), 2)
+
+    def test_sync_rebuild_dedups_concurrent_callers(self):
+        import luboman.web as web
+        barrier = threading.Barrier(8)
+        calls = []
+        calls_lock = threading.Lock()
+
+        def producer():
+            with calls_lock:
+                calls.append(1)
+            time.sleep(0.05)
+            return 'built'
+
+        results = []
+        errors = []
+
+        def worker():
+            try:
+                barrier.wait()
+                results.append(web._cached('dedup', 10, 0, producer))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(calls), 1)            # 冷启动并发，producer 仅执行一次
+        self.assertEqual(len(results), 8)
+        self.assertTrue(all(r == 'built' for r in results))
 
 
 class RecordFilePublishValidationTest(unittest.TestCase):

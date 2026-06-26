@@ -170,8 +170,7 @@ const RecordFileList: React.FC = () => {
   const hasRecordingSelection = selectedRows.some(
     (row) => !isRecordCompleted(row),
   );
-  const playUrl =
-    playTarget?.id != null ? getRecordFileStreamUrl(playTarget.id) : undefined;
+  const playUrl = playTarget ? getRecordFileStreamUrl(playTarget) : undefined;
 
   const publishDefaultRoomId = useMemo(() => {
     if (activeRoomId != null) return activeRoomId;

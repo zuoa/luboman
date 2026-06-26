@@ -33,9 +33,17 @@ export async function listRecordFileRoomSummary(options?: {
   );
 }
 
-/** 录像文件在线播放地址。 */
-export function getRecordFileStreamUrl(id: number) {
-  return `${REQUEST_HOST}/v1/RecordFile/stream/${id}`;
+/** 录像文件在线播放地址：优先使用 nginx 静态地址，回退到后端 FileResponse。 */
+export function getRecordFileStreamUrl(record: API.RecordFileInfo | number) {
+  if (typeof record === 'number') {
+    return `${REQUEST_HOST}/v1/RecordFile/stream/${record}`;
+  }
+  if (record.stream_url) {
+    return record.stream_url;
+  }
+  return record.id != null
+    ? `${REQUEST_HOST}/v1/RecordFile/stream/${record.id}`
+    : undefined;
 }
 
 /**

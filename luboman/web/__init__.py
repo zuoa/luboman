@@ -235,6 +235,7 @@ def _list_record_files_data(params):
         entries.append({
             'id': record.get('id'),
             'video': path,
+            'stream_url': _build_record_file_static_url(path) if status != RECORD_FILE_STATUS_RECORDING else None,
             'filename': os.path.basename(path) if path else None,
             'size': size,
             'mtime': mtime,
@@ -260,6 +261,18 @@ def _list_record_files_data(params):
 
 def _list_record_file_room_summary_data():
     return DB.list_record_file_room_summary()
+
+
+def _build_record_file_static_url(path):
+    """构造 nginx 静态播放 URL。仅允许 video 目录下的路径。"""
+    if not path:
+        return None
+    video_dir = os.path.realpath(get_video_dir())
+    real = os.path.realpath(path)
+    if real != video_dir and not real.startswith(video_dir + os.sep):
+        return None
+    rel_path = os.path.relpath(real, video_dir)
+    return '/video/' + '/'.join(quote(part) for part in rel_path.split(os.sep))
 
 
 def _resolve_publish_video_path(raw_path, video_dir):

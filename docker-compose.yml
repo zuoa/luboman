@@ -57,6 +57,8 @@ services:
       - "app:luboman-service"
     ports:
       - "5001:5001"
+    volumes:
+      - ./data/app/video:/data/video:ro
     networks:
       - bridge_net
 

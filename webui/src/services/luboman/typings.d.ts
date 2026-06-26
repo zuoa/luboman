@@ -128,6 +128,8 @@ declare namespace API {
     id?: number | null;
     /** 规范化绝对路径 */
     video: string;
+    /** nginx 静态播放地址；没有静态映射时为空 */
+    stream_url?: string | null;
     filename?: string;
     /** 字节；不在磁盘时为 null */
     size?: number | null;

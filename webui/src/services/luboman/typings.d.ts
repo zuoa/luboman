@@ -73,6 +73,51 @@ declare namespace API {
     state_active?: 0 | 1;
   }
 
+  type BiliAccountLoginStatus =
+    | 'valid'
+    | 'invalid'
+    | 'missing_credentials'
+    | 'disabled'
+    | 'unknown';
+
+  interface BiliAccountLoginCheckItem {
+    id?: number;
+    account_name?: string;
+    account_avatar?: string;
+    state_active?: 0 | 1;
+    login_valid?: boolean | null;
+    status: BiliAccountLoginStatus | string;
+    message?: string;
+    checked_at?: string;
+  }
+
+  interface BiliAccountLoginCheckSummary {
+    active_count: number;
+    invalid_count: number;
+    results: BiliAccountLoginCheckItem[];
+  }
+
+  type BiliupLoginStatus =
+    | 'created'
+    | 'running'
+    | 'success'
+    | 'failed'
+    | 'stopped'
+    | 'expired';
+
+  interface BiliupLoginSession {
+    session_id: string;
+    cookie_path: string;
+    command: string;
+    status: BiliupLoginStatus | string;
+    exit_code?: number | null;
+    error_message?: string | null;
+    output: string[];
+    output_offset: number;
+    created_at: number;
+    updated_at: number;
+  }
+
   /** B 站投稿模板（BiliUploadTemplate） */
   interface BiliUploadTemplateInfo {
     id?: number;

@@ -32,6 +32,10 @@ notify_token: ''
 #uploader: biliup-rs
 ### biliup CLI 路径。使用 biliup-rs/biliup 上传时需要先安装 biliup，并用 `biliup -u cookies.json login` 获取登录文件
 #biliup_path: biliup
+### B站投稿账号登录态巡检间隔，默认 21600 秒（6 小时），最小 300 秒
+#bili_account_check_interval: 21600
+### Web 页面调用 biliup login 时生成 cookies.json 的默认目录
+#biliup_cookie_dir: /data/biliup-cookies
 ### b站提交接口。biliup-rs 可选 app/web/b-cut-android；旧配置 client 会兼容为 app
 #submit_api: app
 ### b站上传线路选择，默认为自动模式，目前可手动切换为bda2, kodo, ws, qn, cos, cos-internal(支持腾讯云内网免流+提速)

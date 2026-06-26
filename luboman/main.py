@@ -11,8 +11,10 @@ from playhouse.shortcuts import model_to_dict
 
 import luboman.web
 from luboman.config import config
+from luboman.core import bili_account_health
 from luboman.core.decorators import PluginTool
 from luboman.core.live import start_room
+from luboman.core.notify import notify_message
 from luboman.core.timer import Timer
 from luboman import LOG_CONF
 from luboman.core.utils import get_video_dir, remove_dir
@@ -23,6 +25,7 @@ from luboman import plugins
 from luboman.core.thread_pool import thread_pool_manager
 
 logger = logging.getLogger("luboman")
+_alerted_account_ids = set()
 
 
 async def start_all_record():
@@ -114,6 +117,36 @@ def monitor_thread_pools():
     except Exception as e:
         logger.error(f"监控线程池时出错: {e}")
 
+
+def account_check_interval():
+    try:
+        return max(300, int(config.get('bili_account_check_interval', 21600)))
+    except (TypeError, ValueError):
+        return 21600
+
+
+def check_bili_account_login_state():
+    global _alerted_account_ids
+    try:
+        active_count, invalid = bili_account_health.check_active_accounts()
+        invalid_ids = {account.get('id') for account in invalid}
+        newly_invalid = [account for account in invalid if account.get('id') not in _alerted_account_ids]
+
+        for account in newly_invalid:
+            name = account.get('account_name') or f"id={account.get('id')}"
+            notify_message(
+                'B站投稿账号登录态失效',
+                f'账号「{name}」登录态已失效，请尽快重新获取 cookie，否则该账号的自动投稿会失败。'
+            )
+
+        _alerted_account_ids = invalid_ids
+        logger.info(
+            f"B站账号登录态巡检完成: 启用账号 {active_count} 个，失效 {len(invalid)} 个"
+            + (f"，新增告警 {len(newly_invalid)} 个" if newly_invalid else "")
+        )
+    except Exception as e:
+        logger.error(f"B站账号登录态巡检失败: {e}")
+
 if __name__ == '__main__':
     # 初始化日志和数据库
     logging.config.dictConfig(LOG_CONF)
@@ -131,6 +164,7 @@ if __name__ == '__main__':
     # 启动定时任务
     Timer(func=check_runtime_state, interval=1800).start()  # 清理本地文件
     Timer(func=monitor_thread_pools, interval=300).start()  # 监控线程池
+    Timer(func=check_bili_account_login_state, interval=account_check_interval()).start()  # B站投稿账号登录态巡检
     
     logger.info("应用初始化完成，开始运行...")
     

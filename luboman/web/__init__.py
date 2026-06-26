@@ -11,8 +11,10 @@ from aiohttp import web
 from playhouse.shortcuts import model_to_dict
 
 from luboman.config import config
+from luboman.core import bili_account_health
 from luboman.core.async_utils import run_blocking
 from luboman.core.async_upload import UploadPriority, schedule_bili_submission
+from luboman.core.biliup_login import biliup_login_manager
 from luboman.core.runtime import (
     collect_runtime_stats,
     reconcile_room_runtime,
@@ -125,24 +127,28 @@ def _delete_live_room(row_id):
 def _prepare_bili_account_payload(data, require_credentials):
     payload = dict(data)
     if payload.get('bili_cookies_filepath'):
-        with BiliBili(Data()) as bili:
-            bili.login(payload.get('bili_cookies_filepath'), {})
-            account_info = bili.myinfo()
-            if account_info and account_info.get('code') == 0:
-                payload['account_name'] = account_info['data']['name']
-                payload['account_avatar'] = account_info['data']['face']
-            payload['bili_cookies'] = _cookies_to_string(bili.cookies)
+        filepath = os.path.abspath(os.path.expanduser(payload.get('bili_cookies_filepath')))
+        cookie_str = bili_account_health.cookies_from_biliup_file(filepath)
+        if not cookie_str:
+            raise ValueError(f"bili_cookies_filepath is not a valid biliup cookies file: {filepath}")
+        payload['bili_cookies_filepath'] = filepath
+        payload['bili_cookies'] = cookie_str
+        profile, nav_data = bili_account_health.profile_from_cookie_str(cookie_str)
+        if not profile:
+            message = nav_data.get('message') if isinstance(nav_data, dict) else 'login check failed'
+            raise ValueError(f"bili account login check failed: {message}")
+        payload.update({key: value for key, value in profile.items() if value})
     elif payload.get('bili_cookies'):
         cookies = _parse_cookie_string(payload.get('bili_cookies'))
         if not cookies:
             raise ValueError(f"bili_cookies format error:{payload.get('bili_cookies')}")
-
-        with BiliBili(Data()) as bili:
-            bili.login_by_cookie(cookies)
-            account_info = bili.myinfo()
-            if account_info and account_info.get('code') == 0:
-                payload['account_name'] = account_info['data']['name']
-                payload['account_avatar'] = account_info['data']['face']
+        cookie_str = _cookies_to_string(cookies)
+        profile, nav_data = bili_account_health.profile_from_cookie_str(cookie_str)
+        if not profile:
+            message = nav_data.get('message') if isinstance(nav_data, dict) else 'login check failed'
+            raise ValueError(f"bili account login check failed: {message}")
+        payload['bili_cookies'] = cookie_str
+        payload.update({key: value for key, value in profile.items() if value})
     elif require_credentials:
         raise ValueError("bili_cookies or bili_cookies_filepath is required")
 
@@ -612,6 +618,72 @@ async def stop_live_room(request):
 async def list_bili_account(request):
     res = await run_db(DB.list_bili_account)
     return success(res)
+
+
+@routes.post("/v1/BiliAccount/loginCheck")
+async def check_bili_account_login(request):
+    data = await request.json()
+    try:
+        results = await run_db(bili_account_health.check_accounts, data.get('id'))
+        active_count = len([item for item in results if item.get('state_active', 1)])
+        invalid_count = len([item for item in results if item.get('login_valid') is False])
+        return success({
+            'active_count': active_count,
+            'invalid_count': invalid_count,
+            'results': results,
+        })
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliAccount/biliupLogin/start")
+async def start_biliup_login(request):
+    data = await request.json()
+    try:
+        return success(biliup_login_manager.start_session(
+            cookie_path=data.get('bili_cookies_filepath'),
+            label=data.get('account_name'),
+        ))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliAccount/biliupLogin/status")
+async def get_biliup_login_status(request):
+    data = await request.json()
+    try:
+        return success(biliup_login_manager.snapshot(
+            data.get('session_id'),
+            since=_as_int(data.get('since')),
+        ))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliAccount/biliupLogin/input")
+async def send_biliup_login_input(request):
+    data = await request.json()
+    try:
+        return success(biliup_login_manager.send_input(
+            data.get('session_id'),
+            data.get('input') or '',
+        ))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/BiliAccount/biliupLogin/stop")
+async def stop_biliup_login(request):
+    data = await request.json()
+    try:
+        return success(biliup_login_manager.stop_session(data.get('session_id')))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
 
 
 @routes.post("/v1/BiliAccount/add")

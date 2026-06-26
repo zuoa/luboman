@@ -29,6 +29,18 @@ export async function addBiliAccount(
   });
 }
 
+/** 更新 B 站账号；用于重新登录后刷新 cookies。 */
+export async function updateBiliAccount(
+  body: Partial<API.BiliAccountInfo> & { id: number },
+  options?: { [key: string]: any },
+) {
+  return request<number>(REQUEST_HOST + '/v1/BiliAccount/update', {
+    method: 'POST',
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** 检测 B 站账号登录态；不传 id 时检测全部账号。 */
 export async function checkBiliAccountLogin(
   body?: { id?: number },

@@ -32,6 +32,7 @@ import React, { useEffect, useRef, useState } from 'react';
 const {
   listBiliAccount,
   addBiliAccount,
+  updateBiliAccount,
   delBiliAccount,
   checkBiliAccountLogin,
   startBiliupLogin,
@@ -62,6 +63,7 @@ const BiliAccountList: React.FC = () => {
   const actionRef = useRef<ActionType>();
   const [form] = Form.useForm();
   const [createOpen, setCreateOpen] = useState(false);
+  const [reloginAccount, setReloginAccount] = useState<API.BiliAccountInfo>();
   const [checkingKey, setCheckingKey] = useState<number | 'all'>();
   const [loginChecks, setLoginChecks] = useState<
     Record<number, API.BiliAccountLoginCheckItem>
@@ -144,7 +146,7 @@ const BiliAccountList: React.FC = () => {
     try {
       const session = await startBiliupLogin({
         bili_cookies_filepath: values.bili_cookies_filepath,
-        account_name: values.account_name,
+        account_name: reloginAccount?.account_name,
       });
       form.setFieldValue('bili_cookies_filepath', session.cookie_path);
       setLoginSession(session);
@@ -177,6 +179,7 @@ const BiliAccountList: React.FC = () => {
 
   const resetCreateState = () => {
     form.resetFields();
+    setReloginAccount(undefined);
     setLoginSession(undefined);
     setLoginOutput([]);
     setLoginInput('');
@@ -194,6 +197,24 @@ const BiliAccountList: React.FC = () => {
       resetCreateState();
     }
     setCreateOpen(open);
+  };
+
+  const openCreateModal = () => {
+    resetCreateState();
+    form.setFieldsValue({ cookieType: 'biliup', state_active: 1 });
+    setCreateOpen(true);
+  };
+
+  const openReloginModal = (record: API.BiliAccountInfo) => {
+    resetCreateState();
+    setReloginAccount(record);
+    form.setFieldsValue({
+      cookieType: 'biliup',
+      state_active: record.state_active ?? 1,
+      bili_cookies_filepath: undefined,
+      bili_cookies: undefined,
+    });
+    setCreateOpen(true);
   };
 
   return (
@@ -226,7 +247,7 @@ const BiliAccountList: React.FC = () => {
             key="create"
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => setCreateOpen(true)}
+            onClick={openCreateModal}
           >
             新建
           </Button>,
@@ -279,12 +300,13 @@ const BiliAccountList: React.FC = () => {
             title: '操作',
             dataIndex: 'option',
             valueType: 'option',
-            width: 140,
+            width: 200,
             render: (_, record) => (
               <Space>
                 <a onClick={() => record.id && handleCheckLogin(record.id)}>
                   {checkingKey === record.id ? '检测中' : '检测'}
                 </a>
+                <a onClick={() => openReloginModal(record)}>重新登录</a>
                 <Popconfirm
                   title="确认删除该账号？"
                   description="将停用该账号（state_active 置 0）"
@@ -299,7 +321,7 @@ const BiliAccountList: React.FC = () => {
       />
 
       <ModalForm
-        title="新建 B 站账号"
+        title={reloginAccount ? '重新登录 B 站账号' : '新建 B 站账号'}
         width={640}
         form={form}
         open={createOpen}
@@ -322,7 +344,17 @@ const BiliAccountList: React.FC = () => {
           } else {
             payload.bili_cookies = values.bili_cookies;
           }
-          await addBiliAccount(payload);
+          if (reloginAccount?.id) {
+            await updateBiliAccount({ id: reloginAccount.id, ...payload });
+            setLoginChecks((prev) => {
+              const next = { ...prev };
+              delete next[reloginAccount.id as number];
+              return next;
+            });
+            message.success('账号登录信息已更新');
+          } else {
+            await addBiliAccount(payload);
+          }
           actionRef.current?.reload();
           return true;
         }}

@@ -349,6 +349,15 @@ class AsyncUploadScheduler:
             result = await run_blocking(upload_sync)
             
             # 处理上传结果
+            if isinstance(result, dict):
+                explicit_success = result.get('success')
+                code = result.get('code')
+                if explicit_success is False or (
+                    code is not None and str(code) not in ('0', '')
+                ):
+                    failed_files = [f.get('video', '') for f in file_list]
+                    return False, [], failed_files, self._extract_upload_error_message(result), result
+
             if result:
                 uploaded_files = [f.get('video', '') for f in file_list]
                 return True, uploaded_files, [], None, result
@@ -360,6 +369,25 @@ class AsyncUploadScheduler:
             error_message = str(e)
             failed_files = [f.get('video', '') for f in file_list]
             return False, [], failed_files, error_message, None
+
+    @staticmethod
+    def _extract_upload_error_message(result: Dict[str, Any]) -> str:
+        for key in ('error_message', 'error', 'message'):
+            value = result.get(key)
+            if value:
+                return str(value)
+
+        output_tail = result.get('output_tail')
+        if isinstance(output_tail, list) and output_tail:
+            return '\n'.join(str(line) for line in output_tail[-20:])
+        if output_tail:
+            return str(output_tail)
+
+        if result.get('exit_code') is not None:
+            return f"上传进程退出码: {result.get('exit_code')}"
+        if result.get('code') is not None:
+            return f"上传接口返回 code={result.get('code')}"
+        return "上传返回失败结果"
 
     def _is_submission_task(self, upload_task: AsyncUploadTask) -> bool:
         return bool((upload_task.metadata or {}).get('submission_task'))

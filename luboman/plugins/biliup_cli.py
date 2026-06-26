@@ -98,17 +98,31 @@ class BiliupCliUploader(Uploader):
         super().__init__(file_list)
         self.room_data = room_data
 
+    @staticmethod
+    def _tail(lines: List[str], limit: int = 80) -> List[str]:
+        return lines[-limit:] if len(lines) > limit else lines
+
+    @staticmethod
+    def _failure(message: str, **extra) -> Dict[str, Any]:
+        return {
+            'success': False,
+            'error_message': message,
+            **extra,
+        }
+
     def upload(self):
         template_info = self.room_data.get('bili_upload_template')
         if not template_info:
-            logger.warning('未设置上传模板')
-            return False
+            message = '未设置上传模板'
+            logger.warning(message)
+            return self._failure(message)
 
         bili_account = template_info.get('bili_account') or {}
         cookie_file = bili_account.get('bili_cookies_filepath')
         if not cookie_file or not os.path.exists(cookie_file):
-            logger.error('biliup CLI 需要 biliup login 生成的 cookies.json，请在账号中配置有效的 bili_cookies_filepath')
-            return False
+            message = 'biliup CLI 需要 biliup login 生成的 cookies.json，请在账号中配置有效的 bili_cookies_filepath'
+            logger.error(message)
+            return self._failure(message, cookie_file=cookie_file)
 
         video_paths = [
             file_info['video']
@@ -116,12 +130,14 @@ class BiliupCliUploader(Uploader):
             if file_info.get('video') and os.path.exists(file_info['video'])
         ]
         if not video_paths:
-            logger.warning('没有可上传的视频文件')
-            return False
+            message = '没有可上传的视频文件'
+            logger.warning(message)
+            return self._failure(message)
 
         command = self._build_command(template_info, cookie_file, video_paths)
         logger.info('开始调用 biliup CLI 上传: %s', shlex.join(command))
 
+        output_lines: List[str] = []
         try:
             proc = subprocess.Popen(
                 command,
@@ -132,21 +148,46 @@ class BiliupCliUploader(Uploader):
             )
             if proc.stdout:
                 for line in proc.stdout:
-                    logger.info('[biliup] %s', line.rstrip())
+                    clean_line = line.rstrip()
+                    output_lines.append(clean_line)
+                    if len(output_lines) > 300:
+                        output_lines = output_lines[-300:]
+                    logger.info('[biliup] %s', clean_line)
             retval = proc.wait()
         except FileNotFoundError:
-            logger.error('未找到 biliup 命令，请安装 biliup 或通过 biliup_path 配置二进制路径')
-            return False
-        except Exception:
-            logger.exception('调用 biliup CLI 上传失败')
-            return False
+            message = '未找到 biliup 命令，请安装 biliup 或通过 biliup_path 配置二进制路径'
+            logger.error(message)
+            return self._failure(message, command=shlex.join(command))
+        except Exception as exc:
+            message = f'调用 biliup CLI 上传失败: {exc}'
+            logger.exception(message)
+            return self._failure(
+                message,
+                command=shlex.join(command),
+                output_tail=self._tail(output_lines),
+            )
 
         if retval != 0:
+            output_tail = self._tail(output_lines)
+            output_text = '\n'.join(output_tail[-20:])
+            message = f'biliup CLI 上传失败，退出码: {retval}'
+            if output_text:
+                message = f'{message}\n最后输出:\n{output_text}'
             logger.error('biliup CLI 上传失败，退出码: %s', retval)
-            return False
+            return self._failure(
+                message,
+                exit_code=retval,
+                command=shlex.join(command),
+                output_tail=output_tail,
+            )
 
         logger.info('biliup CLI 上传完成')
-        return True
+        return {
+            'success': True,
+            'exit_code': retval,
+            'command': shlex.join(command),
+            'output_tail': self._tail(output_lines),
+        }
 
     def _build_command(self, template_info: Dict[str, Any], cookie_file: str, video_paths: List[str]) -> List[str]:
         biliup_path = _config_get('biliup_path', 'biliup')

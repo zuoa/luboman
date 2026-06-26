@@ -99,6 +99,23 @@
   border-radius: 6px;
 }
 
+// flv.js 播放器：video 维持 16:9 尺寸，加载/错误态在其上层覆盖。
+.flvWrap {
+  position: relative;
+}
+
+.flvOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+}
+
 .playerMeta {
   margin-top: 10px;
   overflow: hidden;

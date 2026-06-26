@@ -31,6 +31,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import FlvPlayer from './FlvPlayer';
 import styles from './index.less';
 
 const {
@@ -114,6 +115,13 @@ function roomSummaryName(room: API.RecordFileRoomSummary): string {
 
 function isRecordCompleted(row: API.RecordFileInfo): boolean {
   return (row.status || RECORD_STATUS_COMPLETED) === RECORD_STATUS_COMPLETED;
+}
+
+/** 浏览器原生 <video> 不支持 FLV，需走 flv.js；按路径后缀判断是否为 FLV。 */
+function isFlvRecord(row?: API.RecordFileInfo): boolean {
+  if (!row) return false;
+  const path = row.stream_url || row.video || row.filename || '';
+  return /\.flv(?:$|\?)/i.test(path);
 }
 
 /** 防御性渲染 upload_info：尝试取 bvid 拼链接，否则仅显示「已投稿」 */
@@ -585,13 +593,17 @@ const RecordFileList: React.FC = () => {
         onCancel={() => setPlayTarget(undefined)}
       >
         {playUrl ? (
-          <video
-            className={styles.player}
-            src={playUrl}
-            controls
-            playsInline
-            preload="metadata"
-          />
+          isFlvRecord(playTarget) ? (
+            <FlvPlayer url={playUrl} />
+          ) : (
+            <video
+              className={styles.player}
+              src={playUrl}
+              controls
+              playsInline
+              preload="metadata"
+            />
+          )
         ) : null}
         <div className={styles.playerMeta}>{playTarget?.video || ''}</div>
       </Modal>

@@ -585,8 +585,8 @@ class RecordFileDatabaseHelperTest(unittest.TestCase):
 
 
 class RecordFileListDbDrivenTest(unittest.TestCase):
-    """列表为纯数据库驱动：直接展示 DB 记录，仅对本页 stat 磁盘补 exists/size；
-    exists_only 默认隐藏磁盘已不存在的记录；磁盘上未入库的文件不再出现。"""
+    """列表为纯数据库驱动：直接展示 DB 记录，按 exists_only 口径补磁盘状态；
+    exists_only 默认隐藏磁盘已不存在的记录，且 total 等于实际可见文件数。"""
 
     def _record(self, video, **extra):
         record = {
@@ -624,9 +624,9 @@ class RecordFileListDbDrivenTest(unittest.TestCase):
             ghost = os.path.join(tmp, 'ghost.flv')  # 数据库有记录但磁盘不存在
             records = [self._record(ghost, id=9)]
             with self._patch_list(web, records):
-                # exists_only 默认 True：本页 stat 判 exists=False 后过滤掉；total 仍是 DB 计数
+                # exists_only 默认 True：stat 判 exists=False 后过滤掉，total 也按可见文件重算
                 entries, total, _ = web._list_record_files_data({})
-            self.assertEqual(total, 1)
+            self.assertEqual(total, 0)
             self.assertEqual(entries, [])
 
             with self._patch_list(web, records):
@@ -649,11 +649,76 @@ class RecordFileListDbDrivenTest(unittest.TestCase):
     def test_passes_filters_and_pagination_to_db(self):
         import luboman.web as web
         with patch.object(web.DB, 'list_record_file', return_value=([], 0)) as mocked:
-            web._list_record_files_data({'live_room_id': 7, 'page': 2, 'page_size': 5, 'keyword': 'k'})
+            web._list_record_files_data({
+                'live_room_id': 7,
+                'page': 2,
+                'page_size': 5,
+                'keyword': 'k',
+                'exists_only': False,
+            })
         passed_filters = mocked.call_args.args[0]
         self.assertEqual(passed_filters['live_room_id'], 7)
         self.assertEqual(passed_filters['keyword'], 'k')
         self.assertEqual(mocked.call_args.kwargs, {'page': 2, 'page_size': 5})
+
+    def test_exists_only_paginates_after_filtering_missing_records(self):
+        import luboman.web as web
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, 'missing.flv')
+            first = os.path.join(tmp, 'first.flv')
+            second = os.path.join(tmp, 'second.flv')
+            for video in (first, second):
+                with open(video, 'wb') as fh:
+                    fh.write(b'x')
+            records = [
+                self._record(missing, id=1),
+                self._record(first, id=2),
+                self._record(second, id=3),
+            ]
+            with self._patch_list(web, records):
+                entries, total, _ = web._list_record_files_data({'page': 2, 'page_size': 1})
+
+            self.assertEqual(total, 2)
+            self.assertEqual([entry['id'] for entry in entries], [3])
+
+    def test_room_summary_counts_existing_files_by_default(self):
+        import luboman.web as web
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, 'missing.flv')
+            existing = os.path.join(tmp, 'existing.flv')
+            with open(existing, 'wb') as fh:
+                fh.write(b'x')
+            records = [
+                self._record(missing, id=1, live_room_id=1, begin_time=datetime.datetime(2026, 1, 1)),
+                self._record(existing, id=2, live_room_id=1, begin_time=datetime.datetime(2026, 1, 2)),
+            ]
+            summary = [{
+                'live_room_id': 1,
+                'room_name': 'streamerA',
+                'room_platform': 'douyin',
+                'room_owner': None,
+                'room_url': None,
+                'live_state': 0,
+                'file_count': 2,
+                'last_begin_time': datetime.datetime(2026, 1, 2),
+            }]
+            with patch.object(web.DB, 'list_record_file_room_summary', return_value=summary), \
+                    self._patch_list(web, records):
+                result = web._list_record_file_room_summary_data({})
+
+            self.assertEqual(result[0]['file_count'], 1)
+            self.assertEqual(result[0]['last_begin_time'], datetime.datetime(2026, 1, 2))
+
+    def test_room_summary_can_include_missing_files(self):
+        import luboman.web as web
+        summary = [{'live_room_id': 1, 'file_count': 2, 'last_begin_time': None}]
+        with patch.object(web.DB, 'list_record_file_room_summary', return_value=summary) as summary_mock, \
+                patch.object(web.DB, 'list_record_file') as list_mock:
+            result = web._list_record_file_room_summary_data({'exists_only': False})
+
+        self.assertEqual(result, summary)
+        summary_mock.assert_called_once()
+        list_mock.assert_not_called()
 
 
 class RecordFilePublishValidationTest(unittest.TestCase):

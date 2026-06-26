@@ -106,6 +106,16 @@ function relFromDateValue(value?: string | null): string {
   return Number.isNaN(ms) ? value : relFromMs(ms);
 }
 
+function boolFromFormValue(value: any, defaultValue: boolean): boolean {
+  if (value === undefined || value === null) return defaultValue;
+  if (typeof value === 'string') {
+    return !['false', '0', 'no', 'none', ''].includes(
+      value.trim().toLowerCase(),
+    );
+  }
+  return Boolean(value);
+}
+
 function roomSummaryName(room: API.RecordFileRoomSummary): string {
   return (
     room.room_name ||
@@ -152,6 +162,7 @@ const RecordFileList: React.FC = () => {
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [activeRoomKey, setActiveRoomKey] =
     useState<RoomFilterKey>(ALL_ROOM_KEY);
+  const [summaryExistsOnly, setSummaryExistsOnly] = useState(true);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [selectedRows, setSelectedRows] = useState<API.RecordFileInfo[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -192,10 +203,12 @@ const RecordFileList: React.FC = () => {
     return roomIds.length === 1 ? roomIds[0] : undefined;
   }, [activeRoomId, publishTarget]);
 
-  const fetchRoomSummary = useCallback(async () => {
+  const fetchRoomSummary = useCallback(async (existsOnly = true) => {
     setRoomsLoading(true);
     try {
-      const list = await listRecordFileRoomSummary();
+      const list = await listRecordFileRoomSummary({
+        exists_only: existsOnly,
+      });
       setRoomSummary(Array.isArray(list) ? list : []);
     } catch {
       setRoomSummary([]);
@@ -205,7 +218,7 @@ const RecordFileList: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    fetchRoomSummary();
+    fetchRoomSummary(true);
   }, [fetchRoomSummary]);
 
   const openPublish = (rows: API.RecordFileInfo[]) => {
@@ -230,7 +243,7 @@ const RecordFileList: React.FC = () => {
   };
 
   const reloadRecordFiles = () => {
-    fetchRoomSummary();
+    fetchRoomSummary(summaryExistsOnly);
     actionRef.current?.reload();
   };
 
@@ -557,6 +570,14 @@ const RecordFileList: React.FC = () => {
                   date,
                   exists_only,
                 } = params as any;
+                const effectiveExistsOnly = boolFromFormValue(
+                  exists_only,
+                  true,
+                );
+                if (effectiveExistsOnly !== summaryExistsOnly) {
+                  setSummaryExistsOnly(effectiveExistsOnly);
+                  fetchRoomSummary(effectiveExistsOnly);
+                }
                 const dateStr =
                   date && typeof date.format === 'function'
                     ? date.format('YYYY-MM-DD')
@@ -568,7 +589,7 @@ const RecordFileList: React.FC = () => {
                   platform,
                   keyword,
                   date: dateStr,
-                  exists_only: exists_only === undefined ? true : exists_only,
+                  exists_only: effectiveExistsOnly,
                 });
                 return {
                   data: res?.list || [],

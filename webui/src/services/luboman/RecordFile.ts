@@ -20,14 +20,15 @@ export async function listRecordFile(
 }
 
 /** 按直播间汇总录像文件数量，用于文件管理页的直播间维度入口。 */
-export async function listRecordFileRoomSummary(options?: {
-  [key: string]: any;
-}) {
+export async function listRecordFileRoomSummary(
+  params: { [key: string]: any } = {},
+  options?: { [key: string]: any },
+) {
   return request<API.RecordFileRoomSummary[]>(
     REQUEST_HOST + '/v1/RecordFile/roomSummary',
     {
       method: 'POST',
-      data: {},
+      data: params,
       ...(options || {}),
     },
   );

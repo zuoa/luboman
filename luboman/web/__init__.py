@@ -197,12 +197,63 @@ def _as_int(value):
         return None
 
 
-def _list_record_files_data(params):
-    """纯数据库驱动的录像列表：SQL 过滤+分页查询，仅对本页 stat 磁盘补 exists/size/mtime。
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in ('false', '0', 'no', 'none', '')
+    return bool(value)
 
-    不再全盘 os.walk 合并磁盘文件（曾导致请求挂死）。磁盘信息只在本页范围内 stat 获取；
-    exists 过滤因依赖磁盘无法在 SQL 表达，亦对本页处理。配合定期清理死记录，DB 行≈磁盘文件，
-    分页 total 近似准确。返回 (list, total, page)。
+
+def _record_file_disk_info(record):
+    path = record.get('_video_real') or os.path.realpath(record.get('video') or '')
+    status = record.get('status') or RECORD_FILE_STATUS_COMPLETED
+    size = mtime = None
+    exists = False
+    if path:
+        try:
+            st = os.stat(path)
+            exists, size, mtime = True, st.st_size, st.st_mtime
+        except OSError:
+            if status == RECORD_FILE_STATUS_RECORDING:
+                try:
+                    st = os.stat(f'{path}.part')
+                    exists, size, mtime = True, st.st_size, st.st_mtime
+                except OSError:
+                    pass
+    return path, exists, size, mtime
+
+
+def _record_file_entry(record):
+    path, exists, size, mtime = _record_file_disk_info(record)
+    status = record.get('status') or RECORD_FILE_STATUS_COMPLETED
+    return {
+        'id': record.get('id'),
+        'video': path,
+        'stream_url': _build_record_file_static_url(path) if status != RECORD_FILE_STATUS_RECORDING else None,
+        'filename': os.path.basename(path) if path else None,
+        'size': size,
+        'mtime': mtime,
+        'exists': exists,
+        'source': 'database',
+        'live_room_id': record.get('live_room_id'),
+        'room_name': record.get('room_name'),
+        'room_platform': record.get('room_platform'),
+        'begin_time': record.get('begin_time'),
+        'end_time': record.get('end_time'),
+        'status': status,
+        'duration_seconds': record.get('duration_seconds') or 0,
+        'series_code': record.get('series_code'),
+        'upload_info': record.get('upload_info'),
+    }
+
+
+def _list_record_files_data(params):
+    """纯数据库驱动的录像列表：SQL 过滤查询，按 exists_only 口径返回准确分页总数。
+
+    不再全盘 os.walk 合并磁盘文件（曾导致请求挂死）。exists 过滤依赖磁盘，开启时会先按
+    DB 条件取出匹配记录，stat 后再分页，确保 total 与实际可见文件一致；关闭时仅 stat 当前页。
+    返回 (list, total, page)。
     """
     page = max(1, _as_int(params.get('page')) or 1)
     page_size = _as_int(params.get('page_size')) or 50
@@ -216,62 +267,74 @@ def _list_record_files_data(params):
         'keyword': (params.get('keyword') or '').strip() or None,
     }
 
-    exists_only = params.get('exists_only', True)
-    if isinstance(exists_only, str):
-        exists_only = exists_only.strip().lower() not in ('false', '0', 'no', 'none', '')
-
-    records, total = DB.list_record_file(filters, page=page, page_size=page_size)
-
-    entries = []
-    for record in records:
-        path = record.get('_video_real') or os.path.realpath(record.get('video') or '')
-        status = record.get('status')
-        size = mtime = None
-        exists = False
-        stat_path = path
-        if path:
-            try:
-                st = os.stat(stat_path)
-                exists, size, mtime = True, st.st_size, st.st_mtime
-            except OSError:
-                if status == RECORD_FILE_STATUS_RECORDING:
-                    try:
-                        stat_path = f'{path}.part'
-                        st = os.stat(stat_path)
-                        exists, size, mtime = True, st.st_size, st.st_mtime
-                    except OSError:
-                        exists, size, mtime = False, None, None
-                else:
-                    exists, size, mtime = False, None, None
-        entries.append({
-            'id': record.get('id'),
-            'video': path,
-            'stream_url': _build_record_file_static_url(path) if status != RECORD_FILE_STATUS_RECORDING else None,
-            'filename': os.path.basename(path) if path else None,
-            'size': size,
-            'mtime': mtime,
-            'exists': exists,
-            'source': 'database',
-            'live_room_id': record.get('live_room_id'),
-            'room_name': record.get('room_name'),
-            'room_platform': record.get('room_platform'),
-            'begin_time': record.get('begin_time'),
-            'end_time': record.get('end_time'),
-            'status': status,
-            'duration_seconds': record.get('duration_seconds') or 0,
-            'series_code': record.get('series_code'),
-            'upload_info': record.get('upload_info'),
-        })
+    exists_only = _as_bool(params.get('exists_only'), default=True)
 
     if exists_only:
-        # 仅显示磁盘仍在的；死记录已被定期清理，DB 行≈磁盘文件，过滤后 total 仍近似准确
+        records, _ = DB.list_record_file(filters)
+        entries = [_record_file_entry(record) for record in records]
         entries = [entry for entry in entries if entry['exists']]
+        total = len(entries)
+        start = (page - 1) * page_size
+        entries = entries[start:start + page_size]
+    else:
+        records, total = DB.list_record_file(filters, page=page, page_size=page_size)
+        entries = [_record_file_entry(record) for record in records]
 
     return entries, total, page
 
 
-def _list_record_file_room_summary_data():
-    return DB.list_record_file_room_summary()
+def _is_later_datetime(value, current):
+    if value is None:
+        return False
+    if current is None:
+        return True
+    try:
+        return value > current
+    except TypeError:
+        return str(value) > str(current)
+
+
+def _list_record_file_room_summary_data(params=None):
+    exists_only = _as_bool((params or {}).get('exists_only'), default=True)
+    summary = DB.list_record_file_room_summary()
+    if not exists_only:
+        return summary
+
+    summary_map = {}
+    for item in summary:
+        item['file_count'] = 0
+        item['last_begin_time'] = None
+        summary_map[item.get('live_room_id')] = item
+
+    records, _ = DB.list_record_file()
+    orphaned = []
+    for record in records:
+        _, exists, _, _ = _record_file_disk_info(record)
+        if not exists:
+            continue
+
+        room_id = record.get('live_room_id')
+        target = summary_map.get(room_id)
+        if target is None:
+            target = {
+                'live_room_id': room_id,
+                'room_name': f'未关联直播间 #{room_id}' if room_id is not None else '未关联直播间',
+                'room_platform': None,
+                'room_owner': None,
+                'room_url': None,
+                'live_state': None,
+                'file_count': 0,
+                'last_begin_time': None,
+            }
+            summary_map[room_id] = target
+            orphaned.append(target)
+
+        target['file_count'] += 1
+        begin_time = record.get('begin_time')
+        if _is_later_datetime(begin_time, target.get('last_begin_time')):
+            target['last_begin_time'] = begin_time
+
+    return summary + orphaned
 
 
 def _build_record_file_static_url(path):
@@ -791,7 +854,11 @@ async def list_record_file(request):
 @routes.post('/v1/RecordFile/roomSummary')
 async def list_record_file_room_summary(request):
     try:
-        return success(await run_db(_list_record_file_room_summary_data))
+        try:
+            params = await request.json()
+        except Exception:
+            params = {}
+        return success(await run_db(_list_record_file_room_summary_data, params))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

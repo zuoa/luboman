@@ -174,4 +174,62 @@ declare namespace API {
     file_count: number;
     uploader: string;
   }
+
+  type SubmissionTaskStatus =
+    | 'PENDING'
+    | 'RUNNING'
+    | 'RETRYING'
+    | 'SUCCESS'
+    | 'FAILED'
+    | string;
+
+  type SubmissionTaskSource = 'AUTO' | 'FILE_MANAGER' | string;
+
+  interface SubmissionTaskFile {
+    id?: number;
+    record_file_id?: number;
+    video?: string;
+    [key: string]: any;
+  }
+
+  /** B 站投稿任务 */
+  interface SubmissionTaskInfo {
+    id?: number;
+    task_id: string;
+    source: SubmissionTaskSource;
+    platform: string;
+    status: SubmissionTaskStatus;
+    priority?: string;
+    file_list?: SubmissionTaskFile[];
+    file_count?: number;
+    record_file_ids?: number[];
+    live_room_id?: number | null;
+    room_name?: string | null;
+    room_platform?: string | null;
+    bili_upload_template_id?: number | null;
+    bili_upload_template_name?: string | null;
+    uploader?: string | null;
+    retry_count?: number;
+    max_retries?: number;
+    error_message?: string | null;
+    result?: any | null;
+    metadata?: Record<string, any> | null;
+    created_at?: string;
+    updated_at?: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+  }
+
+  interface SubmissionTaskPage {
+    list: SubmissionTaskInfo[];
+    total: number;
+    page: number;
+  }
+
+  interface SubmissionTaskStats {
+    by_status: Record<string, number>;
+    by_source: Record<string, number>;
+    active: number;
+    total: number;
+  }
 }

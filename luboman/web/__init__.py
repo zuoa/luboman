@@ -12,16 +12,21 @@ from playhouse.shortcuts import model_to_dict
 
 from luboman.config import config
 from luboman.core.async_utils import run_blocking
-from luboman.core.async_upload import UploadPriority, async_upload_scheduler
+from luboman.core.async_upload import UploadPriority, schedule_bili_submission
 from luboman.core.runtime import (
     collect_runtime_stats,
     reconcile_room_runtime,
     start_room_runtime,
     stop_room_runtime,
 )
-from luboman.core.upload import BiliBili, Data, resolve_bili_uploader
+from luboman.core.upload import BiliBili, Data
 from luboman.core.utils import get_video_dir
-from luboman.database.db import DB, RECORD_FILE_STATUS_COMPLETED, RECORD_FILE_STATUS_RECORDING
+from luboman.database.db import (
+    DB,
+    RECORD_FILE_STATUS_COMPLETED,
+    RECORD_FILE_STATUS_RECORDING,
+    SUBMISSION_TASK_SOURCE_FILE_MANAGER,
+)
 from luboman.database.models import (
     BiliAccount,
     BiliUploadTemplate,
@@ -318,9 +323,9 @@ def _validate_publish_video_path(raw_path, video_dir, min_size):
     return real
 
 
-def _resolve_publish_video_paths_from_ids(file_ids):
-    """按 file_ids 顺序解析数据库录像记录的 video 路径。"""
-    paths = []
+def _resolve_publish_record_files_from_ids(file_ids):
+    """按 file_ids 顺序解析数据库录像记录。"""
+    records = []
     with db.connection_context():
         for file_id in file_ids:
             try:
@@ -331,8 +336,8 @@ def _resolve_publish_video_paths_from_ids(file_ids):
                 raise ValueError(f'record file is still recording: {file_id}')
             if not record.video:
                 raise ValueError(f'record file has no video path: {file_id}')
-            paths.append(record.video)
-    return paths
+            records.append({'id': record.id, 'video': record.video})
+    return records
 
 
 def _build_bili_publish_room_data(bili_upload_template_id, live_room_id, room_data_override):
@@ -385,20 +390,39 @@ def _prepare_bili_publish(data):
     min_size = int(config.get('filtering_threshold_file_size', 5)) * 1024 * 1024
 
     if file_ids:
-        raw_paths = _resolve_publish_video_paths_from_ids(file_ids)
+        raw_items = _resolve_publish_record_files_from_ids(file_ids)
     else:
-        raw_paths = list(videos)
+        raw_items = [{'video': video} for video in videos]
 
     file_list = []
-    for raw_path in raw_paths:
+    for raw_item in raw_items:
+        raw_path = raw_item.get('video')
         real = _validate_publish_video_path(raw_path, video_dir, min_size)
-        file_list.append({'video': real})
+        file_info = {'video': real}
+        if raw_item.get('id') is not None:
+            file_info['id'] = raw_item.get('id')
+        file_list.append(file_info)
 
     if not file_list:
         raise ValueError('no files to publish')
 
     room_data = _build_bili_publish_room_data(bili_upload_template_id, live_room_id, room_data_override)
     return room_data, file_list
+
+
+def _list_submission_tasks_data(params):
+    page = max(1, _as_int(params.get('page')) or 1)
+    page_size = _as_int(params.get('page_size')) or 50
+    page_size = min(max(1, page_size), 200)
+    filters = {
+        'status': (params.get('status') or '').strip() or None,
+        'source': (params.get('source') or '').strip() or None,
+        'platform': (params.get('platform') or '').strip() or None,
+        'keyword': (params.get('keyword') or '').strip() or None,
+        'live_room_id': _as_int(params.get('live_room_id')),
+    }
+    records, total = DB.list_submission_task(filters, page=page, page_size=page_size)
+    return records, total, page
 
 
 def resp_data(data=None, code=0, message="success"):
@@ -726,23 +750,55 @@ async def publish_record_file_to_bili(request):
         data = await request.json()
         room_data, file_list = await run_db(_prepare_bili_publish, data)
 
-        if not async_upload_scheduler.running:
-            return error(1, 'async upload scheduler is not running, please start the service via async_main.py')
-
-        uploader = resolve_bili_uploader(room_data)
-        task_id = await async_upload_scheduler.schedule_upload_simple(
-            platform=uploader,
+        result = await schedule_bili_submission(
             file_list=file_list,
             room_data=room_data,
+            source=SUBMISSION_TASK_SOURCE_FILE_MANAGER,
             priority=UploadPriority.HIGH,
+            metadata={
+                'created_from': 'record_file',
+                'file_ids': data.get('file_ids') or [],
+                'videos': data.get('videos') or [],
+            },
         )
-        return success({
-            'task_id': task_id,
-            'file_count': len(file_list),
-            'uploader': uploader,
-        })
+        return success(result)
     except ValueError as e:
         return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/SubmissionTask/list')
+async def list_submission_task(request):
+    try:
+        params = await request.json()
+        page_entries, total, page = await run_db(_list_submission_tasks_data, params)
+        return resp_page_list(page_entries, total, page)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/SubmissionTask/detail')
+async def get_submission_task(request):
+    try:
+        data = await request.json()
+        task = await run_db(
+            DB.get_submission_task,
+            task_id=data.get('task_id'),
+            row_id=_as_int(data.get('id')),
+        )
+        return success(task)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/SubmissionTask/stats')
+async def get_submission_task_stats(request):
+    try:
+        return success(await run_db(DB.get_submission_task_stats))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

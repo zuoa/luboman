@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import json
 import logging
 import time
 import os
@@ -46,6 +47,7 @@ class UploadResult:
     upload_time: float = 0.0
     total_size: int = 0
     upload_speed: float = 0.0  # MB/s
+    raw_result: Any = None
 
 
 class AsyncUploadScheduler:
@@ -206,6 +208,7 @@ class AsyncUploadScheduler:
                 # 记录活跃任务
                 self.active_uploads[upload_task.task_id] = upload_task
                 self.stats['current_uploads'] += 1
+                await self._mark_submission_task_running(upload_task)
                 
                 try:
                     # 执行上传
@@ -252,7 +255,7 @@ class AsyncUploadScheduler:
                 total_size = await self._calculate_total_size(upload_task.file_list)
                 
                 # 执行实际上传
-                success, uploaded_files, failed_files, error_msg = await self._perform_upload(
+                success, uploaded_files, failed_files, error_msg, raw_result = await self._perform_upload(
                     upload_task
                 )
                 
@@ -284,7 +287,8 @@ class AsyncUploadScheduler:
                     error_message=error_msg,
                     upload_time=upload_time,
                     total_size=total_size,
-                    upload_speed=upload_speed
+                    upload_speed=upload_speed,
+                    raw_result=raw_result
                 )
         
         except Exception as e:
@@ -323,7 +327,7 @@ class AsyncUploadScheduler:
         
         return total_size
     
-    async def _perform_upload(self, upload_task: AsyncUploadTask) -> Tuple[bool, List[str], List[str], Optional[str]]:
+    async def _perform_upload(self, upload_task: AsyncUploadTask) -> Tuple[bool, List[str], List[str], Optional[str], Any]:
         """执行实际上传操作"""
         platform = upload_task.platform
         file_list = upload_task.file_list
@@ -347,15 +351,88 @@ class AsyncUploadScheduler:
             # 处理上传结果
             if result:
                 uploaded_files = [f.get('video', '') for f in file_list]
-                return True, uploaded_files, [], None
+                return True, uploaded_files, [], None, result
             else:
                 failed_files = [f.get('video', '') for f in file_list]
-                return False, [], failed_files, "上传返回失败结果"
+                return False, [], failed_files, "上传返回失败结果", result
         
         except Exception as e:
             error_message = str(e)
             failed_files = [f.get('video', '') for f in file_list]
-            return False, [], failed_files, error_message
+            return False, [], failed_files, error_message, None
+
+    def _is_submission_task(self, upload_task: AsyncUploadTask) -> bool:
+        return bool((upload_task.metadata or {}).get('submission_task'))
+
+    def _submission_task_id(self, upload_task: AsyncUploadTask) -> str:
+        return (upload_task.metadata or {}).get('submission_task_id') or upload_task.task_id
+
+    @staticmethod
+    def _json_safe(value):
+        try:
+            json.dumps(value, ensure_ascii=False)
+            return value
+        except TypeError:
+            return str(value)
+
+    def _build_submission_result(self, result: UploadResult) -> Dict[str, Any]:
+        return {
+            'task_id': result.task_id,
+            'success': result.success,
+            'platform': result.platform,
+            'uploaded_files': result.uploaded_files,
+            'failed_files': result.failed_files,
+            'error_message': result.error_message,
+            'upload_time': result.upload_time,
+            'total_size': result.total_size,
+            'upload_speed': result.upload_speed,
+            'raw_result': self._json_safe(result.raw_result),
+        }
+
+    async def _mark_submission_task_running(self, upload_task: AsyncUploadTask):
+        if not self._is_submission_task(upload_task):
+            return
+        try:
+            from luboman.database.db import DB
+
+            await run_blocking(
+                DB.mark_submission_task_running,
+                self._submission_task_id(upload_task),
+                upload_task.retry_count,
+            )
+        except Exception:
+            logger.warning("投稿任务运行态回写失败: %s", upload_task.task_id, exc_info=True)
+
+    async def _mark_submission_task_retrying(self, upload_task: AsyncUploadTask, result: UploadResult):
+        if not self._is_submission_task(upload_task):
+            return
+        try:
+            from luboman.database.db import DB
+
+            await run_blocking(
+                DB.mark_submission_task_retrying,
+                self._submission_task_id(upload_task),
+                upload_task.retry_count,
+                result.error_message,
+            )
+        except Exception:
+            logger.warning("投稿任务重试态回写失败: %s", upload_task.task_id, exc_info=True)
+
+    async def _finish_submission_task(self, upload_task: AsyncUploadTask, result: UploadResult):
+        if not self._is_submission_task(upload_task):
+            return
+        try:
+            from luboman.database.db import DB
+
+            await run_blocking(
+                DB.finish_submission_task,
+                self._submission_task_id(upload_task),
+                result.success,
+                self._build_submission_result(result),
+                result.error_message,
+            )
+        except Exception:
+            logger.warning("投稿任务完成态回写失败: %s", upload_task.task_id, exc_info=True)
     
     async def _handle_upload_result(self, upload_task: AsyncUploadTask, result: UploadResult):
         """处理上传结果"""
@@ -386,7 +463,13 @@ class AsyncUploadScheduler:
                     f"延迟: {retry_delay}s"
                 )
                 
+                await self._mark_submission_task_retrying(upload_task, result)
                 self._track_retry_task(upload_task, retry_delay)
+            else:
+                await self._finish_submission_task(upload_task, result)
+
+        if result.success:
+            await self._finish_submission_task(upload_task, result)
         
         # 调用结果回调
         for callback in self.result_callbacks:
@@ -413,11 +496,11 @@ class AsyncUploadScheduler:
         self.retry_tasks.add(retry_task)
         retry_task.add_done_callback(self.retry_tasks.discard)
     
-    async def schedule_upload(self, upload_task: AsyncUploadTask):
+    async def schedule_upload(self, upload_task: AsyncUploadTask) -> bool:
         """调度上传任务"""
         if not self.running:
             logger.warning("上传调度器未运行，忽略上传任务")
-            return
+            return False
         
         try:
             # 使用优先级值作为队列排序键
@@ -432,23 +515,31 @@ class AsyncUploadScheduler:
                 f"优先级: {upload_task.priority.name}, "
                 f"队列大小: {self.stats['queue_size']}"
             )
+            return True
             
         except asyncio.QueueFull:
             logger.error(f"上传队列已满，丢弃任务: {upload_task.task_id}")
+            return False
     
     async def schedule_upload_simple(self, platform: str, file_list: List[Dict[str, Any]], 
                                    room_data: Optional[Dict[str, Any]] = None,
-                                   priority: UploadPriority = UploadPriority.NORMAL):
+                                   priority: UploadPriority = UploadPriority.NORMAL,
+                                   task_id: Optional[str] = None,
+                                   max_retries: int = 3,
+                                   metadata: Optional[Dict[str, Any]] = None):
         """简化的上传调度接口"""
         upload_task = AsyncUploadTask(
+            task_id=task_id or str(uuid.uuid4()),
             platform=platform,
             file_list=file_list,
             room_data=room_data or {},
-            priority=priority
+            priority=priority,
+            max_retries=max_retries,
+            metadata=metadata or {},
         )
         
-        await self.schedule_upload(upload_task)
-        return upload_task.task_id
+        scheduled = await self.schedule_upload(upload_task)
+        return upload_task.task_id if scheduled else None
     
     def add_result_callback(self, callback: callable):
         """添加结果回调函数"""
@@ -539,6 +630,95 @@ class AsyncUploadScheduler:
         }
 
 
+def _json_data(value):
+    return json.loads(json.dumps(value, default=str, ensure_ascii=False))
+
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_record_file_ids(file_list: List[Dict[str, Any]]) -> List[int]:
+    ids = []
+    for file_info in file_list or []:
+        row_id = _as_int(file_info.get('id') or file_info.get('record_file_id'))
+        if row_id is not None:
+            ids.append(row_id)
+    return ids
+
+
+async def schedule_bili_submission(
+    file_list: List[Dict[str, Any]],
+    room_data: Optional[Dict[str, Any]] = None,
+    source: str = 'AUTO',
+    priority: UploadPriority = UploadPriority.HIGH,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """创建投稿任务记录并排入异步上传调度器。"""
+    if not async_upload_scheduler.running:
+        raise RuntimeError('async upload scheduler is not running, please start the service via async_main.py')
+
+    room_data = room_data or {}
+    metadata = metadata or {}
+    task_id = str(uuid.uuid4())
+
+    from luboman.core.upload import resolve_bili_uploader
+    from luboman.database.db import DB
+
+    platform = resolve_bili_uploader(room_data)
+    template_info = room_data.get('bili_upload_template') or {}
+    record_file_ids = _extract_record_file_ids(file_list)
+    task_metadata = {
+        **metadata,
+        'submission_task': True,
+        'submission_task_id': task_id,
+        'source': source,
+    }
+
+    await run_blocking(DB.create_submission_task, {
+        'task_id': task_id,
+        'source': source,
+        'platform': platform,
+        'priority': priority.name,
+        'file_list': _json_data(file_list),
+        'file_count': len(file_list or []),
+        'record_file_ids': record_file_ids,
+        'live_room_id': _as_int(room_data.get('id') or room_data.get('live_room_id')),
+        'room_name': room_data.get('room_name'),
+        'room_platform': room_data.get('room_platform'),
+        'bili_upload_template_id': _as_int(
+            room_data.get('bili_upload_template_id') or template_info.get('id')
+        ),
+        'bili_upload_template_name': template_info.get('template_name'),
+        'uploader': platform,
+        'max_retries': 3,
+        'metadata': _json_data(metadata),
+    })
+
+    scheduled_task_id = await async_upload_scheduler.schedule_upload_simple(
+        platform=platform,
+        file_list=file_list,
+        room_data=room_data,
+        priority=priority,
+        task_id=task_id,
+        metadata=task_metadata,
+    )
+
+    if not scheduled_task_id:
+        message = 'upload queue is full or scheduler stopped'
+        await run_blocking(DB.mark_submission_task_failed, task_id, message)
+        raise RuntimeError(message)
+
+    return {
+        'task_id': task_id,
+        'file_count': len(file_list or []),
+        'uploader': platform,
+    }
+
+
 # 上传事件处理器
 class UploadEventHandler:
     """上传事件处理器 - 集成到异步事件系统"""
@@ -571,11 +751,10 @@ class UploadEventHandler:
         room_data = event.data.get('room_data', {})
         
         if file_list:
-            from luboman.core.upload import resolve_bili_uploader
-            await self.upload_scheduler.schedule_upload_simple(
-                platform=resolve_bili_uploader(room_data),
+            await schedule_bili_submission(
                 file_list=file_list,
                 room_data=room_data,
+                source='AUTO',
                 priority=UploadPriority.HIGH  # B站上传优先级较高
             )
 

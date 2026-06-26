@@ -50,13 +50,17 @@ class BiliWebUploader(Uploader):
         tasks = template_info.get('threads', 5)
         with BiliBili(video) as bili:
             cookies_file = bili_account.get('bili_cookies_filepath')
-            if os.path.exists(cookies_file):
+            cookies_file_content = ''
+            if cookies_file and os.path.exists(cookies_file):
                 cookies_file_content = open(cookies_file, 'r').read()
 
             if cookies_file_content:
                 bili.login(cookies_file)
-            else:
+            elif bili_account.get('bili_cookies'):
                 bili.login_by_cookies(bili_account.get('bili_cookies'))
+            else:
+                logger.warning("未设置可用的 B 站 cookie")
+                return False
 
             for file_info in self.file_list:
                 if not os.path.exists(file_info['video']):
@@ -69,6 +73,7 @@ class BiliWebUploader(Uploader):
             if template_info.get('cover_path') and os.path.exists(template_info.get('cover_path')):
                 video.cover = bili.cover_up(template_info.get('cover_path'))
             ret = bili.submit()  # 提交视频
+            return ret
 
 
 if __name__ == '__main__':

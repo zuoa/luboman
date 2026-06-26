@@ -53,6 +53,11 @@ export default defineConfig({
 
       routes: [
         {
+          name: '投稿任务',
+          path: '/bili/tasks',
+          component: './Bili/SubmissionTask',
+        },
+        {
           name: '投稿账号',
           path: '/bili/account',
           component: './Bili/BiliAccount',

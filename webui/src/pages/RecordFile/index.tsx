@@ -260,7 +260,7 @@ const RecordFileList: React.FC = () => {
           : {}),
       });
       message.success(
-        `已提交 ${res.file_count} 个文件上传，任务 ID：${res.task_id}`,
+        `已创建 ${res.file_count} 个文件的投稿任务，任务 ID：${res.task_id}`,
       );
       clearSelection();
       actionRef.current?.reload();

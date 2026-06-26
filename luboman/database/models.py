@@ -152,5 +152,33 @@ class RecordFile(BaseModel):
     upload_info = JSONField(null=True)
     series_code = CharField(null=True)
 
+
+class SubmissionTask(BaseModel):
+    """B站投稿任务"""
+    id = AutoField(primary_key=True)
+    task_id = CharField(unique=True, index=True)  # 调度器任务ID
+    source = CharField(default='AUTO')  # AUTO / FILE_MANAGER
+    platform = CharField(default='biliweb')  # 实际上传器
+    status = CharField(default='PENDING', index=True)  # PENDING / RUNNING / RETRYING / SUCCESS / FAILED
+    priority = CharField(default='NORMAL')
+    file_list = JSONField()
+    file_count = IntegerField(default=0)
+    record_file_ids = JSONField(null=True)
+    live_room_id = IntegerField(null=True)
+    room_name = CharField(null=True)
+    room_platform = CharField(null=True)
+    bili_upload_template_id = IntegerField(null=True)
+    bili_upload_template_name = CharField(null=True)
+    uploader = CharField(null=True)
+    retry_count = IntegerField(default=0)
+    max_retries = IntegerField(default=3)
+    error_message = TextField(null=True)
+    result = JSONField(null=True)
+    metadata = JSONField(null=True)
+    created_at = DateTimeField(default=get_current_time, index=True)
+    updated_at = DateTimeField(null=True)
+    started_at = DateTimeField(null=True)
+    finished_at = DateTimeField(null=True)
+
 # 注：(live_room_id, begin_time) 复合索引由 DB.init 用 CREATE INDEX IF NOT EXISTS 显式补建，
 # 兼容已存在的库（create_table(safe=True) 不会为旧表补索引）。

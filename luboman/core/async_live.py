@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any, Callable, Tuple
 from luboman.core.async_event import async_event_manager, AsyncEvent, AsyncEventType
 from luboman.core.async_network import async_network_manager, NetworkRequest
 from luboman.core.async_database import async_database_manager
+from luboman.core.async_upload import UploadPriority, schedule_bili_submission
 from luboman.core.async_utils import run_blocking
 from luboman.config import config
 
@@ -229,18 +230,14 @@ class AsyncLiveBase:
             prepare_upload_file_list = await self._filter_upload_files(file_list)
             
             if prepare_upload_file_list:
-                # 异步上传
-                upload_info = {
-                    'room_data': {**self.room_data, 'bili_upload_template': template_info}
-                }
-                
-                # 这里应该调用异步上传功能
-                # 目前保持与原有上传系统的兼容
-                from luboman.core.upload import resolve_bili_uploader, upload
-                bili_uploader = resolve_bili_uploader(upload_info['room_data'])
-                result = await run_blocking(upload, bili_uploader, prepare_upload_file_list, **upload_info)
-                
-                logger.info(f'{self.log_prefix} 异步Bili上传完成: {result}')
+                result = await schedule_bili_submission(
+                    file_list=prepare_upload_file_list,
+                    room_data={**self.room_data, 'bili_upload_template': template_info},
+                    source='AUTO',
+                    priority=UploadPriority.HIGH,
+                    metadata={'created_from': 'auto_record'},
+                )
+                logger.info(f'{self.log_prefix} B站投稿任务已创建: {result}')
         
         @self._scoped_handler(AsyncEventType.EVENT_PRE_RECORD, priority=1)
         async def async_process_pre_record(event: AsyncEvent):

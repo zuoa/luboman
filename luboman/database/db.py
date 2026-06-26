@@ -7,12 +7,21 @@ from datetime import datetime, timedelta
 from peewee import JOIN, fn
 from playhouse.shortcuts import model_to_dict
 
-from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile
+from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile, SubmissionTask
 
 logger = logging.getLogger('luboman')
 
 RECORD_FILE_STATUS_RECORDING = 'RECORDING'
 RECORD_FILE_STATUS_COMPLETED = 'COMPLETED'
+
+SUBMISSION_TASK_STATUS_PENDING = 'PENDING'
+SUBMISSION_TASK_STATUS_RUNNING = 'RUNNING'
+SUBMISSION_TASK_STATUS_RETRYING = 'RETRYING'
+SUBMISSION_TASK_STATUS_SUCCESS = 'SUCCESS'
+SUBMISSION_TASK_STATUS_FAILED = 'FAILED'
+
+SUBMISSION_TASK_SOURCE_AUTO = 'AUTO'
+SUBMISSION_TASK_SOURCE_FILE_MANAGER = 'FILE_MANAGER'
 
 
 def struct_time_to_datetime(date: time.struct_time):
@@ -34,7 +43,9 @@ class DB:
         BiliAccount.create_table(safe=True)
         BiliUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
+        SubmissionTask.create_table(safe=True)
         cls._ensure_record_file_schema()
+        cls.recover_interrupted_submission_tasks()
         # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
         # 不会为已存在的表补索引）。大表上建索引耗时，放后台守护线程异步进行，绝不阻塞/阻断启动。
         threading.Thread(target=cls._ensure_record_file_index, daemon=True, name='recordfile-index').start()
@@ -507,6 +518,189 @@ class DB:
             return 0
         with db.connection_context():
             return RecordFile.delete().where(RecordFile.video.startswith(path_prefix)).execute()
+
+    @classmethod
+    def create_submission_task(cls, data):
+        """创建投稿任务记录。task_id 由上传调度器共享，用于后续状态回写。"""
+        with db.connection_context():
+            payload = cls.filter_model_data(SubmissionTask, data)
+            payload.setdefault('created_at', datetime.now())
+            payload.setdefault('updated_at', datetime.now())
+            payload.setdefault('status', SUBMISSION_TASK_STATUS_PENDING)
+            payload.setdefault('source', SUBMISSION_TASK_SOURCE_AUTO)
+            file_list = payload.get('file_list') or []
+            payload.setdefault('file_count', len(file_list))
+            task = SubmissionTask.create(**payload)
+            return model_to_dict(task)
+
+    @classmethod
+    def mark_submission_task_running(cls, task_id, retry_count=0):
+        with db.connection_context():
+            try:
+                task = SubmissionTask.get(SubmissionTask.task_id == task_id)
+            except SubmissionTask.DoesNotExist:
+                return None
+
+            task.status = SUBMISSION_TASK_STATUS_RUNNING
+            task.retry_count = retry_count or 0
+            task.updated_at = datetime.now()
+            if task.started_at is None:
+                task.started_at = task.updated_at
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def mark_submission_task_retrying(cls, task_id, retry_count, error_message=None):
+        with db.connection_context():
+            try:
+                task = SubmissionTask.get(SubmissionTask.task_id == task_id)
+            except SubmissionTask.DoesNotExist:
+                return None
+
+            task.status = SUBMISSION_TASK_STATUS_RETRYING
+            task.retry_count = retry_count or 0
+            task.error_message = error_message
+            task.updated_at = datetime.now()
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def finish_submission_task(cls, task_id, success, result=None, error_message=None):
+        with db.connection_context():
+            try:
+                task = SubmissionTask.get(SubmissionTask.task_id == task_id)
+            except SubmissionTask.DoesNotExist:
+                return None
+
+            now = datetime.now()
+            task.status = SUBMISSION_TASK_STATUS_SUCCESS if success else SUBMISSION_TASK_STATUS_FAILED
+            task.error_message = None if success else error_message
+            task.result = result
+            task.updated_at = now
+            task.finished_at = now
+            task.save()
+
+            record_file_ids = task.record_file_ids or []
+            if success and record_file_ids:
+                RecordFile.update(upload_info={
+                    'task_id': task.task_id,
+                    'platform': task.platform,
+                    'status': SUBMISSION_TASK_STATUS_SUCCESS,
+                    'finished_at': str(now),
+                    'result': result,
+                }).where(RecordFile.id.in_(record_file_ids)).execute()
+
+            return model_to_dict(task)
+
+    @classmethod
+    def mark_submission_task_failed(cls, task_id, error_message, result=None):
+        return cls.finish_submission_task(
+            task_id,
+            success=False,
+            result=result,
+            error_message=error_message,
+        )
+
+    @classmethod
+    def recover_interrupted_submission_tasks(cls):
+        """服务重启后内存上传队列不可恢复，收敛旧的未终态任务。"""
+        with db.connection_context():
+            now = datetime.now()
+            return (
+                SubmissionTask
+                .update(
+                    status=SUBMISSION_TASK_STATUS_FAILED,
+                    error_message='service restarted before task finished',
+                    updated_at=now,
+                    finished_at=now,
+                )
+                .where(SubmissionTask.status.in_([
+                    SUBMISSION_TASK_STATUS_PENDING,
+                    SUBMISSION_TASK_STATUS_RUNNING,
+                    SUBMISSION_TASK_STATUS_RETRYING,
+                ]))
+                .execute()
+            )
+
+    @classmethod
+    def list_submission_task(cls, filters=None, page=None, page_size=None):
+        filters = filters or {}
+        with db.connection_context():
+            query = SubmissionTask.select()
+
+            status = (filters.get('status') or '').strip()
+            if status:
+                query = query.where(SubmissionTask.status == status)
+
+            source = (filters.get('source') or '').strip()
+            if source:
+                query = query.where(SubmissionTask.source == source)
+
+            platform = (filters.get('platform') or '').strip()
+            if platform:
+                query = query.where(SubmissionTask.platform == platform)
+
+            live_room_id = filters.get('live_room_id')
+            if live_room_id is not None:
+                query = query.where(SubmissionTask.live_room_id == live_room_id)
+
+            keyword = (filters.get('keyword') or '').strip()
+            if keyword:
+                query = query.where(
+                    SubmissionTask.task_id.contains(keyword) |
+                    SubmissionTask.room_name.contains(keyword) |
+                    SubmissionTask.uploader.contains(keyword) |
+                    SubmissionTask.bili_upload_template_name.contains(keyword)
+                )
+
+            total = query.count()
+            query = query.order_by(SubmissionTask.created_at.desc())
+            if page and page_size:
+                query = query.paginate(page, page_size)
+
+            return [model_to_dict(item) for item in query], total
+
+    @classmethod
+    def get_submission_task(cls, task_id=None, row_id=None):
+        with db.connection_context():
+            if row_id:
+                return model_to_dict(SubmissionTask.get_by_id(row_id))
+            if task_id:
+                return model_to_dict(SubmissionTask.get(SubmissionTask.task_id == task_id))
+            raise ValueError('task_id or id is required')
+
+    @classmethod
+    def get_submission_task_stats(cls):
+        with db.connection_context():
+            by_status = {
+                row['status']: row['count']
+                for row in (
+                    SubmissionTask
+                    .select(SubmissionTask.status, fn.COUNT(SubmissionTask.id).alias('count'))
+                    .group_by(SubmissionTask.status)
+                    .dicts()
+                )
+            }
+            by_source = {
+                row['source']: row['count']
+                for row in (
+                    SubmissionTask
+                    .select(SubmissionTask.source, fn.COUNT(SubmissionTask.id).alias('count'))
+                    .group_by(SubmissionTask.source)
+                    .dicts()
+                )
+            }
+            active = sum(by_status.get(status, 0) for status in (
+                SUBMISSION_TASK_STATUS_PENDING,
+                SUBMISSION_TASK_STATUS_RUNNING,
+                SUBMISSION_TASK_STATUS_RETRYING,
+            ))
+            return {
+                'by_status': by_status,
+                'by_source': by_source,
+                'active': active,
+                'total': sum(by_status.values()),
+            }
 
     @classmethod
     def get_first_bili_account(cls):

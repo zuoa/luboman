@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import urllib
 
 from dataclasses import asdict, dataclass, field, InitVar
@@ -36,7 +37,7 @@ class Uploader:
         if not self.file_list:
             return
 
-        self.upload()
+        return self.upload()
 
     def upload(self):
         raise NotImplementedError
@@ -716,7 +717,10 @@ def resolve_bili_uploader(room_data=None):
 
 def upload(uploader_platform, file_list, **kwargs):
     if not uploader_platform:
-        return
+        return {
+            'success': False,
+            'error_message': '未指定上传器',
+        }
     """
     上传入口
     """
@@ -725,7 +729,14 @@ def upload(uploader_platform, file_list, **kwargs):
         context = {}
         cls = PluginTool.upload_plugins.get(uploader_platform)
         if cls is None:
-            return logger.error(f"No such uploader: {uploader_platform}")
+            message = f"No such uploader: {uploader_platform}"
+            logger.error(message)
+            return {
+                'success': False,
+                'error_message': message,
+                'uploader': uploader_platform,
+                'registered_uploaders': sorted(PluginTool.upload_plugins.keys()),
+            }
         sig = inspect.signature(cls)
         accepts_kwargs = any(
             param.kind == inspect.Parameter.VAR_KEYWORD
@@ -745,5 +756,11 @@ def upload(uploader_platform, file_list, **kwargs):
             }
 
         return cls(file_list, **init_kwargs).start()
-    except:
+    except Exception as exc:
         logger.exception("Uncaught exception:")
+        return {
+            'success': False,
+            'error_message': f'上传器执行异常: {exc}',
+            'uploader': uploader_platform,
+            'traceback': traceback.format_exc(),
+        }

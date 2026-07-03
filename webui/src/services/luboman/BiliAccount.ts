@@ -86,21 +86,6 @@ export async function getBiliupLoginStatus(
   );
 }
 
-/** 向 biliup-rs 登录会话发送一行输入。 */
-export async function sendBiliupLoginInput(
-  body: { session_id: string; input: string },
-  options?: { [key: string]: any },
-) {
-  return request<API.BiliupLoginSession>(
-    REQUEST_HOST + '/v1/BiliAccount/biliupLogin/input',
-    {
-      method: 'POST',
-      data: body,
-      ...(options || {}),
-    },
-  );
-}
-
 /** 停止 biliup-rs 登录会话。 */
 export async function stopBiliupLogin(
   body: { session_id: string },

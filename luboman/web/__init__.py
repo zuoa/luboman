@@ -726,19 +726,6 @@ async def get_biliup_login_status(request):
         return error(1, str(e))
 
 
-@routes.post("/v1/BiliAccount/biliupLogin/input")
-async def send_biliup_login_input(request):
-    data = await request.json()
-    try:
-        return success(biliup_login_manager.send_input(
-            data.get('session_id'),
-            data.get('input') or '',
-        ))
-    except Exception as e:
-        logger.error(e)
-        return error(1, str(e))
-
-
 @routes.post("/v1/BiliAccount/biliupLogin/stop")
 async def stop_biliup_login(request):
     data = await request.json()

@@ -321,6 +321,11 @@ class AsyncLubomanApplication:
                     break
 
                 active_count, invalid = await run_blocking(bili_account_health.check_active_accounts)
+
+                # 失效账号先尝试 token 续期;续期成功恢复的不再告警,仍失效的才提示重新扫码
+                if invalid and config.get('biliup_renew_enabled', True):
+                    invalid = await run_blocking(bili_account_health.renew_and_recheck, invalid)
+
                 invalid_ids = {a.get('id') for a in invalid}
 
                 newly_invalid = [a for a in invalid if a.get('id') not in self._alerted_account_ids]

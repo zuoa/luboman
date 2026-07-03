@@ -4,7 +4,6 @@ import {
   PlusOutlined,
   QrcodeOutlined,
   ReloadOutlined,
-  SendOutlined,
   StopOutlined,
 } from '@ant-design/icons';
 import {
@@ -21,8 +20,8 @@ import {
   Badge,
   Button,
   Form,
-  Input,
   Popconfirm,
+  QRCode,
   Space,
   Tag,
   message,
@@ -37,13 +36,12 @@ const {
   checkBiliAccountLogin,
   startBiliupLogin,
   getBiliupLoginStatus,
-  sendBiliupLoginInput,
   stopBiliupLogin,
 } = services.BiliAccount;
 
 const loginStatusText: Record<string, string> = {
   created: '已创建',
-  running: '运行中',
+  waiting: '等待扫码',
   success: '已完成',
   failed: '失败',
   stopped: '已停止',
@@ -52,7 +50,7 @@ const loginStatusText: Record<string, string> = {
 
 const loginStatusColor: Record<string, string> = {
   created: 'default',
-  running: 'processing',
+  waiting: 'processing',
   success: 'success',
   failed: 'error',
   stopped: 'default',
@@ -69,12 +67,10 @@ const BiliAccountList: React.FC = () => {
     Record<number, API.BiliAccountLoginCheckItem>
   >({});
   const [loginSession, setLoginSession] = useState<API.BiliupLoginSession>();
-  const [loginOutput, setLoginOutput] = useState<string[]>([]);
-  const [loginInput, setLoginInput] = useState('');
   const [biliupLoading, setBiliupLoading] = useState(false);
 
   useEffect(() => {
-    if (!loginSession?.session_id || loginSession.status !== 'running') {
+    if (!loginSession?.session_id || loginSession.status !== 'waiting') {
       return undefined;
     }
 
@@ -85,9 +81,8 @@ const BiliAccountList: React.FC = () => {
           { skipErrorHandler: true },
         );
         setLoginSession(next);
-        setLoginOutput(next.output || []);
       } catch {
-        // 轮询失败时保留当前输出，统一错误提示会干扰扫码登录流程。
+        // 轮询失败时保留当前二维码，统一错误提示会干扰扫码登录流程。
       }
     }, 1200);
 
@@ -150,22 +145,9 @@ const BiliAccountList: React.FC = () => {
       });
       form.setFieldValue('bili_cookies_filepath', session.cookie_path);
       setLoginSession(session);
-      setLoginOutput(session.output || []);
     } finally {
       setBiliupLoading(false);
     }
-  };
-
-  const handleSendLoginInput = async () => {
-    const input = loginInput.trim();
-    if (!loginSession?.session_id || !input) return;
-    const session = await sendBiliupLoginInput({
-      session_id: loginSession.session_id,
-      input,
-    });
-    setLoginSession(session);
-    setLoginOutput(session.output || []);
-    setLoginInput('');
   };
 
   const handleStopBiliupLogin = async () => {
@@ -174,21 +156,18 @@ const BiliAccountList: React.FC = () => {
       session_id: loginSession.session_id,
     });
     setLoginSession(session);
-    setLoginOutput(session.output || []);
   };
 
   const resetCreateState = () => {
     form.resetFields();
     setReloginAccount(undefined);
     setLoginSession(undefined);
-    setLoginOutput([]);
-    setLoginInput('');
     setBiliupLoading(false);
   };
 
   const handleCreateOpenChange = (open: boolean) => {
     if (!open) {
-      if (loginSession?.status === 'running') {
+      if (loginSession?.status === 'waiting') {
         stopBiliupLogin(
           { session_id: loginSession.session_id },
           { skipErrorHandler: true },
@@ -336,7 +315,7 @@ const BiliAccountList: React.FC = () => {
             payload.bili_cookies_filepath = values.bili_cookies_filepath;
           } else if (values.cookieType === 'biliup') {
             if (loginSession?.status !== 'success') {
-              message.error('biliup-rs 登录未完成');
+              message.error('请先完成扫码登录');
               return false;
             }
             payload.bili_cookies_filepath =
@@ -388,14 +367,14 @@ const BiliAccountList: React.FC = () => {
                   <Button
                     icon={<QrcodeOutlined />}
                     loading={biliupLoading}
-                    disabled={loginSession?.status === 'running'}
+                    disabled={loginSession?.status === 'waiting'}
                     onClick={handleStartBiliupLogin}
                   >
                     启动登录
                   </Button>
                   <Button
                     icon={<StopOutlined />}
-                    disabled={loginSession?.status !== 'running'}
+                    disabled={loginSession?.status !== 'waiting'}
                     onClick={handleStopBiliupLogin}
                   >
                     停止
@@ -409,30 +388,40 @@ const BiliAccountList: React.FC = () => {
                     </Tag>
                   ) : null}
                 </Space>
-                <Input.Search
-                  value={loginInput}
-                  placeholder="输入"
-                  enterButton={<SendOutlined />}
-                  disabled={loginSession?.status !== 'running'}
-                  onChange={(event) => setLoginInput(event.target.value)}
-                  onSearch={handleSendLoginInput}
-                  style={{ marginBottom: 12 }}
-                />
-                <pre
-                  style={{
-                    minHeight: 180,
-                    maxHeight: 300,
-                    overflow: 'auto',
-                    padding: 12,
-                    borderRadius: 6,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  {loginOutput.join('\n')}
-                </pre>
+                {loginSession?.qrcode_url ? (
+                  <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
+                    <QRCode value={loginSession.qrcode_url} size={180} />
+                    <div
+                      style={{
+                        marginTop: 12,
+                        color: 'rgba(255,255,255,0.65)',
+                        fontSize: 13,
+                      }}
+                    >
+                      请使用哔哩哔哩 App 扫码登录
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      minHeight: 180,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'rgba(255,255,255,0.45)',
+                      fontSize: 13,
+                      padding: 12,
+                      marginBottom: 12,
+                      borderRadius: 6,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                    }}
+                  >
+                    {loginSession
+                      ? loginSession.error_message || '正在获取二维码…'
+                      : '点击「启动登录」获取二维码'}
+                  </div>
+                )}
               </>
             ) : (
               <ProFormTextArea

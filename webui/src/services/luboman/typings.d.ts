@@ -99,7 +99,7 @@ declare namespace API {
 
   type BiliupLoginStatus =
     | 'created'
-    | 'running'
+    | 'waiting'
     | 'success'
     | 'failed'
     | 'stopped'
@@ -108,12 +108,10 @@ declare namespace API {
   interface BiliupLoginSession {
     session_id: string;
     cookie_path: string;
-    command: string;
     status: BiliupLoginStatus | string;
-    exit_code?: number | null;
+    /** 二维码登录 URL，前端用 QRCodeSVG 渲染；status=waiting 时有值 */
+    qrcode_url?: string | null;
     error_message?: string | null;
-    output: string[];
-    output_offset: number;
     created_at: number;
     updated_at: number;
   }

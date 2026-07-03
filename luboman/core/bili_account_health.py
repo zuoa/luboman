@@ -8,6 +8,7 @@ plugins/bilibili.py 的 do_login 与 core/upload.py 的 login_by_cookies 用的�
 import json
 import logging
 import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -235,3 +236,73 @@ def check_active_accounts():
 # 兼容旧的私有函数名，避免已有导入断裂。
 _cookies_from_biliup_file = cookies_from_biliup_file
 _resolve_cookie_str = resolve_cookie_str
+
+
+def renew_account(account):
+    """对单个账号调用 ``biliup -u <cookie> renew`` 刷新 token。
+
+    renew 不需要 TTY(纯读写 cookie 文件 + 网络请求),用 subprocess 调用是安全的。
+    返回 (是否成功, 消息)。
+    """
+    from luboman.config import config
+
+    cookie_path = account.get('bili_cookies_filepath')
+    if not cookie_path or not os.path.isfile(cookie_path):
+        return False, '未配置有效的 cookie 文件,需重新扫码登录'
+
+    biliup_path = config.get('biliup_path', 'biliup')
+    try:
+        proc = subprocess.run(
+            [biliup_path, '-u', cookie_path, 'renew'],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        return False, f'未找到 biliup 命令: {biliup_path}'
+    except subprocess.TimeoutExpired:
+        return False, 'biliup renew 执行超时'
+    except Exception as exc:
+        return False, f'调用 biliup renew 失败: {exc}'
+
+    if proc.returncode != 0:
+        tail = ((proc.stdout or '') + (proc.stderr or ''))[-200:].strip()
+        return False, f'biliup renew 退出码 {proc.returncode}: {tail}'
+
+    return True, 'ok'
+
+
+def renew_and_recheck(invalid_accounts):
+    """对失效账号逐一 renew,renew 后复用 check_account 重新校验登录态。
+
+    返回 renew 后仍失效的账号列表(供巡检任务告警);renew 成功恢复的账号
+    会被排除,从而不会刷屏告警。
+    """
+    if not invalid_accounts:
+        return []
+
+    still_invalid = []
+    for account in invalid_accounts:
+        name = account.get('account_name') or f"id={account.get('id')}"
+        cookie_path = account.get('bili_cookies_filepath')
+        if not cookie_path or not os.path.isfile(cookie_path):
+            logger.warning(f'B站账号「{name}」无可续期的 cookie 文件,需重新扫码登录')
+            still_invalid.append(account)
+            continue
+
+        ok, msg = renew_account(account)
+        if not ok:
+            logger.warning(f'B站账号「{name}」token 续期失败: {msg}')
+            still_invalid.append(account)
+            continue
+
+        recheck = check_account(account)
+        if recheck.get('login_valid'):
+            logger.info(f'B站账号「{name}」token 续期成功,登录态已恢复')
+        else:
+            logger.warning(
+                f'B站账号「{name}」续期后登录态仍无效: {recheck.get("message")}，需重新扫码登录'
+            )
+            still_invalid.append(account)
+
+    return still_invalid

@@ -704,10 +704,14 @@ async def check_bili_account_login(request):
 async def start_biliup_login(request):
     data = await request.json()
     try:
-        return success(biliup_login_manager.start_session(
-            cookie_path=data.get('bili_cookies_filepath'),
-            label=data.get('account_name'),
-        ))
+        # start_session 内同步调用 stream_gears.get_qrcode(阻塞网络请求),必须放
+        # 线程池,否则会卡死 aiohttp event loop 导致请求永不响应(前端 499)。
+        snapshot = await run_db(
+            biliup_login_manager.start_session,
+            data.get('bili_cookies_filepath'),
+            data.get('account_name'),
+        )
+        return success(snapshot)
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

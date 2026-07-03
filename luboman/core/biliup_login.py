@@ -115,6 +115,7 @@ class BiliupLoginSession:
             if self.status != 'created':
                 return
             self.updated_at = time.time()
+        logger.info('启动 biliup 扫码登录会话 %s,cookie -> %s', self.session_id, self.cookie_path)
 
         try:
             os.makedirs(os.path.dirname(self.cookie_path), exist_ok=True)

@@ -259,12 +259,32 @@ class BiliupLoginSession:
             if proc.poll() is not None:
                 break
 
+        # 子进程退出后,PTY 读端会以 EIO/EOF 结束——读循环在 OSError/空读处
+        # break,跳过了循环末尾的 proc.poll(),导致此处的 proc.returncode 可能
+        # 仍是 None(子进程已退出但尚未被 reap)。显式 wait() 拿到真实退出码,
+        # 仅用于失败时的错误信息。
+        if proc.returncode is None:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
         return_code = proc.returncode
+
         with self._lock:
             if self.status in ('stopped', 'expired', 'failed'):
                 return
 
-        if return_code == 0 and os.path.isfile(self.cookie_path):
+        # biliup-rs 仅在登录成功时才写 cookie 文件,故「文件存在且非空」是成功的
+        # 权威信号——比依赖退出码更可靠(退出码会因上述 reap 时序偶发为 None)。
+        cookie_ok = (
+            os.path.isfile(self.cookie_path)
+            and os.path.getsize(self.cookie_path) > 0
+        )
+        if cookie_ok:
             with self._lock:
                 if self.status in ('created', 'waiting'):
                     self.status = 'success'

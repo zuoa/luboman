@@ -43,6 +43,11 @@ export default defineConfig({
       component: './RecordFile',
     },
     {
+      name: '切片任务',
+      path: '/clipTask',
+      component: './ClipTask',
+    },
+    {
       name: '录播设置',
       path: '/config',
       component: './Config',

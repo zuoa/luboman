@@ -29,6 +29,12 @@ const ConfigPage: React.FC = () => {
     filtering_threshold_file_size: 10,
     local_video_file_remain_days: 3,
     record_file_stale_timeout_seconds: 3600,
+    dance_clip_sample_interval: 2,
+    dance_clip_merge_gap_seconds: 30,
+    dance_clip_min_clip_seconds: 60,
+    dance_clip_pad_seconds: 2,
+    dance_clip_accurate_cut: 'false',
+    dance_clip_concurrency: 1,
     douyin_cookies: '',
     afreecatv_username: '',
     afreecatv_password: '',
@@ -198,6 +204,75 @@ const ConfigPage: React.FC = () => {
               min={1}
               max={1024}
               extra="小于此大小的文件将被忽略"
+            />
+          </div>
+        </ProCard>
+
+        <ProCard
+          title={sectionTitle(
+            '切片探测',
+            '配置三分屏（舞蹈）画面探测与自动切片参数',
+          )}
+          bordered
+          headerBordered
+          style={{ marginBottom: 16 }}
+        >
+          <div className={styles.tip}>
+            <InfoCircleOutlined />
+            <span>
+              在文件管理页勾选录像后点「探测」，系统会检测三分屏画面区间并自动切片，
+              切片会出现在文件管理列表中
+            </span>
+          </div>
+          <div className={styles.fieldGroup}>
+            <ProFormDigit
+              name="dance_clip_sample_interval"
+              label="采样间隔（秒）"
+              placeholder="2"
+              min={0.5}
+              max={10}
+              extra="每隔多少秒取一帧判断是否为三分屏，越小越精确但越慢"
+            />
+            <ProFormDigit
+              name="dance_clip_merge_gap_seconds"
+              label="区间合并间隔（秒）"
+              placeholder="30"
+              min={0}
+              max={300}
+              extra="相邻三分屏区间间隔小于该值时合并为一段"
+            />
+            <ProFormDigit
+              name="dance_clip_min_clip_seconds"
+              label="最短切片时长（秒）"
+              placeholder="60"
+              min={5}
+              max={3600}
+              extra="合并后短于该时长的区间将被丢弃"
+            />
+            <ProFormDigit
+              name="dance_clip_pad_seconds"
+              label="头尾扩展（秒）"
+              placeholder="2"
+              min={0}
+              max={30}
+              extra="切片区间头尾各扩展的秒数，避免切掉开头结尾"
+            />
+            <ProFormSelect
+              name="dance_clip_accurate_cut"
+              label="切割模式"
+              options={[
+                { label: '快速无损（对齐关键帧，可能有数秒偏差）', value: 'false' },
+                { label: '精确切割（重编码，慢但帧级精确）', value: 'true' },
+              ]}
+              extra="快速模式直接复制流不重编码；精确模式统一输出 mp4"
+            />
+            <ProFormDigit
+              name="dance_clip_concurrency"
+              label="任务并发数"
+              placeholder="1"
+              min={1}
+              max={4}
+              extra="同时执行的切片任务数，探测吃 CPU，不宜过大；重启后生效"
             />
           </div>
         </ProCard>

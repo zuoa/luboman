@@ -12,3 +12,5 @@ aiohttp
 aiohttp_cors
 gmssl
 biliup
+opencv-python-headless
+numpy

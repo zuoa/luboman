@@ -29,6 +29,7 @@ from luboman.core.async_network import async_network_manager
 from luboman.core.async_database import async_database_manager
 from luboman.core.async_live import AsyncLiveBase, async_live_room_manager
 from luboman.core.async_upload import async_upload_scheduler, upload_event_handler
+from luboman.core.dance_clip import clip_scheduler
 from luboman.core.async_utils import run_blocking
 from luboman.core.runtime import start_room_runtime
 
@@ -48,6 +49,7 @@ class AsyncLubomanApplication:
             async_network_manager,
             async_database_manager,
             async_upload_scheduler,
+            clip_scheduler,
             async_live_room_manager
         ]
         

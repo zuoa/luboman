@@ -180,5 +180,26 @@ class SubmissionTask(BaseModel):
     started_at = DateTimeField(null=True)
     finished_at = DateTimeField(null=True)
 
+
+class ClipTask(BaseModel):
+    """三分屏舞蹈片段探测切片任务"""
+    id = AutoField(primary_key=True)
+    task_id = CharField(unique=True, index=True)  # 调度器任务ID
+    status = CharField(default='PENDING', index=True)  # PENDING / RUNNING / SUCCESS / FAILED
+    source_record_file_ids = JSONField()  # 来源录像 RecordFile id 列表
+    record_file_count = IntegerField(default=0)  # 来源文件数
+    live_room_id = IntegerField(null=True)
+    room_name = CharField(null=True)
+    params = JSONField(null=True)  # 本次探测参数快照
+    intervals = JSONField(null=True)  # [{record_file_id, video, intervals: [[s, e], ...]}]
+    clip_record_file_ids = JSONField(null=True)  # 生成的切片 RecordFile id 列表
+    clip_count = IntegerField(default=0)
+    progress = IntegerField(default=0)  # 0-100，按文件粒度回写
+    error_message = TextField(null=True)
+    created_at = DateTimeField(default=get_current_time, index=True)
+    updated_at = DateTimeField(null=True)
+    started_at = DateTimeField(null=True)
+    finished_at = DateTimeField(null=True)
+
 # 注：(live_room_id, begin_time) 复合索引由 DB.init 用 CREATE INDEX IF NOT EXISTS 显式补建，
 # 兼容已存在的库（create_table(safe=True) 不会为旧表补索引）。

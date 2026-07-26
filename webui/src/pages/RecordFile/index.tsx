@@ -3,6 +3,7 @@ import {
   CloudUploadOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  ScissorOutlined,
 } from '@ant-design/icons';
 import {
   ActionType,
@@ -12,6 +13,7 @@ import {
   ProFormText,
   ProTable,
 } from '@ant-design/pro-components';
+import { history } from '@umijs/max';
 import {
   Alert,
   Badge,
@@ -40,6 +42,7 @@ const {
   listRecordFileRoomSummary,
   publishRecordFileToBili,
 } = services.RecordFile;
+const { detectDanceClip } = services.ClipTask;
 const { listLiveRoom } = services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
 
@@ -125,6 +128,11 @@ function roomSummaryName(room: API.RecordFileRoomSummary): string {
 
 function isRecordCompleted(row: API.RecordFileInfo): boolean {
   return (row.status || RECORD_STATUS_COMPLETED) === RECORD_STATUS_COMPLETED;
+}
+
+/** 是否为探测切片产出的记录（series_code 以 CLIP: 开头标记来源录像 id） */
+function isClipRecord(row: API.RecordFileInfo): boolean {
+  return !!row.series_code && row.series_code.startsWith('CLIP:');
 }
 
 /** 浏览器原生 <video> 不支持 FLV，需走 flv.js；按路径后缀判断是否为 FLV。 */
@@ -245,6 +253,36 @@ const RecordFileList: React.FC = () => {
   const reloadRecordFiles = () => {
     fetchRoomSummary(summaryExistsOnly);
     actionRef.current?.reload();
+  };
+
+  const handleDetectDanceClip = () => {
+    const target = selectedRows.filter(
+      (row) => row.id != null && row.exists && isRecordCompleted(row),
+    );
+    if (!target.length) return;
+    Modal.confirm({
+      title: `探测三分屏舞蹈片段（${target.length} 个文件）`,
+      content:
+        '将检测所选录像中的三分屏（舞蹈）画面并自动切片，任务异步执行，可在「切片任务」页查看进度；切片产出会出现在文件管理列表中。',
+      okText: '开始探测',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await detectDanceClip({
+            file_ids: target.map((row) => row.id as number),
+          });
+          clearSelection();
+          Modal.success({
+            title: '切片任务已创建',
+            content: `任务 ID：${res.task_id}，共 ${res.file_count} 个文件。`,
+            okText: '查看切片任务',
+            onOk: () => history.push('/clipTask'),
+          });
+        } catch {
+          // 统一错误层已弹 toast
+        }
+      },
+    });
   };
 
   const handlePublish = async (values: any) => {
@@ -384,12 +422,15 @@ const RecordFileList: React.FC = () => {
     {
       title: '来源',
       dataIndex: 'source',
-      width: 90,
+      width: 110,
       search: false,
       render: (_, r) => (
-        <Tag color={r.source === 'database' ? 'blue' : undefined}>
-          {r.source === 'database' ? '数据库' : '磁盘'}
-        </Tag>
+        <Space size={4}>
+          <Tag color={r.source === 'database' ? 'blue' : undefined}>
+            {r.source === 'database' ? '数据库' : '磁盘'}
+          </Tag>
+          {isClipRecord(r) ? <Tag color="purple">切片</Tag> : null}
+        </Space>
       ),
     },
     {
@@ -545,6 +586,20 @@ const RecordFileList: React.FC = () => {
                 onClick={() => openPlayer(selectedRows[0])}
               >
                 播放
+              </Button>,
+              <Button
+                key="detect"
+                icon={<ScissorOutlined />}
+                disabled={
+                  !selectedRows.length ||
+                  hasRecordingSelection ||
+                  selectedRows.some((row) => row.id == null || !row.exists)
+                }
+                title="检测所选录像中的三分屏（舞蹈）画面并自动切片"
+                onClick={handleDetectDanceClip}
+              >
+                探测
+                {selectedRows.length ? ` (${selectedRows.length})` : ''}
               </Button>,
               <Button
                 key="publish"

@@ -14,6 +14,7 @@ from luboman.config import config
 from luboman.core import bili_account_health
 from luboman.core.async_utils import run_blocking
 from luboman.core.async_upload import UploadPriority, schedule_bili_submission
+from luboman.core.dance_clip import clip_scheduler
 from luboman.core.biliup_login import biliup_login_manager
 from luboman.core.runtime import (
     collect_runtime_stats,
@@ -929,6 +930,95 @@ async def get_submission_task(request):
 async def get_submission_task_stats(request):
     try:
         return success(await run_db(DB.get_submission_task_stats))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+def _prepare_dance_clip_detect(data):
+    """同步校验探测请求，返回 (file_ids, live_room_id, room_name, params)。"""
+    file_ids = data.get('file_ids') or []
+    if not file_ids:
+        raise ValueError('file_ids is required')
+
+    records = _resolve_publish_record_files_from_ids(file_ids)
+
+    live_room_id = None
+    room_name = None
+    with db.connection_context():
+        first = RecordFile.get_by_id_(records[0]['id'])
+        live_room_id = first.live_room_id
+        room = LiveRoom.get_or_none(LiveRoom.id == live_room_id)
+        room_name = room.room_name if room else None
+
+    params = data.get('params') or {}
+    if not isinstance(params, dict):
+        raise ValueError('params must be an object')
+    return [r['id'] for r in records], live_room_id, room_name, params
+
+
+def _list_clip_tasks_data(params):
+    page = max(1, _as_int(params.get('page')) or 1)
+    page_size = _as_int(params.get('page_size')) or 50
+    page_size = min(max(1, page_size), 200)
+    filters = {
+        'status': (params.get('status') or '').strip() or None,
+        'keyword': (params.get('keyword') or '').strip() or None,
+        'live_room_id': _as_int(params.get('live_room_id')),
+    }
+    records, total = DB.list_clip_task(filters, page=page, page_size=page_size)
+    return records, total, page
+
+
+@routes.post('/v1/RecordFile/detectDanceClip')
+async def detect_dance_clip(request):
+    try:
+        data = await request.json()
+        file_ids, live_room_id, room_name, params = await run_db(_prepare_dance_clip_detect, data)
+        result = await clip_scheduler.schedule(
+            file_ids=file_ids,
+            live_room_id=live_room_id,
+            room_name=room_name,
+            params=params,
+        )
+        return success(result)
+    except ValueError as e:
+        return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/ClipTask/list')
+async def list_clip_task(request):
+    try:
+        params = await request.json()
+        page_entries, total, page = await run_db(_list_clip_tasks_data, params)
+        return resp_page_list(page_entries, total, page)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/ClipTask/detail')
+async def get_clip_task(request):
+    try:
+        data = await request.json()
+        task = await run_db(
+            DB.get_clip_task,
+            task_id=data.get('task_id'),
+            row_id=_as_int(data.get('id')),
+        )
+        return success(task)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/ClipTask/stats')
+async def get_clip_task_stats(request):
+    try:
+        return success(await run_db(DB.get_clip_task_stats))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

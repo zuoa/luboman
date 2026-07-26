@@ -275,4 +275,54 @@ declare namespace API {
     active: number;
     total: number;
   }
+
+  type ClipTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | string;
+
+  /** 单个来源录像的三分屏探测结果 */
+  interface ClipTaskFileIntervals {
+    record_file_id?: number;
+    video?: string;
+    /** 探测到的区间 [[start_sec, end_sec], ...] */
+    intervals?: [number, number][];
+    error?: string;
+  }
+
+  /** 三分屏舞蹈片段探测切片任务 */
+  interface ClipTaskInfo {
+    id?: number;
+    task_id: string;
+    status: ClipTaskStatus;
+    source_record_file_ids?: number[];
+    record_file_count?: number;
+    live_room_id?: number | null;
+    room_name?: string | null;
+    params?: Record<string, any> | null;
+    intervals?: ClipTaskFileIntervals[] | null;
+    clip_record_file_ids?: number[] | null;
+    clip_count?: number;
+    progress?: number;
+    error_message?: string | null;
+    created_at?: string;
+    updated_at?: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+  }
+
+  interface ClipTaskPage {
+    list: ClipTaskInfo[];
+    total: number;
+    page: number;
+  }
+
+  interface ClipTaskStats {
+    by_status: Record<string, number>;
+    active: number;
+    total: number;
+  }
+
+  /** RecordFile/detectDanceClip 响应 data */
+  interface DetectDanceClipResult {
+    task_id: string;
+    file_count: number;
+  }
 }

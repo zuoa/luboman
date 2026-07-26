@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from peewee import JOIN, fn
 from playhouse.shortcuts import model_to_dict
 
-from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile, SubmissionTask
+from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile, SubmissionTask, ClipTask
 
 logger = logging.getLogger('luboman')
 
@@ -22,6 +22,11 @@ SUBMISSION_TASK_STATUS_FAILED = 'FAILED'
 
 SUBMISSION_TASK_SOURCE_AUTO = 'AUTO'
 SUBMISSION_TASK_SOURCE_FILE_MANAGER = 'FILE_MANAGER'
+
+CLIP_TASK_STATUS_PENDING = 'PENDING'
+CLIP_TASK_STATUS_RUNNING = 'RUNNING'
+CLIP_TASK_STATUS_SUCCESS = 'SUCCESS'
+CLIP_TASK_STATUS_FAILED = 'FAILED'
 
 
 def struct_time_to_datetime(date: time.struct_time):
@@ -44,8 +49,10 @@ class DB:
         BiliUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
         SubmissionTask.create_table(safe=True)
+        ClipTask.create_table(safe=True)
         cls._ensure_record_file_schema()
         cls.recover_interrupted_submission_tasks()
+        cls.recover_interrupted_clip_tasks()
         # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
         # 不会为已存在的表补索引）。大表上建索引耗时，放后台守护线程异步进行，绝不阻塞/阻断启动。
         threading.Thread(target=cls._ensure_record_file_index, daemon=True, name='recordfile-index').start()
@@ -707,6 +714,173 @@ class DB:
         with db.connection_context():
             return BiliAccount.select().where(BiliAccount.state_active == 1).first()
 
+    # ---------------- 三分屏探测切片任务 ----------------
+
+    @classmethod
+    def create_clip_task(cls, data):
+        """创建切片任务记录。task_id 由调度器共享，用于后续状态回写。"""
+        with db.connection_context():
+            payload = cls.filter_model_data(ClipTask, data)
+            payload.setdefault('created_at', datetime.now())
+            payload.setdefault('updated_at', datetime.now())
+            payload.setdefault('status', CLIP_TASK_STATUS_PENDING)
+            ids = payload.get('source_record_file_ids') or []
+            payload.setdefault('record_file_count', len(ids))
+            task = ClipTask.create(**payload)
+            return model_to_dict(task)
+
+    @classmethod
+    def mark_clip_task_running(cls, task_id):
+        with db.connection_context():
+            try:
+                task = ClipTask.get(ClipTask.task_id == task_id)
+            except ClipTask.DoesNotExist:
+                return None
+
+            task.status = CLIP_TASK_STATUS_RUNNING
+            task.updated_at = datetime.now()
+            if task.started_at is None:
+                task.started_at = task.updated_at
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def update_clip_task_progress(cls, task_id, progress, intervals=None):
+        """按文件粒度回写进度与已探测区间。"""
+        with db.connection_context():
+            try:
+                task = ClipTask.get(ClipTask.task_id == task_id)
+            except ClipTask.DoesNotExist:
+                return None
+
+            task.progress = max(0, min(100, int(progress)))
+            if intervals is not None:
+                task.intervals = intervals
+            task.updated_at = datetime.now()
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def finish_clip_task(cls, task_id, success, clip_record_file_ids=None, intervals=None, error_message=None):
+        with db.connection_context():
+            try:
+                task = ClipTask.get(ClipTask.task_id == task_id)
+            except ClipTask.DoesNotExist:
+                return None
+
+            now = datetime.now()
+            task.status = CLIP_TASK_STATUS_SUCCESS if success else CLIP_TASK_STATUS_FAILED
+            task.error_message = None if success else error_message
+            if clip_record_file_ids is not None:
+                task.clip_record_file_ids = clip_record_file_ids
+                task.clip_count = len(clip_record_file_ids)
+            if intervals is not None:
+                task.intervals = intervals
+            if success:
+                task.progress = 100
+            task.updated_at = now
+            task.finished_at = now
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def recover_interrupted_clip_tasks(cls):
+        """服务重启后内存队列不可恢复，收敛旧的未终态切片任务。"""
+        with db.connection_context():
+            now = datetime.now()
+            return (
+                ClipTask
+                .update(
+                    status=CLIP_TASK_STATUS_FAILED,
+                    error_message='service restarted before task finished',
+                    updated_at=now,
+                    finished_at=now,
+                )
+                .where(ClipTask.status.in_([
+                    CLIP_TASK_STATUS_PENDING,
+                    CLIP_TASK_STATUS_RUNNING,
+                ]))
+                .execute()
+            )
+
+    @classmethod
+    def list_clip_task(cls, filters=None, page=None, page_size=None):
+        filters = filters or {}
+        with db.connection_context():
+            query = ClipTask.select()
+
+            status = (filters.get('status') or '').strip()
+            if status:
+                query = query.where(ClipTask.status == status)
+
+            live_room_id = filters.get('live_room_id')
+            if live_room_id is not None:
+                query = query.where(ClipTask.live_room_id == live_room_id)
+
+            keyword = (filters.get('keyword') or '').strip()
+            if keyword:
+                query = query.where(
+                    ClipTask.task_id.contains(keyword) |
+                    ClipTask.room_name.contains(keyword)
+                )
+
+            total = query.count()
+            query = query.order_by(ClipTask.created_at.desc())
+            if page and page_size:
+                query = query.paginate(page, page_size)
+
+            return [model_to_dict(item) for item in query], total
+
+    @classmethod
+    def get_clip_task(cls, task_id=None, row_id=None):
+        with db.connection_context():
+            if row_id:
+                return model_to_dict(ClipTask.get_by_id(row_id))
+            if task_id:
+                return model_to_dict(ClipTask.get(ClipTask.task_id == task_id))
+            raise ValueError('task_id or id is required')
+
+    @classmethod
+    def get_clip_task_stats(cls):
+        with db.connection_context():
+            by_status = {
+                row['status']: row['count']
+                for row in (
+                    ClipTask
+                    .select(ClipTask.status, fn.COUNT(ClipTask.id).alias('count'))
+                    .group_by(ClipTask.status)
+                    .dicts()
+                )
+            }
+            active = sum(by_status.get(status, 0) for status in (
+                CLIP_TASK_STATUS_PENDING,
+                CLIP_TASK_STATUS_RUNNING,
+            ))
+            return {
+                'by_status': by_status,
+                'active': active,
+                'total': sum(by_status.values()),
+            }
+
+    @classmethod
+    def upsert_clip_record_file(cls, data):
+        """按 video 路径查重插入/更新切片文件记录，返回 (record_dict, created)。"""
+        video = data.get('video')
+        if not video:
+            raise ValueError('video is required')
+        with db.connection_context():
+            payload = cls.filter_model_data(RecordFile, data)
+            payload['status'] = RECORD_FILE_STATUS_COMPLETED
+            try:
+                record = RecordFile.get(RecordFile.video == video)
+            except RecordFile.DoesNotExist:
+                record = RecordFile.create(**payload)
+                return model_to_dict(record), True
+
+            for key, value in payload.items():
+                setattr(record, key, value)
+            record.save()
+            return model_to_dict(record), False
 
     @classmethod
     def load_config(cls):

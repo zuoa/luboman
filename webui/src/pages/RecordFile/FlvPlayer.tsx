@@ -36,8 +36,11 @@ const FlvPlayer: React.FC<FlvPlayerProps> = ({ url }) => {
       url,
       isLive: false,
     });
-    player.on(flvjs.Events.ERROR, (errorType, errorDetail) => {
-      setError(`播放失败（${errorType} / ${errorDetail}），请确认文件可访问或后端已开启 Range。`);
+    player.on(flvjs.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+      // HttpStatusCodeInvalid 时 errorInfo.code 是真实 HTTP 状态码（404=文件不可达）
+      const code = (errorInfo as { code?: number } | undefined)?.code;
+      const status = typeof code === 'number' && code > 0 ? `，HTTP ${code}` : '';
+      setError(`播放失败（${errorType} / ${errorDetail}${status}），请确认文件可访问。`);
       setLoading(false);
     });
     player.attachMediaElement(video);

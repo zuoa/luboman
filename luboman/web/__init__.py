@@ -857,6 +857,28 @@ async def list_record_file_room_summary(request):
         return error(1, str(e))
 
 
+@routes.get('/video/{path:.*}')
+async def serve_video_static(request):
+    """后端直接提供 /video/ 静态文件。FileResponse 支持 Range（flv.js 拖动播放依赖 206），
+    使无 nginx /video 反代的部署（单容器、本地 dev 代理）也能在线播放。
+    经 /api 前缀代理后与 nginx 静态地址同路径，前端无需区分部署形态。"""
+    try:
+        video_dir = os.path.realpath(get_video_dir())
+        rel_path = request.match_info.get('path') or ''
+        # realpath 消解 ../ 等穿越片段，再前缀校验限制在 video 目录内
+        real = os.path.realpath(os.path.join(video_dir, rel_path))
+        if real != video_dir and not real.startswith(video_dir + os.sep):
+            return web.Response(status=403, text='forbidden')
+        if not os.path.isfile(real):
+            return web.Response(status=404, text=f'file not found: {rel_path}')
+        return web.FileResponse(real)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        logger.error(e)
+        return web.Response(status=500, text=str(e))
+
+
 @routes.get('/v1/RecordFile/stream/{file_id}')
 async def stream_record_file(request):
     try:

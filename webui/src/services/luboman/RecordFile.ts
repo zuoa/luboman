@@ -34,13 +34,17 @@ export async function listRecordFileRoomSummary(
   );
 }
 
-/** 录像文件在线播放地址：优先使用 nginx 静态地址，回退到后端 FileResponse。 */
+/**
+ * 录像文件在线播放地址。后端同时由 aiohttp 直接提供 /video/ 静态文件（FileResponse
+ * 支持 Range），因此统一经 /api 前缀回源到后端播放——不再依赖 nginx /video 静态
+ * location，单容器 / 本地 dev / compose 部署均可播放（nginx 若配有 /video 也兼容）。
+ */
 export function getRecordFileStreamUrl(record: API.RecordFileInfo | number) {
   if (typeof record === 'number') {
     return `${REQUEST_HOST}/v1/RecordFile/stream/${record}`;
   }
   if (record.stream_url) {
-    return record.stream_url;
+    return `${REQUEST_HOST}${record.stream_url}`;
   }
   return record.id != null
     ? `${REQUEST_HOST}/v1/RecordFile/stream/${record.id}`

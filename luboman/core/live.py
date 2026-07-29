@@ -284,6 +284,8 @@ class LiveBase(object):
                     logger.exception(f'{self.log_prefix} :  | Uncaught exception:{e}')
 
                 self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
+                # 单分段录制完成事件：供自动舞蹈切片等按分段触发的逻辑使用
+                self.send_event(Event(EventType.EVENT_RECORD_SEGMENT, ([recording_context],)))
 
                 try:
                     ## 录像最后一个时间减去第一个起始时间大于24小时

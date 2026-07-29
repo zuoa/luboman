@@ -133,6 +133,7 @@ class LiveRoom(BaseModel):
     active_begin = DateTimeField(null=True)  # 活跃开始时间
     active_end = DateTimeField(null=True)  # 活跃结束时间
     active_state = IntegerField(default=1)  # 活跃状态, 0为未活跃, 1为活跃
+    auto_dance_clip = IntegerField(default=0)  # 自动舞蹈切片, 0关 1开
     ffmpeg_options = JSONField(null=True)  # ffmpeg参数
     patron = CharField(null=True)  # 赞助人
     patron_link = CharField(null=True)
@@ -186,6 +187,7 @@ class ClipTask(BaseModel):
     id = AutoField(primary_key=True)
     task_id = CharField(unique=True, index=True)  # 调度器任务ID
     status = CharField(default='PENDING', index=True)  # PENDING / RUNNING / SUCCESS / FAILED
+    source = CharField(default='MANUAL')  # MANUAL手动探测 / AUTO自动（录制分段触发）
     source_record_file_ids = JSONField()  # 来源录像 RecordFile id 列表
     record_file_count = IntegerField(default=0)  # 来源文件数
     live_room_id = IntegerField(null=True)

@@ -167,6 +167,18 @@ const ClipTaskList: React.FC = () => {
         row.room_name || <span className={styles.muted}>-</span>,
     },
     {
+      title: '来源',
+      dataIndex: 'source',
+      width: 80,
+      search: false,
+      render: (_, row) =>
+        row.source === 'AUTO' ? (
+          <Tag color="geekblue">自动</Tag>
+        ) : (
+          <Tag>手动</Tag>
+        ),
+    },
+    {
       title: '进度',
       dataIndex: 'progress',
       width: 150,

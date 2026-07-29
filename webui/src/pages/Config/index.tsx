@@ -35,6 +35,7 @@ const ConfigPage: React.FC = () => {
     dance_clip_pad_seconds: 2,
     dance_clip_accurate_cut: 'false',
     dance_clip_concurrency: 1,
+    dance_clip_boundary_gap_seconds: 10,
     douyin_cookies: '',
     afreecatv_username: '',
     afreecatv_password: '',
@@ -256,6 +257,14 @@ const ConfigPage: React.FC = () => {
               min={0}
               max={30}
               extra="切片区间头尾各扩展的秒数，避免切掉开头结尾"
+            />
+            <ProFormDigit
+              name="dance_clip_boundary_gap_seconds"
+              label="跨分段拼接间隔（秒）"
+              placeholder="10"
+              min={0}
+              max={120}
+              extra="自动切片时，相邻两个录制分段的时间间隔小于该值且首尾都是舞蹈画面时，拼接为一个切片"
             />
             <ProFormSelect
               name="dance_clip_accurate_cut"

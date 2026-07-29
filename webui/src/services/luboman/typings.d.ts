@@ -53,6 +53,8 @@ declare namespace API {
     active_end?: string;
     /** 0 未激活 / 1 已激活 */
     active_state?: 0 | 1;
+    /** 0 关闭 / 1 开启：录制分段完成后自动探测舞蹈切片并单独投稿 */
+    auto_dance_clip?: 0 | 1;
     /** ffmpeg 额外参数（JSON 对象） */
     ffmpeg_options?: Record<string, any>;
     patron?: string;
@@ -292,6 +294,8 @@ declare namespace API {
     id?: number;
     task_id: string;
     status: ClipTaskStatus;
+    /** MANUAL 手动探测 / AUTO 录制分段自动触发 */
+    source?: 'MANUAL' | 'AUTO' | string;
     source_record_file_ids?: number[];
     record_file_count?: number;
     live_room_id?: number | null;

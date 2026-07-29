@@ -51,6 +51,8 @@ class DB:
         SubmissionTask.create_table(safe=True)
         ClipTask.create_table(safe=True)
         cls._ensure_record_file_schema()
+        cls._ensure_live_room_schema()
+        cls._ensure_clip_task_schema()
         cls.recover_interrupted_submission_tasks()
         cls.recover_interrupted_clip_tasks()
         # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
@@ -78,6 +80,34 @@ class DB:
                 '补齐 RecordFile 录制状态字段失败，正在录制文件可能无法进入文件管理列表',
                 exc_info=True,
             )
+
+    @classmethod
+    def _ensure_live_room_schema(cls):
+        """兼容旧库：补齐 LiveRoom 自动舞蹈切片开关列。"""
+        table = LiveRoom._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS auto_dance_clip INTEGER NOT NULL DEFAULT 0'
+                )
+            logger.info('LiveRoom 自动舞蹈切片字段就绪')
+        except Exception:
+            logger.warning('补齐 LiveRoom 自动舞蹈切片字段失败', exc_info=True)
+
+    @classmethod
+    def _ensure_clip_task_schema(cls):
+        """兼容旧库：补齐 ClipTask 任务来源列。"""
+        table = ClipTask._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    "ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'MANUAL'"
+                )
+            logger.info('ClipTask 任务来源字段就绪')
+        except Exception:
+            logger.warning('补齐 ClipTask 任务来源字段失败', exc_info=True)
 
     @classmethod
     def _ensure_record_file_index(cls):
@@ -185,7 +215,8 @@ class DB:
         with db.connection_context():
             update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "upload_storage_platform",
                               "stream_video_format", "active_state", "active_begin", "active_end", "ffmpeg_options",
-                              "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id"]
+                              "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id",
+                              "auto_dance_clip"]
             update_data = cls.filter_model_data(LiveRoom, data, update_columns)
 
             update_data["gmt_updated"] = datetime.now()
@@ -828,6 +859,23 @@ class DB:
                 ]))
                 .execute()
             )
+
+    @classmethod
+    def get_record_file(cls, row_id):
+        with db.connection_context():
+            return model_to_dict(RecordFile.get_by_id(row_id))
+
+    @classmethod
+    def get_bili_template_with_account(cls, template_id):
+        """加载投稿模板及其绑定的账号，返回附带 bili_account 的模板字典。"""
+        with db.connection_context():
+            template = BiliUploadTemplate.get_by_id(template_id)
+            if template.bili_account_id is None:
+                raise ValueError('bili_upload_template has no bili_account_id')
+            account = BiliAccount.get_by_id(template.bili_account_id)
+            template_info = model_to_dict(template)
+            template_info['bili_account'] = model_to_dict(account)
+            return template_info
 
     @classmethod
     def list_clip_task(cls, filters=None, page=None, page_size=None):

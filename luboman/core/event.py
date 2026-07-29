@@ -369,6 +369,7 @@ class EventType:
     EVENT_PRE_RECORD = "pre-record"
     EVENT_RECORD = "record"
     EVENT_RECORD_COMPLETED = "record-completed"
+    EVENT_RECORD_SEGMENT = "record-segment"
     EVENT_NOTIFY = "notify-event"
     EVENT_UPLOAD_BILI = "upload-bili"
     EVENT_UPLOAD_BILI_COMPLETED = "upload-bili-completed"

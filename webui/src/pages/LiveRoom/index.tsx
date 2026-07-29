@@ -95,8 +95,9 @@ function formatRelative(value?: string): string {
 /**
  * 后端 update_live_room 仅更新以下字段（白名单合并）：
  * room_name, room_url, custom_filename, bili_upload_template_id,
- * upload_storage_platform, stream_video_format, active_state, active_begin, active_end。
- * 故新建/编辑表单仅暴露这 9 个可编辑字段。
+ * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
+ * auto_dance_clip。
+ * 故新建/编辑表单仅暴露这 10 个可编辑字段。
  */
 const RoomFormFields: React.FC = () => (
   <>
@@ -141,6 +142,11 @@ const RoomFormFields: React.FC = () => (
     <ProFormSwitch
       name="active_state"
       label="激活状态"
+    />
+    <ProFormSwitch
+      name="auto_dance_clip"
+      label="自动舞蹈切片"
+      tooltip="每个录制分段完成后自动探测三分屏舞蹈片段并切片；跨分段的舞蹈会自动拼接；配置投稿模板后切片会逐个单独投稿到 B 站"
     />
     <ProFormDateTimePicker name="active_begin" label="激活起始时间" />
     <ProFormDateTimePicker name="active_end" label="激活截止时间" />
@@ -515,11 +521,12 @@ const LiveRoomList: React.FC = () => {
         open={createOpen}
         onOpenChange={setCreateOpen}
         modalProps={{ destroyOnClose: true }}
-        initialValues={{ active_state: true }}
+        initialValues={{ active_state: true, auto_dance_clip: false }}
         onFinish={async (values) => {
           await addLiveRoom({
             ...values,
             active_state: values.active_state ? 1 : 0,
+            auto_dance_clip: values.auto_dance_clip ? 1 : 0,
           });
           fetchData();
           return true;
@@ -538,7 +545,11 @@ const LiveRoomList: React.FC = () => {
         modalProps={{ destroyOnClose: true }}
         initialValues={
           editing
-            ? { ...editing, active_state: editing.active_state === 1 }
+            ? {
+                ...editing,
+                active_state: editing.active_state === 1,
+                auto_dance_clip: editing.auto_dance_clip === 1,
+              }
             : undefined
         }
         onFinish={async (values) => {
@@ -547,6 +558,7 @@ const LiveRoomList: React.FC = () => {
             id: editing.id,
             ...values,
             active_state: values.active_state ? 1 : 0,
+            auto_dance_clip: values.auto_dance_clip ? 1 : 0,
           });
           fetchData();
           return true;

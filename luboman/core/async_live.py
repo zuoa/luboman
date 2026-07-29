@@ -296,6 +296,14 @@ class AsyncLiveBase:
                     args=(file_list,),
                     priority=4
                 ))
+
+            # 直播结束：冲刷自动舞蹈切片挂起的跨分段边界片段
+            if int(self.room_data.get('auto_dance_clip') or 0) == 1:
+                from luboman.core.dance_clip import clip_scheduler
+                try:
+                    await clip_scheduler.flush_pending_tail(self.room_data.get('id'))
+                except Exception:
+                    logger.exception(f'{self.log_prefix} 冲刷挂起的舞蹈边界片段失败')
         
         @self._scoped_handler(AsyncEventType.EVENT_NOTIFY, priority=2)
         async def async_process_notify(event: AsyncEvent):
@@ -311,17 +319,45 @@ class AsyncLiveBase:
         async def async_process_upload(event: AsyncEvent):
             """异步上传处理器"""
             file_list = event.args[0] if event.args else []
-            
+
             prepare_upload_file_list = await self._filter_upload_files(file_list)
-            
+
             if prepare_upload_file_list:
                 await self._async_upload_to_storage(prepare_upload_file_list)
-                
+
                 await self.async_send_event(AsyncEvent(
                     AsyncEventType.EVENT_UPLOAD_COMPLETED,
                     args=(prepare_upload_file_list,),
                     priority=5
                 ))
+
+        @self._scoped_handler(AsyncEventType.EVENT_RECORD_SEGMENT, priority=4)
+        async def async_process_record_segment(event: AsyncEvent):
+            """单分段录制完成：开启自动舞蹈切片时提交切片任务。
+
+            不用 EVENT_UPLOAD 做钩子——它会被 record_completed 里的 auto_upload
+            重放整份 file_list，导致重复切片。
+            """
+            if int(self.room_data.get('auto_dance_clip') or 0) != 1:
+                return
+
+            file_list = event.args[0] if event.args else []
+            record_file_ids = [f.get('id') for f in file_list if isinstance(f, dict) and f.get('id')]
+            if not record_file_ids:
+                logger.warning(f'{self.log_prefix} 自动舞蹈切片：分段事件缺少 RecordFile id，跳过')
+                return
+
+            from luboman.core.dance_clip import clip_scheduler
+            try:
+                result = await clip_scheduler.schedule(
+                    file_ids=record_file_ids,
+                    live_room_id=self.room_data.get('id'),
+                    room_name=self.room_data.get('room_name'),
+                    source='AUTO',
+                )
+                logger.info(f'{self.log_prefix} 自动舞蹈切片任务已创建: {result}')
+            except Exception:
+                logger.exception(f'{self.log_prefix} 自动舞蹈切片任务创建失败')
     
     async def async_start(self):
         """异步启动直播间"""

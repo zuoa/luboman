@@ -1,20 +1,26 @@
-import json
 import random
-import time
 from typing import Optional
-from urllib.parse import urlencode, parse_qs, urlparse, urlunparse, unquote
+from urllib.parse import unquote, urlparse, parse_qs, urlencode, urlunparse
 
 import requests
 
-from luboman.core.abogus import ABogus
-from luboman.core.utils import match1, NamedLock, random_user_agent, json_loads
 from luboman.config import config
+from luboman.core.abogus import ABogus
 from luboman.core.decorators import PluginTool
 from luboman.core.live import LiveBase
+from luboman.core.utils import match1, random_user_agent, json_loads
 from luboman.plugins import logger
 
 
-@PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m|live)\.)?douyin\.com')
+def _cfg_bool(key, default=False):
+    """GlobalConfig 中的值均为字符串，布尔配置需要显式转换"""
+    val = config.get(key, default)
+    if isinstance(val, str):
+        return val.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(val)
+
+
+@PluginTool.live(regexp=r'(?:https?://)?(?:(?:www|m|live|v)\.)?douyin\.com')
 class Douyin(LiveBase):
 
     def __init__(self, room_name, room_url, suffix='flv'):
@@ -22,6 +28,16 @@ class Douyin(LiveBase):
         self.fake_headers['user-agent'] = DouyinUtils.DOUYIN_USER_AGENT
         self.fake_headers['referer'] = "https://live.douyin.com/"
         self.fake_headers['cookie'] = config.get('douyin_cookies', '')
+        self.douyin_quality = config.get('douyin_quality', 'origin')
+        self.douyin_protocol = 'hls' if config.get('douyin_protocol') == 'hls' else 'flv'
+        self.douyin_true_origin = _cfg_bool('douyin_true_origin', False)
+        self.douyin_double_screen = _cfg_bool('douyin_double_screen', False)
+        self.__web_rid = None  # 网页端房间号 或 抖音号
+        self.__room_id = None  # 单场直播的直播房间
+        self.__sec_uid = None
+
+    def check_live(self, is_check_status=False):
+
         if self.fake_headers['cookie'] != "" and not self.fake_headers['cookie'].endswith(';'):
             self.fake_headers['cookie'] += ";"
         if "ttwid" not in self.fake_headers['cookie']:
@@ -31,109 +47,168 @@ class Douyin(LiveBase):
         if '__ac_nonce=' not in self.fake_headers['cookie']:
             self.fake_headers['cookie'] += f"__ac_nonce={DouyinUtils.generate_nonce()};"
 
-    def check_live(self, is_check_status=False):
-
-        if "/user/" in self.room_url:
+        if "v.douyin" in self.room_url:
             try:
-                room_id = None
-                user_page = requests.get(self.room_url, headers=self.fake_headers, timeout=5).text
-                if "web_rid" in user_page:
-                    user_page_data = user_page[user_page.index("web_rid"):user_page.index("web_rid") + 50].replace('\\"', '"')
-                    room_id = match1(user_page_data, r'web_rid":"([^"]+)"')
-                if room_id is None or not room_id:
-                    logger.debug(f"{self.log_prefix} :  未开播")
+                resp = requests.get(self.room_url, headers=self.fake_headers, timeout=5, allow_redirects=False)
+                if resp.status_code not in {301, 302}:
+                    raise Exception('不支持的链接')
+                next_url = resp.headers['location']
+                if "webcast.amemv" in next_url:
+                    self.__sec_uid = match1(next_url, r"sec_user_id=(.*?)&")
+                    self.__room_id = match1(next_url.split("?")[0], r"(\d+)")
+                elif "isedouyin.com/share/user" in next_url:
+                    self.__sec_uid = match1(next_url, r"sec_uid=(.*?)&")
+                else:
+                    raise Exception('不支持的链接')
+            except Exception as e:
+                logger.warning(f"{self.log_prefix} :  {e}")
+                return False
+        elif "/user/" in self.room_url:
+            sec_uid = self.room_url.split("user/")[1].split("?")[0]
+            if len(sec_uid) in {55, 76}:
+                self.__sec_uid = sec_uid
+            else:
+                try:
+                    user_page = requests.get(self.room_url, headers=self.fake_headers, timeout=5).text
+                    user_page_data = unquote(
+                        user_page.split('<script id="RENDER_DATA" type="application/json">')[1].split('</script>')[0])
+                    web_rid = match1(user_page_data, r'"web_rid":"([^"]+)"')
+                    if not web_rid:
+                        logger.debug(f"{self.log_prefix} :  未开播")
+                        return False
+                    self.__web_rid = web_rid
+                except (KeyError, IndexError):
+                    logger.warning(f"{self.log_prefix} :  获取房间ID失败,请检查Cookie设置")
                     return False
-            except (KeyError, IndexError):
-                logger.warning(f"{self.log_prefix} :  获取房间ID失败,请检查Cookie设置")
-                return False
-            except:
-                logger.warning(f"{self.log_prefix} :  获取房间ID失败")
-                return False
+                except:
+                    logger.warning(f"{self.log_prefix} :  获取房间ID失败")
+                    return False
         else:
             try:
-                room_id = self.room_url.split('douyin.com/')[1].split('/')[0].split('?')[0]
-                if not room_id:
+                web_rid = self.room_url.split('douyin.com/')[1].split('/')[0].split('?')[0]
+                if not web_rid:
                     raise
+                if web_rid[0] == "+":
+                    web_rid = web_rid[1:]
+                self.__web_rid = web_rid
             except:
                 logger.warning(f"{self.log_prefix} :  直播间地址错误")
                 return False
 
-        if room_id[0] == "+":
-            room_id = room_id[1:]
-
-        self.room_id = room_id
-
         try:
-            if "ttwid" not in self.fake_headers['cookie']:
-                self.fake_headers['cookie'] = f'ttwid={DouyinUtils.get_ttwid()};{self.fake_headers["cookie"]}'
-            web_info = self.get_web_room_info(room_id)
+            _room_info = {}
+            if self.__web_rid:
+                _room_info = self.get_web_room_info(self.__web_rid)
+                if _room_info:
+                    if not _room_info['data'].get('user'):
+                        if _room_info['data'].get('prompts', '') == '直播已结束':
+                            logger.debug(f"{self.log_prefix} :  未开播")
+                            return False
+                        # 可能是用户被封禁
+                        raise Exception(f"{str(_room_info)}")
+                    self.__sec_uid = _room_info['data']['user']['sec_uid']
+            # PCWeb 端无流 或 没有提供 web_rid
+            if not _room_info.get('data', {}).get('data'):
+                _room_info = self.get_h5_room_info(self.__sec_uid, self.__room_id)
+                if _room_info['data'].get('room', {}).get('owner'):
+                    self.__web_rid = _room_info['data']['room']['owner']['web_rid']
+            try:
+                room_info = _room_info['data']['data'][0]
+            except (KeyError, IndexError):
+                # 移动网页端也没有数据，当做未开播处理
+                room_info = _room_info['data'].get('room', {})
 
-            room_info = web_info.get('data', {}).get('data', [])
-            if len(room_info) > 0:
-                room_info = room_info[0]
-                new_room_data = {
-                    'room_id': room_id,
-                    'room_platform': self.__class__.__name__,
-                    'room_title': room_info.get('title', ''),
-                    'room_cover_url': room_info.get('cover', {}).get('url_list', [''])[0],
-                    'room_cover_frame_url': room_info.get('cover', {}).get('url_list', [''])[0],
-                    'room_owner': room_info.get('owner', {}).get('nickname', ''),
-                    'room_owner_id': room_info.get('owner', {}).get('id_str', ''),
-                    'room_owner_avatar': room_info.get('owner', {}).get('avatar_thumb', {}).get('url_list', [''])[0],
-                    'live_state': 1
-                }
-                self.room_data.update(new_room_data)
-
-            else:
-                room_info = {}
-        except Exception as e:
-            logger.warning(f"{self.log_prefix} :  获取失败{e}")
-            return False
-
-        try:
             if room_info.get('status') != 2:
                 logger.debug(f"{self.log_prefix} :  未开播")
                 return False
 
-            stream_data = json.loads(room_info['stream_url']['live_core_sdk_data']['pull_data']['stream_data'])['data']
+            self.__room_id = room_info['id_str']
+            self.room_id = self.__room_id
+            owner = room_info.get('owner', {})
+            self.room_data.update({
+                'room_id': self.__room_id,
+                'room_platform': self.__class__.__name__,
+                'room_title': room_info.get('title', ''),
+                'room_cover_url': room_info.get('cover', {}).get('url_list', [''])[0],
+                'room_cover_frame_url': room_info.get('cover', {}).get('url_list', [''])[0],
+                'room_owner': owner.get('nickname', ''),
+                'room_owner_id': owner.get('id_str', '') or owner.get('sec_uid', ''),
+                'room_owner_avatar': owner.get('avatar_thumb', {}).get('url_list', [''])[0],
+                'live_state': 1
+            })
+        except Exception as e:
+            logger.warning(f"{self.log_prefix} :  获取直播间信息失败 {e}")
+            return False
 
+        if is_check_status:
+            return True
+
+        # 清理上一次获取的直播流
+        self.raw_stream_url = None
+
+        try:
+            pull_data = room_info['stream_url']['live_core_sdk_data']['pull_data']
+            if room_info['stream_url'].get('pull_datas') and self.douyin_double_screen:
+                pull_data = next(iter(room_info['stream_url']['pull_datas'].values()))
+            stream_data = json_loads(pull_data['stream_data'])['data']
+        except:
+            logger.warning(f"{self.log_prefix} :  加载直播流失败")
+            logger.debug(f"{self.log_prefix} :  room_info {room_info}")
+            return False
+
+        # 抖音FLV真原画
+        if (
+            self.douyin_true_origin  # 开启真原画
+            and
+            self.douyin_quality == 'origin'  # 请求原画
+            and
+            self.douyin_protocol == 'flv'  # 请求FLV
+        ):
+            try:
+                self.raw_stream_url = stream_data['ao']['main']['flv'].replace('&only_audio=1', '')
+            except KeyError:
+                logger.debug(f"{self.log_prefix} :  未找到 ao 流 {stream_data}")
+
+        if not self.raw_stream_url:
             # 原画origin 蓝光uhd 超清hd 高清sd 标清ld 流畅md 仅音频ao
             quality_items = ['origin', 'uhd', 'hd', 'sd', 'ld', 'md']
-            quality = config.get('douyin_quality', 'origin')
+            quality = self.douyin_quality
             if quality not in quality_items:
                 quality = quality_items[0]
+            try:
+                # 如果没有这个画质则取相近的 优先低清晰度
+                if quality not in stream_data:
+                    # 可选的清晰度 含自身
+                    optional_quality_items = [x for x in quality_items if x in stream_data.keys() or x == quality]
+                    # 自身在可选清晰度的位置
+                    optional_quality_index = optional_quality_items.index(quality)
+                    # 自身在所有清晰度的位置
+                    quality_index = quality_items.index(quality)
+                    # 高清晰度偏移
+                    quality_left_offset = None
+                    # 低清晰度偏移
+                    quality_right_offset = None
 
-            # 如果没有这个画质则取相近的 优先低清晰度
-            if quality not in stream_data:
-                # 可选的清晰度 含自身
-                optional_quality_items = [x for x in quality_items if x in stream_data.keys() or x == quality]
-                # 自身在可选清晰度的位置
-                optional_quality_index = optional_quality_items.index(quality)
-                # 自身在所有清晰度的位置
-                quality_index = quality_items.index(quality)
-                # 高清晰度偏移
-                quality_left_offset = None
-                # 低清晰度偏移
-                quality_right_offset = None
+                    if optional_quality_index + 1 < len(optional_quality_items):
+                        quality_right_offset = quality_items.index(
+                            optional_quality_items[optional_quality_index + 1]) - quality_index
 
-                if optional_quality_index + 1 < len(optional_quality_items):
-                    quality_right_offset = quality_items.index(
-                        optional_quality_items[optional_quality_index + 1]) - quality_index
+                    if optional_quality_index - 1 >= 0:
+                        quality_left_offset = quality_index - quality_items.index(
+                            optional_quality_items[optional_quality_index - 1])
 
-                if optional_quality_index - 1 >= 0:
-                    quality_left_offset = quality_index - quality_items.index(
-                        optional_quality_items[optional_quality_index - 1])
+                    # 取相邻的清晰度
+                    if quality_right_offset <= quality_left_offset:
+                        quality = optional_quality_items[optional_quality_index + 1]
+                    else:
+                        quality = optional_quality_items[optional_quality_index - 1]
 
-                # 取相邻的清晰度
-                if quality_right_offset <= quality_left_offset:
-                    quality = optional_quality_items[optional_quality_index + 1]
-                else:
-                    quality = optional_quality_items[optional_quality_index - 1]
+                self.raw_stream_url = stream_data[quality]['main'][self.douyin_protocol]
+            except:
+                logger.warning(f"{self.log_prefix} :  寻找清晰度失败")
+                return False
 
-            self.raw_stream_url = stream_data[quality]['main']['flv']
-        except:
-            logger.warning(f"{self.log_prefix} :  解析错误")
-            return False
+        self.raw_stream_url = self.raw_stream_url.replace('http://', 'https://')
         return True
 
     def get_web_room_info(self, web_rid: str) -> dict:
@@ -147,13 +222,35 @@ class Douyin(LiveBase):
         }
         target_url = DouyinUtils.build_request_url(f"https://live.douyin.com/webcast/room/web/enter/", query)
         logger.debug(f"{self.log_prefix}: get_web_room_info {target_url}")
-        resp_web_info = requests.get(target_url, headers=self.fake_headers)
-        # logger.debug(f"{self.log_prefix}: get_web_room_info {resp_web_info.text}")
+        resp_web_info = requests.get(target_url, headers=self.fake_headers, timeout=10)
         try:
             web_info = resp_web_info.json()
         except:
             web_info = json_loads(unquote(resp_web_info.text))
         return web_info
+
+    def get_h5_room_info(self, sec_user_id: str, room_id: str) -> dict:
+        '''
+        Mobile web 的 API 信息，海外可能不允许使用
+        '''
+        if not sec_user_id:
+            raise ValueError("sec_user_id is None")
+        query = {
+            'type_id': 0,
+            'live_id': 1,
+            'version_code': '99.99.99',
+            'app_id': 1128,
+            'room_id': room_id if room_id else 2,  # 必要但不校验
+            'sec_user_id': sec_user_id
+        }
+        abogus = ABogus(user_agent=DouyinUtils.DOUYIN_USER_AGENT)
+        query_str, _, _, _ = abogus.generate_abogus(params=urlencode(query, doseq=True), body="")
+        logger.debug(f"{self.log_prefix}: get_h5_room_info {query_str}")
+        resp = requests.get(
+            f"https://webcast.amemv.com/webcast/room/reflow/info/?{query_str}",
+            headers=self.fake_headers, timeout=10
+        )
+        return json_loads(resp.text)
 
 
 class DouyinUtils:
@@ -220,5 +317,8 @@ class DouyinUtils:
         ))
         return new_url
 
+
 if __name__ == '__main__':
-    print(Douyin('test', 'https://live.douyin.com/81482202').check_live(is_check_status=True))
+    d = Douyin('test', 'https://live.douyin.com/81482202')
+    print(d.check_live())
+    print(d.raw_stream_url)

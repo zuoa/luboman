@@ -98,7 +98,7 @@ class AfreecaTVUtils:
                 username = config.get('afreecatv_username', '')
                 password = config.get('afreecatv_password', '')
                 if not username or not password:
-                    return {}
+                    return None
                 response = requests.post("https://login.afreecatv.com/app/LoginAction.php", data={
                     "szUid": username,
                     "szPassword": password,

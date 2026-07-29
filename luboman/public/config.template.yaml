@@ -75,7 +75,20 @@ douyu_rate: 0
 #------虎牙------#
 ### 如遇到虎牙录制卡顿可以尝试切换线路。可选以下线路
 ### AL（阿里云 - 直播线路3）, TX（腾讯云 - 直播线路5）, HW（华为云 - 直播线路6）, WS（网宿）, HS（火山引擎 - 直播线路14）, AL13（阿里云）, HW16（华为云）, HY(星域云 - 直播线路66)
-#huyacdn: AL
+### 不填写时使用主播的CDN优先级
+#huya_cdn: AL
+### 虎牙流协议，可选 Flv（默认） 或 Hls
+#huya_protocol: Flv
+### 虎牙录制编码，可选 264（默认）, 265, av1
+#huya_codec: '264'
+### 虎牙使用 wup 协议获取真实 anti_code（推荐开启，配合 huya_imgplus 使用）
+#huya_use_wup: true
+### 虎牙使用 imgplus 流（默认开启）
+#huya_imgplus: true
+### 虎牙CDN健康检查回退，开启后会按CDN优先级顺序尝试可用线路（HTTPS的直播流只允许连接一次，开启会增加一次重新解析）
+#huya_cdn_fallback: false
+### 虎牙使用移动端API获取房间信息
+#huya_mobile_api: false
 ### 录制虎牙弹幕，默认关闭【目前暂时不支持视频按时长分段下的弹幕文件自动分段，只有使用ffmpeg（包括streamlink混合模式）作为下载器才支持】
 #huya_danmaku: false
 ### 虎牙自选录制码率
@@ -92,6 +105,12 @@ douyu_rate: 0
 ### origin 原画,uhd 蓝光,hd 超清,sd 高清,ld 标清,md 流畅
 ### 没有选中的画质则会自动选择相近的画质优先低清晰度
 douyin_quality: origin
+### 抖音流协议，可选 flv（默认） 或 hls
+#douyin_protocol: flv
+### 抖音FLV真原画（仅在 douyin_quality 为 origin 且 douyin_protocol 为 flv 时生效）
+#douyin_true_origin: false
+### 抖音双屏直播流（双机位直播时录制第二路流）
+#douyin_double_screen: false
 
 
 #------哔哩哔哩------#

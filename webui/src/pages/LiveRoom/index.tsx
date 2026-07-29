@@ -141,7 +141,6 @@ const RoomFormFields: React.FC = () => (
     <ProFormSwitch
       name="active_state"
       label="激活状态"
-      fieldProps={{ defaultChecked: true }}
     />
     <ProFormDateTimePicker name="active_begin" label="激活起始时间" />
     <ProFormDateTimePicker name="active_end" label="激活截止时间" />
@@ -516,6 +515,7 @@ const LiveRoomList: React.FC = () => {
         open={createOpen}
         onOpenChange={setCreateOpen}
         modalProps={{ destroyOnClose: true }}
+        initialValues={{ active_state: true }}
         onFinish={async (values) => {
           await addLiveRoom({
             ...values,

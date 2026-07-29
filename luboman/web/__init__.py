@@ -606,7 +606,8 @@ async def add_room(request):
         json_data["room_url"] = json_data.get("room_url", "").strip()
         new_room_data = await run_db(_create_live_room, json_data)
 
-        await start_room_runtime(new_room_data)
+        # 按 active_state 对账：默认激活则启动 worker，未激活则保持停止
+        await reconcile_room_runtime(new_room_data)
         return success(new_room_data["id"])
     except Exception as e:
         logger.error(e)

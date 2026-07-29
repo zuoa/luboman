@@ -277,6 +277,32 @@ class DB:
             ]
 
     @classmethod
+    def deactivate_expired_rooms(cls, now=None):
+        """把激活截止时间已过的直播间自动置为未激活。
+
+        active_end 为空视为永久激活，永不到期；返回本次被停用的直播间数据列表
+        （active_state 已置 0），调用方据此停止对应 worker。
+        """
+        now = now or datetime.now()
+        with db.connection_context():
+            expired = list(LiveRoom.select().where(
+                (LiveRoom.active_state == 1)
+                & (LiveRoom.active_end.is_null(False))
+                & (LiveRoom.active_end <= now)
+            ))
+            if not expired:
+                return []
+
+            room_ids = [room.id for room in expired]
+            LiveRoom.update(active_state=0, gmt_updated=now).where(LiveRoom.id.in_(room_ids)).execute()
+
+            result = []
+            for room in expired:
+                room.active_state = 0
+                result.append(model_to_dict(room))
+            return result
+
+    @classmethod
     def list_bili_account(cls):
         with db.connection_context():
             return [model_to_dict(item) for item in BiliAccount.select()]

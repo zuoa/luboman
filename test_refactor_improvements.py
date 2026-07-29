@@ -269,7 +269,7 @@ class WebApiRefactorTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_live_room_add_uses_runtime_and_returns_created_id(self):
         original_run_db = web_module.run_db
-        original_start_room_runtime = web_module.start_room_runtime
+        original_reconcile_room_runtime = web_module.reconcile_room_runtime
         calls = []
 
         async def fake_run_db(func, *args, **kwargs):
@@ -277,23 +277,23 @@ class WebApiRefactorTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(func.__name__, "_create_live_room")
             return {"id": 12, "room_name": args[0]["room_name"], "room_url": args[0]["room_url"]}
 
-        async def fake_start_room_runtime(room_data):
-            calls.append(("start", room_data))
+        async def fake_reconcile_room_runtime(room_data):
+            calls.append(("reconcile", room_data))
 
         web_module.run_db = fake_run_db
-        web_module.start_room_runtime = fake_start_room_runtime
+        web_module.reconcile_room_runtime = fake_reconcile_room_runtime
         try:
             response = await web_module.add_room(self._Request({"room_name": " room ", "room_url": " url "}))
         finally:
             web_module.run_db = original_run_db
-            web_module.start_room_runtime = original_start_room_runtime
+            web_module.reconcile_room_runtime = original_reconcile_room_runtime
 
         data = self._response_json(response)
         self.assertTrue(data["success"])
         self.assertEqual(data["data"], 12)
         self.assertEqual(calls[0][2][0]["room_name"], "room")
         self.assertEqual(calls[0][2][0]["room_url"], "url")
-        self.assertEqual(calls[1], ("start", {"id": 12, "room_name": "room", "room_url": "url"}))
+        self.assertEqual(calls[1], ("reconcile", {"id": 12, "room_name": "room", "room_url": "url"}))
 
     async def test_bili_account_update_route_uses_db_executor(self):
         original_run_db = web_module.run_db
@@ -400,6 +400,40 @@ class DatabaseHelperIntegrationTest(unittest.TestCase):
 
         self.assertEqual(DB.update_live_room({"id": room["id"], "room_name": "Renamed", "ignored": "x"}), 1)
         self.assertEqual(DB.get_live_room_data(room["id"])["room_name"], "Renamed")
+
+        # 激活时段到期自动置为未激活：active_end 为空永久激活，已过期则停用
+        import datetime as _dt
+        now = _dt.datetime.now()
+        permanent = DB.create_live_room({
+            "room_url": "https://example.test/permanent",
+            "room_name": "Permanent",
+            "active_state": 1,
+        })
+        future = DB.create_live_room({
+            "room_url": "https://example.test/future",
+            "room_name": "Future",
+            "active_state": 1,
+            "active_end": now + _dt.timedelta(hours=1),
+        })
+        expired_room = DB.create_live_room({
+            "room_url": "https://example.test/expired",
+            "room_name": "Expired",
+            "active_state": 1,
+            "active_end": now - _dt.timedelta(hours=1),
+        })
+
+        deactivated = DB.deactivate_expired_rooms(now)
+        self.assertEqual([item["id"] for item in deactivated], [expired_room["id"]])
+        self.assertEqual(deactivated[0]["active_state"], 0)
+        self.assertEqual(DB.get_live_room_data(expired_room["id"])["active_state"], 0)
+        self.assertEqual(DB.get_live_room_data(permanent["id"])["active_state"], 1)
+        self.assertEqual(DB.get_live_room_data(future["id"])["active_state"], 1)
+        # 已停用的房间不会重复返回
+        self.assertEqual(DB.deactivate_expired_rooms(now), [])
+
+        DB.delete_live_room(permanent["id"])
+        DB.delete_live_room(future["id"])
+        DB.delete_live_room(expired_room["id"])
 
         account = DB.create_bili_account({
             "account_name": "Uploader",

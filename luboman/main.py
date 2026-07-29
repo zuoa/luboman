@@ -29,7 +29,7 @@ _alerted_account_ids = set()
 
 
 async def start_all_record():
-    for room in LiveRoom.select():
+    for room in LiveRoom.select().where(LiveRoom.active_state == 1):
         start_room(model_to_dict(room), **{})
 
 

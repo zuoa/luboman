@@ -31,7 +31,7 @@ from luboman.core.async_live import AsyncLiveBase, async_live_room_manager
 from luboman.core.async_upload import async_upload_scheduler, upload_event_handler
 from luboman.core.dance_clip import clip_scheduler
 from luboman.core.async_utils import run_blocking
-from luboman.core.runtime import start_room_runtime
+from luboman.core.runtime import start_room_runtime, stop_room_runtime
 
 logger = logging.getLogger("luboman")
 
@@ -278,6 +278,13 @@ class AsyncLubomanApplication:
         )
         self.timer_tasks.append(account_check_task)
 
+        # 直播间激活时段到期巡检任务
+        room_expiry_task = asyncio.create_task(
+            self._periodic_room_expiry_check(),
+            name="periodic-room-expiry-check"
+        )
+        self.timer_tasks.append(room_expiry_task)
+
         logger.info("定时任务启动完成")
     
     async def _periodic_cleanup(self):
@@ -352,6 +359,39 @@ class AsyncLubomanApplication:
                 logger.error(f"B站账号登录态巡检失败: {e}")
 
             await asyncio.sleep(self._account_check_interval())
+
+    def _room_expiry_check_interval(self):
+        """激活时段到期巡检间隔（秒），可通过配置 live_room_expiry_check_interval 覆盖，默认 60 秒。"""
+        try:
+            return max(10, int(config.get('live_room_expiry_check_interval', 60)))
+        except (TypeError, ValueError):
+            return 60
+
+    async def _periodic_room_expiry_check(self):
+        """定期把激活截止时间已过的直播间置为未激活并停止 worker。
+
+        启动后立即先跑一轮：服务停机期间过期的房间会在本次启动后被及时停用，
+        而不是等上一个 interval 才处理。
+        """
+        while self.running:
+            try:
+                if not self.running:
+                    break
+
+                expired_rooms = await run_blocking(DB.deactivate_expired_rooms)
+                for room_data in expired_rooms:
+                    logger.info(
+                        f"直播间「{room_data.get('room_name')}」(id={room_data.get('id')}) "
+                        f"激活截止时间 {room_data.get('active_end')} 已到，自动置为未激活"
+                    )
+                    await stop_room_runtime(room_data.get('id'))
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"直播间激活到期巡检失败: {e}")
+
+            await asyncio.sleep(self._room_expiry_check_interval())
 
     def _cleanup_old_files(self):
         """清理旧文件（同步版本）"""

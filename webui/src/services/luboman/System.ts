@@ -10,6 +10,17 @@ export async function ping(options?: { [key: string]: any }) {
 }
 
 /**
+ * 系统运行状态（/v1/System/stats）。
+ * data.host 含主机级 CPU/内存/硬盘/网络；psutil 缺失时 host.available=false。
+ */
+export async function getSystemStats(options?: { [key: string]: any }) {
+  return request<API.SystemStats>(REQUEST_HOST + '/v1/System/stats', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
+/**
  * 获取 B 站投稿分区列表（archive/pre）。
  * 后端用第一个激活账号的 cookies 调用 B 站接口，返回 B 站原始响应：
  * { code, message, data: { type_list: [{ tid, typename }] } }。

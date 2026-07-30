@@ -1,0 +1,63 @@
+// 侧边菜单底部系统状态，颜色统一引用 global.less 的 --lb-* 令牌镜像变量。
+.container {
+  padding: 10px 16px;
+  border-top: 1px solid var(--lb-border-secondary);
+  font-size: 12px;
+  color: var(--lb-text-secondary);
+  user-select: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 20px;
+}
+
+.label {
+  flex: 0 0 28px;
+  color: var(--lb-text-tertiary);
+}
+
+.track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--lb-bg-spotlight);
+  overflow: hidden;
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width var(--lb-duration) ease;
+}
+
+.value {
+  flex: 0 0 34px;
+  text-align: right;
+  color: var(--lb-text-secondary);
+}
+
+.net {
+  flex: 1;
+  color: var(--lb-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.collapsed {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--lb-border-secondary);
+  color: var(--lb-text-tertiary);
+  font-size: 16px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--lb-text);
+  }
+}

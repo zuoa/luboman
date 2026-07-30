@@ -329,4 +329,43 @@ declare namespace API {
     task_id: string;
     file_count: number;
   }
+
+  /** 主机级状态（System/stats → host），psutil 缺失时 available=false */
+  interface SystemHostStats {
+    available: boolean;
+    timestamp?: number;
+    cpu_percent?: number;
+    memory?: {
+      percent: number;
+      /** 字节 */
+      used: number;
+      total: number;
+    };
+    disk?: {
+      percent: number;
+      used: number;
+      total: number;
+      free: number;
+      /** 采样路径（录像目录所在盘） */
+      path: string;
+    };
+    network?: {
+      /** 上传速率，字节/秒 */
+      up_rate: number;
+      /** 下载速率，字节/秒 */
+      down_rate: number;
+      bytes_sent: number;
+      bytes_recv: number;
+    };
+  }
+
+  /** System/stats 响应 data（运行时状态 + 主机状态） */
+  interface SystemStats {
+    timestamp: number;
+    host?: SystemHostStats;
+    running_plugins_count?: number;
+    running_plugin_ids?: string[];
+    thread_pool?: Record<string, any>;
+    async?: Record<string, any>;
+  }
 }

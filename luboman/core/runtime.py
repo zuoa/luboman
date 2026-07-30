@@ -8,6 +8,71 @@ from luboman.core.event import Event, EventType
 
 logger = logging.getLogger('luboman')
 
+# psutil 为可选依赖：缺失时主机状态采集降级为 available=False，不影响接口
+try:
+    import psutil
+
+    _PSUTIL_OK = True
+except ImportError:
+    _PSUTIL_OK = False
+
+# 网速采样基准：{"ts": 秒, "sent": bytes, "recv": bytes}
+_last_net_sample = None
+
+if _PSUTIL_OK:
+    # 预热：cpu_percent(interval=None) 首次调用恒为 0
+    psutil.cpu_percent(interval=None)
+
+
+def collect_host_stats():
+    """采集主机级状态（CPU/内存/硬盘/网络），psutil 缺失或采样失败时返回 available=False。"""
+    global _last_net_sample
+    if not _PSUTIL_OK:
+        return {"available": False}
+
+    try:
+        from luboman.core.utils import get_video_dir
+
+        now = time.time()
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage(get_video_dir())
+        net = psutil.net_io_counters()
+
+        up_rate = down_rate = 0.0
+        if _last_net_sample is not None:
+            elapsed = now - _last_net_sample["ts"]
+            if elapsed > 0:
+                up_rate = max(0.0, (net.bytes_sent - _last_net_sample["sent"]) / elapsed)
+                down_rate = max(0.0, (net.bytes_recv - _last_net_sample["recv"]) / elapsed)
+        _last_net_sample = {"ts": now, "sent": net.bytes_sent, "recv": net.bytes_recv}
+
+        return {
+            "available": True,
+            "timestamp": now,
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory": {
+                "percent": memory.percent,
+                "used": memory.used,
+                "total": memory.total,
+            },
+            "disk": {
+                "percent": disk.percent,
+                "used": disk.used,
+                "total": disk.total,
+                "free": disk.free,
+                "path": get_video_dir(),
+            },
+            "network": {
+                "up_rate": up_rate,
+                "down_rate": down_rate,
+                "bytes_sent": net.bytes_sent,
+                "bytes_recv": net.bytes_recv,
+            },
+        }
+    except Exception as e:
+        logger.warning(f"主机状态采集失败: {e}")
+        return {"available": False}
+
 
 def collect_runtime_stats():
     """Collect sync and async runtime state for API responses and diagnostics."""
@@ -20,6 +85,7 @@ def collect_runtime_stats():
 
     return {
         "timestamp": time.time(),
+        "host": collect_host_stats(),
         "running_plugins_count": len(PluginTool.running_plugins),
         "running_plugin_ids": list(PluginTool.running_plugins.keys()),
         "thread_pool": thread_pool_manager.get_stats(),

@@ -3,6 +3,7 @@ import { createElement, type ReactNode } from 'react';
 import { RequestConfig } from '@umijs/max';
 import { ConfigProvider, message as antdMessage, theme as antdTheme } from 'antd';
 import { themeTokens } from '@/theme/tokens';
+import SystemStatus from '@/components/SystemStatus';
 import logoUrl from '@/assets/logo.svg';
 
 // 全局初始化数据配置，用于 Layout 用户信息和权限初始化
@@ -16,6 +17,9 @@ export const layout = () => {
     menu: {
       locale: false,
     },
+    // 侧边菜单底部系统状态（app.ts 不能用 JSX，见 rootContainer 注释）
+    menuFooterRender: (props: any) =>
+      createElement(SystemStatus, { collapsed: props?.collapsed }),
   };
 };
 

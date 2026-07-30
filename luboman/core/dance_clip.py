@@ -1,8 +1,10 @@
 """三分屏舞蹈片段探测与切片。
 
 思路：主播跳舞时通常把直播画面开成「三分屏」——画面被两条竖直分界线分成
-左中右三栏（不一定等宽）。因此用 OpenCV 对采样帧做竖直分界线检测，把持续
-处于三分屏布局的时间区间找出来，再用 ffmpeg 切出这些区间并注册进文件管理。
+左中右三栏（不一定等宽），且三栏里是同一画面的复制/镜像/拉伸。因此用 OpenCV
+对采样帧做竖直分界线检测，再校验三栏内容两两相似（普通视频中碰巧出现的
+竖直边缘——树干、栏杆、网页/游戏 UI 边框——栏内容互不相关，会被此校验过滤），
+把持续处于三分屏布局的时间区间找出来，再用 ffmpeg 切出这些区间并注册进文件管理。
 
 本模块内所有视频处理函数都是同步、CPU 密集的，统一经 run_blocking 在线程池
 执行，不阻塞 aiohttp 事件循环。
@@ -42,6 +44,7 @@ DEFAULT_DETECT_PARAMS: Dict[str, Any] = {
     'dance_clip_accurate_cut': False,         # 精确切割（重编码）开关
     'dance_clip_concurrency': 1,              # 切片任务并发数（OpenCV 吃 CPU，默认 1）
     'dance_clip_boundary_gap_seconds': 10,    # 相邻分段允许的最大时间间隔，用于跨分段舞蹈拼接
+    'dance_clip_panel_similarity': 0.6,       # 三栏内容两两相似度阈值（全部达标才算三分屏，0 关闭校验）
 }
 
 _INT_KEYS = {
@@ -53,6 +56,7 @@ _FLOAT_KEYS = {
     'dance_clip_min_segment_ratio', 'dance_clip_max_pair_ratio',
     'dance_clip_merge_gap_seconds', 'dance_clip_min_clip_seconds',
     'dance_clip_pad_seconds', 'dance_clip_boundary_gap_seconds',
+    'dance_clip_panel_similarity',
 }
 _BOOL_KEYS = {'dance_clip_accurate_cut'}
 
@@ -97,8 +101,47 @@ def load_detect_params(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, 
     return params
 
 
+_SIM_PANEL_SIZE = (64, 64)  # 栏内容相似度比较前的统一缩放尺寸
+
+
+def _ncc(a, b) -> float:
+    """归一化互相关系数（[-1, 1]，1 为完全一致）。"""
+    import numpy as np
+    a = a.astype(np.float64).ravel()
+    b = b.astype(np.float64).ravel()
+    a = a - a.mean()
+    b = b - b.mean()
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    return float((a @ b) / denom) if denom > 0 else 0.0
+
+
+def _panel_similarities(gray, x1: int, x2: int) -> Optional[List[float]]:
+    """计算左中右三栏两两内容相似度（直接对比与左右镜像对比取较大者）。
+
+    三分屏舞蹈的三栏是同一画面的复制/镜像/拉伸，相似度接近 1；
+    普通视频中碰巧出现的竖直边缘（树干、栏杆、UI 边框），栏内容互不相关，相似度接近 0。
+    """
+    import cv2
+
+    height, width = gray.shape
+    panels = []
+    for lo, hi in ((0, x1), (x1, x2), (x2, width)):
+        # 各向内缩一点，避免分界线本身与贴边元素干扰
+        mx = max(1, int((hi - lo) * 0.04))
+        my = max(1, int(height * 0.04))
+        panel = gray[my:height - my, lo + mx:hi - mx]
+        if panel.size == 0:
+            return None
+        panels.append(cv2.resize(panel, _SIM_PANEL_SIZE, interpolation=cv2.INTER_AREA))
+    sims = []
+    for i, j in ((0, 1), (1, 2), (0, 2)):
+        a, b = panels[i], panels[j]
+        sims.append(max(_ncc(a, b), _ncc(a, cv2.flip(b, 1))))
+    return sims
+
+
 def _analyze_frame(frame, params) -> bool:
-    """判断单帧是否为三分屏布局（两条竖直分界线 + 三栏各自达到最小栏宽）。"""
+    """判断单帧是否为三分屏布局（两条竖直分界线 + 三栏各自达到最小栏宽 + 三栏内容一致）。"""
     import cv2
     import numpy as np
 
@@ -110,8 +153,11 @@ def _analyze_frame(frame, params) -> bool:
         height, width = frame.shape[:2]
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # 竖向边缘 + 竖直形态学闭运算：把断续竖线连成段，压制横向纹理
-    edges = cv2.Sobel(gray, cv2.CV_8U, 1, 0, ksize=3)
+    # 竖向边缘 + 竖直形态学闭运算：把断续竖线连成段，压制横向纹理。
+    # 必须用 CV_16S 再取绝对值——CV_8U 会把负梯度（亮→暗跳变）截断为 0，
+    # 漏掉一半方向的边缘。
+    sobel = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
+    edges = cv2.convertScaleAbs(sobel)
     _, edges = cv2.threshold(edges, 40, 255, cv2.THRESH_BINARY)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, height // 32)))
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
@@ -154,6 +200,7 @@ def _analyze_frame(frame, params) -> bool:
     border = params['dance_clip_border_margin'] * width
     min_seg = params['dance_clip_min_segment_ratio'] * width
     max_pair = params['dance_clip_max_pair_ratio'] * width
+    sim_threshold = params['dance_clip_panel_similarity']
     for i in range(len(lines)):
         for j in range(i + 1, len(lines)):
             x1, x2 = lines[i], lines[j]
@@ -163,6 +210,14 @@ def _analyze_frame(frame, params) -> bool:
                 continue
             if (x2 - x1) > max_pair:
                 continue
+            if sim_threshold > 0:
+                # 关键校验：三栏内容必须两两一致（同一画面复制/镜像），
+                # 否则任意含两条竖直边缘的画面（树干、栏杆、网页/游戏 UI）都会误判。
+                # 必须三对全部达标：只要求两对时，网页两侧大面积纯色留白
+                # 也会高度相关而漏过。
+                sims = _panel_similarities(gray, x1, x2)
+                if sims is None or any(s < sim_threshold for s in sims):
+                    continue
             return True
     return False
 

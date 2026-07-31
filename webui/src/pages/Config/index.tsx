@@ -36,6 +36,8 @@ const ConfigPage: React.FC = () => {
     dance_clip_accurate_cut: 'false',
     dance_clip_concurrency: 1,
     dance_clip_boundary_gap_seconds: 10,
+    dance_clip_title_template:
+      '【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}',
     douyin_cookies: '',
     afreecatv_username: '',
     afreecatv_password: '',
@@ -282,6 +284,12 @@ const ConfigPage: React.FC = () => {
               min={1}
               max={4}
               extra="同时执行的切片任务数，探测吃 CPU，不宜过大；重启后生效"
+            />
+            <ProFormText
+              name="dance_clip_title_template"
+              label="投稿标题模板"
+              placeholder="【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}"
+              extra="支持 {room_name} 主播名称、{room_title} 直播标题、{seq} 切片序号，以及 %Y年%m月%d日 %H时 等时间格式（取切片开始时间）"
             />
           </div>
         </ProCard>

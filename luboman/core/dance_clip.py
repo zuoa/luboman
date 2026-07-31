@@ -62,6 +62,39 @@ _BOOL_KEYS = {'dance_clip_accurate_cut'}
 
 CLIP_SERIES_CODE_PREFIX = 'CLIP:'
 
+# 舞蹈切片投稿标题模板：支持 {room_name} {room_title} {seq} 占位符和
+# strftime 时间格式（取切片开始时间）。全局配置项 dance_clip_title_template。
+DEFAULT_CLIP_TITLE_TEMPLATE = '【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}'
+
+
+class _MissingKeyDict(dict):
+    """format_map 用：未知占位符渲染为空串，避免下游标题模板再次 .format 时报错。"""
+
+    def __missing__(self, key):
+        return ''
+
+
+def format_clip_title(template, room_data, seq, begin_time=None) -> str:
+    """渲染舞蹈切片投稿标题。
+
+    占位符在切片开始时间上展开 strftime；模板非法时回退默认模板。
+    """
+    from datetime import datetime
+
+    def render(tpl):
+        values = _MissingKeyDict(room_data or {})
+        values['seq'] = seq
+        return tpl.format_map(values)
+
+    template = (template or '').strip() or DEFAULT_CLIP_TITLE_TEMPLATE
+    try:
+        text = render(template)
+    except (ValueError, IndexError):
+        logger.warning('舞蹈切片标题模板非法: %r，回退默认模板', template)
+        text = render(DEFAULT_CLIP_TITLE_TEMPLATE)
+    ts = begin_time if isinstance(begin_time, datetime) else datetime.now()
+    return ts.strftime(text)
+
 
 def _to_bool(value, default=False):
     if isinstance(value, bool):
@@ -718,7 +751,7 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
         logger.warning('舞蹈切片自动投稿：加载投稿模板 %s 失败: %s', template_id, e)
         return
 
-    base_title = room_data.get('room_title') or room_data.get('room_name') or ''
+    title_template = config.get('dance_clip_title_template')
     for seq, record_id in enumerate(clip_ids, start=1):
         try:
             record = await run_blocking(DB.get_record_file, record_id)
@@ -730,8 +763,8 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
             continue
         clip_room_data = {
             **room_data,
-            # 每个切片单独投稿，标题加序号避免多稿同名
-            'room_title': f'{base_title} 舞蹈片段{seq}',
+            # 每个切片单独投稿，标题按全局模板渲染（含序号避免多稿同名）
+            'room_title': format_clip_title(title_template, room_data, seq, record.get('begin_time')),
             'bili_upload_template': template_info,
         }
         try:

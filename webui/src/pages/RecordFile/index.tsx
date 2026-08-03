@@ -286,7 +286,7 @@ const RecordFileList: React.FC = () => {
   };
 
   const handlePublish = async (values: any) => {
-    const { bili_upload_template_id, live_room_id, room_data } = values;
+    const { bili_upload_template_ids, live_room_id, room_data } = values;
     const target = publishTarget;
     if (target.some((row) => !isRecordCompleted(row))) {
       message.warning('录制中的文件不能发布');
@@ -301,7 +301,7 @@ const RecordFileList: React.FC = () => {
       : undefined;
     try {
       const res = await publishRecordFileToBili({
-        bili_upload_template_id,
+        bili_upload_template_ids,
         live_room_id,
         ...(allHaveId
           ? { file_ids: target.map((r) => r.id as number) }
@@ -310,9 +310,19 @@ const RecordFileList: React.FC = () => {
           ? { room_data: roomData }
           : {}),
       });
-      message.success(
-        `已创建 ${res.file_count} 个文件的投稿任务，任务 ID：${res.task_id}`,
-      );
+      const taskCount = res.tasks?.length ?? 0;
+      const errCount = res.errors?.length ?? 0;
+      if (errCount > 0) {
+        message.warning(
+          `已创建 ${taskCount} 个投稿任务，${errCount} 个模板失败：${res.errors
+            .map((e) => `模板 ${e.bili_upload_template_id}(${e.error})`)
+            .join('；')}`,
+        );
+      } else {
+        message.success(
+          `已创建 ${taskCount} 个投稿任务（${bili_upload_template_ids.length} 个模板 × ${target.length} 个文件）`,
+        );
+      }
       clearSelection();
       actionRef.current?.reload();
       return true;
@@ -700,9 +710,9 @@ const RecordFileList: React.FC = () => {
           message="投稿为异步任务，提交后立即返回任务 ID；上传完成后稍后刷新列表即可在「发布状态」查看结果。"
         />
         <ProFormSelect
-          name="bili_upload_template_id"
+          name="bili_upload_template_ids"
           label="投稿模板"
-          rules={[{ required: true, message: '请选择投稿模板' }]}
+          rules={[{ required: true, message: '请至少选择一个投稿模板' }]}
           request={async () => {
             const list = await listBiliUploadTemplate();
             return (list || []).map((t) => ({
@@ -710,7 +720,8 @@ const RecordFileList: React.FC = () => {
               value: t.id,
             }));
           }}
-          placeholder="选择投稿模板（决定 B 站账号与稿件信息）"
+          placeholder="选择投稿模板（可多选，每个模板绑定一个 B 站账号）"
+          fieldProps={{ mode: 'multiple' }}
         />
         <ProFormSelect
           name="live_room_id"

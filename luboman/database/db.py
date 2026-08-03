@@ -37,6 +37,30 @@ def datetime_to_struct_time(date: datetime):
     return time.localtime(date.timestamp())
 
 
+def resolve_room_bili_template_ids(room_data):
+    """解析直播间绑定的B站投稿模板id列表（全后端唯一权威读取点）。
+
+    优先读新字段 bili_upload_template_ids（列表）；为空时回退旧单值字段
+    bili_upload_template_id（兼容迁移前的数据与旧客户端）。去重、保序、过滤非法值。
+    """
+    room_data = room_data or {}
+    raw = room_data.get('bili_upload_template_ids')
+    if not raw:
+        single = room_data.get('bili_upload_template_id')
+        raw = [single] if single else []
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    ids = []
+    for item in raw:
+        try:
+            tid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if tid not in ids:
+            ids.append(tid)
+    return ids
+
+
 class DB:
     """数据库交互类"""
 
@@ -52,6 +76,7 @@ class DB:
         ClipTask.create_table(safe=True)
         cls._ensure_record_file_schema()
         cls._ensure_live_room_schema()
+        cls._ensure_live_room_bili_template_ids_schema()
         cls._ensure_clip_task_schema()
         cls.recover_interrupted_submission_tasks()
         cls.recover_interrupted_clip_tasks()
@@ -94,6 +119,25 @@ class DB:
             logger.info('LiveRoom 自动舞蹈切片字段就绪')
         except Exception:
             logger.warning('补齐 LiveRoom 自动舞蹈切片字段失败', exc_info=True)
+
+    @classmethod
+    def _ensure_live_room_bili_template_ids_schema(cls):
+        """兼容旧库：补齐 LiveRoom 多投稿模板列表列，并从旧单模板列回填。"""
+        table = LiveRoom._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS bili_upload_template_ids JSON'
+                )
+                db.execute_sql(
+                    f'UPDATE "{table}" '
+                    'SET bili_upload_template_ids = json_build_array(bili_upload_template_id) '
+                    'WHERE bili_upload_template_id IS NOT NULL AND bili_upload_template_ids IS NULL'
+                )
+            logger.info('LiveRoom 多投稿模板字段就绪')
+        except Exception:
+            logger.warning('补齐 LiveRoom 多投稿模板字段失败', exc_info=True)
 
     @classmethod
     def _ensure_clip_task_schema(cls):
@@ -177,7 +221,34 @@ class DB:
     @classmethod
     def delete_bili_upload_template(cls, template_id):
         with db.connection_context():
-            return BiliUploadTemplate.delete_by_id(template_id)
+            result = BiliUploadTemplate.delete_by_id(template_id)
+        cls._remove_template_from_rooms(template_id)
+        return result
+
+    @classmethod
+    def _remove_template_from_rooms(cls, template_id):
+        """删除模板后，从所有房间的多模板列表中剔除残留id，并把旧单模板列同步为列表首元素。
+
+        失败仅告警，不阻塞模板删除；运行时加载也会跳过失效id（见 get_bili_templates_with_accounts）。
+        """
+        table = LiveRoom._meta.table_name
+        try:
+            tid = int(template_id)
+            with db.atomic():
+                db.execute_sql(
+                    f'UPDATE "{table}" SET bili_upload_template_ids = COALESCE('
+                    f"(SELECT json_agg(e) FROM json_array_elements(bili_upload_template_ids) e "
+                    f"WHERE (e #>> '{{}}')::int != {tid}), '[]'::json) "
+                    f'WHERE bili_upload_template_ids IS NOT NULL '
+                    f'AND bili_upload_template_ids::jsonb @> to_jsonb({tid})'
+                )
+                db.execute_sql(
+                    f'UPDATE "{table}" '
+                    f"SET bili_upload_template_id = (bili_upload_template_ids #>> '{{0}}')::int "
+                    f'WHERE bili_upload_template_ids IS NOT NULL'
+                )
+        except Exception:
+            logger.warning(f'清理房间中残留的投稿模板id失败: template_id={template_id}', exc_info=True)
 
     @classmethod
     def update_bili_upload_template(cls, data):
@@ -213,11 +284,18 @@ class DB:
     @classmethod
     def update_live_room(cls, data):
         with db.connection_context():
-            update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "upload_storage_platform",
+            update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "bili_upload_template_ids",
+                              "upload_storage_platform",
                               "stream_video_format", "active_state", "active_begin", "active_end", "ffmpeg_options",
                               "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id",
                               "auto_dance_clip"]
             update_data = cls.filter_model_data(LiveRoom, data, update_columns)
+
+            # 新列表字段为权威：写入时规范化并把旧单模板列同步为首元素（旧客户端退化为"只投第一个"）
+            if "bili_upload_template_ids" in update_data:
+                ids = resolve_room_bili_template_ids({'bili_upload_template_ids': update_data["bili_upload_template_ids"]})
+                update_data["bili_upload_template_ids"] = ids
+                update_data["bili_upload_template_id"] = ids[0] if ids else None
 
             update_data["gmt_updated"] = datetime.now()
 
@@ -876,6 +954,17 @@ class DB:
             template_info = model_to_dict(template)
             template_info['bili_account'] = model_to_dict(account)
             return template_info
+
+    @classmethod
+    def get_bili_templates_with_accounts(cls, template_ids):
+        """批量加载投稿模板及其绑定账号；单个失效（不存在/无账号）记 warning 跳过，不拖死整批。"""
+        templates = []
+        for template_id in template_ids or []:
+            try:
+                templates.append(cls.get_bili_template_with_account(template_id))
+            except Exception:
+                logger.warning(f'加载B站投稿模板失败，已跳过: template_id={template_id}', exc_info=True)
+        return templates
 
     @classmethod
     def list_clip_task(cls, filters=None, page=None, page_size=None):

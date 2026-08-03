@@ -121,7 +121,8 @@ class LiveRoom(BaseModel):
     room_cover_url = TextField(null=True)  # 直播间封面地址
     room_cover_frame_url = TextField(null=True)  # 直播间封面帧地址
     custom_filename = CharField(null=True)  # 文件名配置
-    bili_upload_template_id = IntegerField(null=True)
+    bili_upload_template_id = IntegerField(null=True)  # 旧单模板字段，仅兼容保留（回退用），以 bili_upload_template_ids 为准
+    bili_upload_template_ids = JSONField(null=True)  # B站投稿模板id列表，一份录播可投稿到多个账号（账号绑定在模板上）
     bili_upower_level_id = CharField(null=True)  # B站充电专属等级ID
     upload_storage_platform = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True, default="flv")  # 视频格式

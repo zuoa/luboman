@@ -727,8 +727,8 @@ def run_clip_task(task_id: str) -> None:
 
 
 async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
-    """把切片逐个投稿到B站（复用房间投稿模板）。房间未开开关或未配模板时只入库不投稿。"""
-    from luboman.database.db import DB
+    """把切片逐个投稿到B站（复用房间投稿模板，多模板即多账号）。房间未开开关或未配模板时只入库不投稿。"""
+    from luboman.database.db import DB, resolve_room_bili_template_ids
     from luboman.core.async_upload import UploadPriority, schedule_bili_submission
 
     if not clip_ids or not live_room_id:
@@ -741,14 +741,13 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
     if int(room_data.get('auto_dance_clip') or 0) != 1:
         logger.info('房间 %s 已关闭自动舞蹈切片，产出切片不再投稿', live_room_id)
         return
-    template_id = room_data.get('bili_upload_template_id')
-    if not template_id:
+    template_ids = resolve_room_bili_template_ids(room_data)
+    if not template_ids:
         logger.info('房间 %s 未配置B站投稿模板，舞蹈切片仅入库不投稿', live_room_id)
         return
-    try:
-        template_info = await run_blocking(DB.get_bili_template_with_account, template_id)
-    except Exception as e:
-        logger.warning('舞蹈切片自动投稿：加载投稿模板 %s 失败: %s', template_id, e)
+    templates = await run_blocking(DB.get_bili_templates_with_accounts, template_ids)
+    if not templates:
+        logger.warning('房间 %s 配置的投稿模板均不可用，舞蹈切片仅入库不投稿', live_room_id)
         return
 
     title_template = config.get('dance_clip_title_template')
@@ -761,23 +760,25 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
         video = record.get('video')
         if not video or not os.path.isfile(video):
             continue
-        clip_room_data = {
-            **room_data,
-            # 每个切片单独投稿，标题按全局模板渲染（含序号避免多稿同名）
-            'room_title': format_clip_title(title_template, room_data, seq, record.get('begin_time')),
-            'bili_upload_template': template_info,
-        }
-        try:
-            result = await schedule_bili_submission(
-                file_list=[{'id': record_id, 'video': video}],
-                room_data=clip_room_data,
-                source='AUTO',
-                priority=UploadPriority.HIGH,
-                metadata={'created_from': 'auto_dance_clip'},
-            )
-            logger.info('舞蹈切片投稿任务已创建: %s', result)
-        except Exception:
-            logger.exception('舞蹈切片 %s 投稿任务创建失败', record_id)
+        for template_info in templates:
+            clip_room_data = {
+                **room_data,
+                # 每个切片单独投稿，标题按全局模板渲染（含序号避免多稿同名）
+                'room_title': format_clip_title(title_template, room_data, seq, record.get('begin_time')),
+                'bili_upload_template': template_info,
+                'bili_upload_template_id': template_info['id'],
+            }
+            try:
+                result = await schedule_bili_submission(
+                    file_list=[{'id': record_id, 'video': video}],
+                    room_data=clip_room_data,
+                    source='AUTO',
+                    priority=UploadPriority.HIGH,
+                    metadata={'created_from': 'auto_dance_clip'},
+                )
+                logger.info('舞蹈切片投稿任务已创建: 模板=%s, %s', template_info.get('template_name'), result)
+            except Exception:
+                logger.exception('舞蹈切片 %s 投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
 
 
 async def _auto_submit_task_clips(task_id: str) -> None:

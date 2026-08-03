@@ -33,8 +33,10 @@ declare namespace API {
     room_cover_frame_url?: string;
     /** 自定义录播文件名模板 */
     custom_filename?: string;
-    /** 关联的 B 站投稿模板 id */
+    /** 关联的 B 站投稿模板 id（旧单值字段，仅兼容；以 bili_upload_template_ids 为准） */
     bili_upload_template_id?: number;
+    /** 关联的 B 站投稿模板 id 列表（一份录播可投多个账号） */
+    bili_upload_template_ids?: number[] | null;
     /** B 站充电等级 id */
     bili_upower_level_id?: string;
     /** 网盘上传平台：bdpan / alipan */
@@ -213,11 +215,10 @@ declare namespace API {
     page: number;
   }
 
-  /** RecordFile/publishBili 响应 data */
+  /** RecordFile/publishBili 响应 data：每个模板一个任务，单个失败不影响其他 */
   interface RecordFilePublishResult {
-    task_id: string;
-    file_count: number;
-    uploader: string;
+    tasks: { task_id: string; file_count: number; uploader: string }[];
+    errors: { bili_upload_template_id: number; error: string }[];
   }
 
   type SubmissionTaskStatus =

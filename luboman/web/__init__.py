@@ -29,6 +29,7 @@ from luboman.database.db import (
     RECORD_FILE_STATUS_COMPLETED,
     RECORD_FILE_STATUS_RECORDING,
     SUBMISSION_TASK_SOURCE_FILE_MANAGER,
+    resolve_room_bili_template_ids,
 )
 from luboman.database.models import (
     BiliAccount,
@@ -440,19 +441,24 @@ def _build_bili_publish_room_data(bili_upload_template_id, live_room_id, room_da
             room_data[field] = room_data_override[field]
 
     room_data['bili_upload_template'] = template_info
+    # 覆盖为本次实际使用的模板id，避免沿用房间旧单模板列导致 SubmissionTask 记录错模板
+    room_data['bili_upload_template_id'] = template_info['id']
     return room_data
 
 
 def _prepare_bili_publish(data):
-    """同步校验并组装手动发布的上传上下文，返回 (room_data, file_list)。"""
+    """同步校验并组装手动发布的上传上下文，返回 (template_ids, live_room_id, room_data_override, file_list)。
+
+    支持 bili_upload_template_ids（列表，可多选模板投多个账号）与旧的 bili_upload_template_id（单值）。
+    """
     file_ids = data.get('file_ids')
     videos = data.get('videos')
-    bili_upload_template_id = data.get('bili_upload_template_id')
+    template_ids = resolve_room_bili_template_ids(data)
     live_room_id = _as_int(data.get('live_room_id'))
     room_data_override = data.get('room_data') or {}
 
-    if not bili_upload_template_id:
-        raise ValueError('bili_upload_template_id is required')
+    if not template_ids:
+        raise ValueError('bili_upload_template_ids is required')
     if not file_ids and not videos:
         raise ValueError('file_ids or videos is required')
 
@@ -476,8 +482,7 @@ def _prepare_bili_publish(data):
     if not file_list:
         raise ValueError('no files to publish')
 
-    room_data = _build_bili_publish_room_data(bili_upload_template_id, live_room_id, room_data_override)
-    return room_data, file_list
+    return template_ids, live_room_id, room_data_override, file_list
 
 
 def _list_submission_tasks_data(params):
@@ -902,20 +907,35 @@ async def stream_record_file(request):
 async def publish_record_file_to_bili(request):
     try:
         data = await request.json()
-        room_data, file_list = await run_db(_prepare_bili_publish, data)
+        template_ids, live_room_id, room_data_override, file_list = await run_db(_prepare_bili_publish, data)
 
-        result = await schedule_bili_submission(
-            file_list=file_list,
-            room_data=room_data,
-            source=SUBMISSION_TASK_SOURCE_FILE_MANAGER,
-            priority=UploadPriority.HIGH,
-            metadata={
-                'created_from': 'record_file',
-                'file_ids': data.get('file_ids') or [],
-                'videos': data.get('videos') or [],
-            },
-        )
-        return success(result)
+        # 每个模板（账号）创建一个投稿任务，单个失败不影响其他模板
+        tasks = []
+        errors = []
+        for template_id in template_ids:
+            try:
+                room_data = await run_db(
+                    _build_bili_publish_room_data, template_id, live_room_id, room_data_override
+                )
+                result = await schedule_bili_submission(
+                    file_list=file_list,
+                    room_data=room_data,
+                    source=SUBMISSION_TASK_SOURCE_FILE_MANAGER,
+                    priority=UploadPriority.HIGH,
+                    metadata={
+                        'created_from': 'record_file',
+                        'file_ids': data.get('file_ids') or [],
+                        'videos': data.get('videos') or [],
+                    },
+                )
+                tasks.append(result)
+            except Exception as e:
+                logger.error(f'手动投稿任务创建失败: template_id={template_id}, 错误={e}')
+                errors.append({'bili_upload_template_id': template_id, 'error': str(e)})
+
+        if not tasks:
+            return error(1, '; '.join(f"模板 {e['bili_upload_template_id']}: {e['error']}" for e in errors))
+        return success({'tasks': tasks, 'errors': errors})
     except ValueError as e:
         return error(1, str(e))
     except Exception as e:

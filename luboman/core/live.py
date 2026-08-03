@@ -22,7 +22,7 @@ from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
 from luboman.core.upload import resolve_bili_uploader, upload
 from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename, get_public_dir, download_file
-from luboman.database.db import DB
+from luboman.database.db import DB, resolve_room_bili_template_ids
 from luboman.database.models import BiliUploadTemplate, BiliAccount
 
 logger = logging.getLogger('luboman')
@@ -624,34 +624,12 @@ class LiveBase(object):
         @event_manager.register(EventType.EVENT_UPLOAD_BILI, "SLOW")
         def process_upload_bili(file_list):
             logger.info(f'{self.log_prefix} | Bili上传开始: {file_list}')
-            bili_upload_template_id = self.room_data.get('bili_upload_template_id')
-            if bili_upload_template_id is None:
-                logger.error(f"{self.log_prefix} | bili_upload_template_id is None")
+            template_ids = resolve_room_bili_template_ids(self.room_data)
+            if not template_ids:
+                logger.error(f"{self.log_prefix} | 未配置B站投稿模板")
                 return
 
-            template_info = BiliUploadTemplate.get_by_id_(bili_upload_template_id)
-            if not template_info:
-                logger.error(f"{self.log_prefix} :  bili_upload_template_id: {bili_upload_template_id} not found")
-                return
-
-            if template_info.bili_account_id is None:
-                logger.error(f"{self.log_prefix} :  bili_account_id is None")
-                return
-
-            bili_account = BiliAccount.get_by_id_(template_info.bili_account_id)
-            if not bili_account:
-                logger.error(f"{self.log_prefix} :  bili_account_id: {template_info.bili_account_id} not found")
-                return
-
-            template_info = model_to_dict(template_info)
-            template_info['bili_account'] = model_to_dict(bili_account)
-
-            room_data = self.room_data.copy()
-            room_data['bili_upload_template'] = template_info
-            upload_info = {
-                'room_data': room_data
-            }
-
+            # 过滤文件（只过滤一次，各模板复用）
             prepare_upload_file_list = []
             filtering_threshold_file_size = config.get("filtering_threshold_file_size", 5)
             filtering_threshold_file_size = int(filtering_threshold_file_size) * 1024 * 1024
@@ -659,9 +637,41 @@ class LiveBase(object):
                 if os.path.exists(file['video']) and os.path.getsize(file['video']) >= filtering_threshold_file_size:
                     prepare_upload_file_list.append(file)
 
-            bili_uploader = resolve_bili_uploader(room_data)
-            ret = upload(bili_uploader, prepare_upload_file_list, **upload_info)
-            logger.info(f'{self.log_prefix} :  Bili上传完成: {ret}')
+            if not prepare_upload_file_list:
+                return
+
+            # 循环投稿到每个模板（账号绑定在模板上，多模板即多账号），单个失败不影响其他
+            for template_id in template_ids:
+                try:
+                    template_info = BiliUploadTemplate.get_by_id_(template_id)
+                    if not template_info:
+                        logger.error(f"{self.log_prefix} :  bili_upload_template_id: {template_id} not found")
+                        continue
+
+                    if template_info.bili_account_id is None:
+                        logger.error(f"{self.log_prefix} :  bili_upload_template_id: {template_id} bili_account_id is None")
+                        continue
+
+                    bili_account = BiliAccount.get_by_id_(template_info.bili_account_id)
+                    if not bili_account:
+                        logger.error(f"{self.log_prefix} :  bili_account_id: {template_info.bili_account_id} not found")
+                        continue
+
+                    template_info = model_to_dict(template_info)
+                    template_info['bili_account'] = model_to_dict(bili_account)
+
+                    room_data = self.room_data.copy()
+                    room_data['bili_upload_template'] = template_info
+                    room_data['bili_upload_template_id'] = template_info['id']
+                    upload_info = {
+                        'room_data': room_data
+                    }
+
+                    bili_uploader = resolve_bili_uploader(room_data)
+                    ret = upload(bili_uploader, prepare_upload_file_list, **upload_info)
+                    logger.info(f'{self.log_prefix} :  Bili上传完成: 模板={template_info.get("template_name")}, {ret}')
+                except Exception as e:
+                    logger.error(f'{self.log_prefix} :  Bili上传失败: template_id={template_id}, 错误={e}')
 
         @event_manager.register(EventType.EVENT_UPLOAD_BILI_COMPLETED)
         def process_upload_bili_completed(file_list):

@@ -94,10 +94,10 @@ function formatRelative(value?: string): string {
 
 /**
  * 后端 update_live_room 仅更新以下字段（白名单合并）：
- * room_name, room_url, custom_filename, bili_upload_template_id,
+ * room_name, room_url, custom_filename, bili_upload_template_id, bili_upload_template_ids,
  * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
  * auto_dance_clip。
- * 故新建/编辑表单仅暴露这 10 个可编辑字段。
+ * 故新建/编辑表单仅暴露这些可编辑字段；投稿模板为多选（一份录播可投多个账号）。
  */
 const RoomFormFields: React.FC = () => (
   <>
@@ -115,7 +115,7 @@ const RoomFormFields: React.FC = () => (
       extra="支持 {room_name} {title} 与 strftime 时间变量"
     />
     <ProFormSelect
-      name="bili_upload_template_id"
+      name="bili_upload_template_ids"
       label="投稿模板"
       request={async () => {
         const list = await listBiliUploadTemplate();
@@ -124,7 +124,8 @@ const RoomFormFields: React.FC = () => (
           value: t.id,
         }));
       }}
-      placeholder="选择 B 站投稿模板"
+      placeholder="选择 B 站投稿模板（可多选，每个模板绑定一个账号）"
+      fieldProps={{ mode: 'multiple' }}
       allowClear
     />
     <ProFormSelect
@@ -201,9 +202,16 @@ const LiveRoomList: React.FC = () => {
     fetchData();
   };
 
-  // 投稿模板名（带回退）
-  const templateLabel = (id?: number) =>
-    id != null ? templateMap[id] || `投稿 #${id}` : null;
+  // 投稿模板名列表（多模板，带回退：旧数据只有单模板字段）
+  const templateLabels = (r: API.LiveRoomInfo): string[] => {
+    const ids =
+      r.bili_upload_template_ids && r.bili_upload_template_ids.length > 0
+        ? r.bili_upload_template_ids
+        : r.bili_upload_template_id != null
+          ? [r.bili_upload_template_id]
+          : [];
+    return ids.map((id) => templateMap[id] || `投稿 #${id}`);
+  };
 
   const toolbar = (
     <div className={styles.toolbar}>
@@ -333,16 +341,20 @@ const LiveRoomList: React.FC = () => {
               title: '投稿 / 网盘',
               width: 180,
               render: (_, r) => {
-                const tmpl = templateLabel(r.bili_upload_template_id);
+                const tmpls = templateLabels(r);
                 const storage = r.upload_storage_platform
                   ? STORAGE_LABELS[r.upload_storage_platform] ||
                     r.upload_storage_platform
                   : null;
-                if (!tmpl && !storage)
+                if (!tmpls.length && !storage)
                   return <span className={styles.muted}>-</span>;
                 return (
                   <Space size={4} wrap>
-                    {tmpl && <Tag color="blue">{tmpl}</Tag>}
+                    {tmpls.map((name) => (
+                      <Tag key={name} color="blue">
+                        {name}
+                      </Tag>
+                    ))}
                     {storage && <Tag color="geekblue">{storage}</Tag>}
                   </Space>
                 );
@@ -470,11 +482,11 @@ const LiveRoomList: React.FC = () => {
                     </div>
 
                     <div className={styles.cardTags}>
-                      {templateLabel(r.bili_upload_template_id) && (
-                        <Tag color="blue">
-                          {templateLabel(r.bili_upload_template_id)}
+                      {templateLabels(r).map((name) => (
+                        <Tag key={name} color="blue">
+                          {name}
                         </Tag>
-                      )}
+                      ))}
                       {r.upload_storage_platform && (
                         <Tag color="geekblue">
                           {STORAGE_LABELS[r.upload_storage_platform] ||
@@ -549,6 +561,12 @@ const LiveRoomList: React.FC = () => {
                 ...editing,
                 active_state: editing.active_state === 1,
                 auto_dance_clip: editing.auto_dance_clip === 1,
+                // 多选字段：null 归一为 undefined；兼容只有旧单模板字段的历史数据
+                bili_upload_template_ids:
+                  editing.bili_upload_template_ids ??
+                  (editing.bili_upload_template_id != null
+                    ? [editing.bili_upload_template_id]
+                    : undefined),
               }
             : undefined
         }

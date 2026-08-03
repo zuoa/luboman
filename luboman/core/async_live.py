@@ -210,34 +210,38 @@ class AsyncLiveBase:
         
         @self._scoped_handler(AsyncEventType.EVENT_UPLOAD_BILI, priority=4)
         async def async_process_upload_bili(event: AsyncEvent):
-            """异步B站上传处理器"""
+            """异步B站上传处理器（支持多投稿模板：一份录播可投稿到多个账号）"""
             file_list = event.args[0] if event.args else []
-            
+
             logger.info(f'{self.log_prefix} 异步Bili上传开始: {len(file_list)} 个文件')
-            
-            # 获取上传配置
-            bili_upload_template_id = self.room_data.get('bili_upload_template_id')
-            if not bili_upload_template_id:
-                logger.error(f"{self.log_prefix} bili_upload_template_id is None")
+
+            # 获取上传模板列表（账号绑定在模板上，多模板即多账号）
+            templates = await self._async_resolve_bili_templates()
+            if not templates:
+                logger.error(f"{self.log_prefix} 未配置可用的B站投稿模板")
                 return
-            
-            # 异步获取模板信息
-            template_info = await self._async_get_bili_template(bili_upload_template_id)
-            if not template_info:
-                return
-            
-            # 过滤文件
+
+            # 过滤文件（只过滤一次，各模板复用）
             prepare_upload_file_list = await self._filter_upload_files(file_list)
-            
+
             if prepare_upload_file_list:
-                result = await schedule_bili_submission(
-                    file_list=prepare_upload_file_list,
-                    room_data={**self.room_data, 'bili_upload_template': template_info},
-                    source='AUTO',
-                    priority=UploadPriority.HIGH,
-                    metadata={'created_from': 'auto_record'},
-                )
-                logger.info(f'{self.log_prefix} B站投稿任务已创建: {result}')
+                success_count = 0
+                for template_info in templates:
+                    try:
+                        result = await schedule_bili_submission(
+                            file_list=prepare_upload_file_list,
+                            room_data={**self.room_data,
+                                       'bili_upload_template': template_info,
+                                       'bili_upload_template_id': template_info['id']},
+                            source='AUTO',
+                            priority=UploadPriority.HIGH,
+                            metadata={'created_from': 'auto_record'},
+                        )
+                        success_count += 1
+                        logger.info(f'{self.log_prefix} B站投稿任务已创建: 模板={template_info.get("template_name")}, {result}')
+                    except Exception as e:
+                        logger.error(f'{self.log_prefix} B站投稿任务创建失败: 模板={template_info.get("template_name")}, 错误={e}')
+                logger.info(f'{self.log_prefix} B站投稿任务创建完成: {success_count}/{len(templates)} 个模板成功')
         
         @self._scoped_handler(AsyncEventType.EVENT_PRE_RECORD, priority=1)
         async def async_process_pre_record(event: AsyncEvent):
@@ -290,7 +294,8 @@ class AsyncLiveBase:
                 ))
             
             # 如果开启了B站上传
-            if self.room_data.get('bili_upload_template_id'):
+            from luboman.database.db import resolve_room_bili_template_ids
+            if resolve_room_bili_template_ids(self.room_data):
                 await self.async_send_event(AsyncEvent(
                     AsyncEventType.EVENT_UPLOAD_BILI,
                     args=(file_list,),
@@ -553,34 +558,20 @@ class AsyncLiveBase:
         except Exception as e:
             logger.error(f'{self.log_prefix} 发送通知失败: {e}')
     
-    async def _async_get_bili_template(self, template_id) -> Optional[Dict]:
-        """异步获取B站上传模板"""
+    async def _async_resolve_bili_templates(self) -> List[Dict]:
+        """异步解析直播间绑定的B站投稿模板列表（每个模板内联其绑定账号）"""
         try:
-            # 在线程中执行数据库查询
-            from luboman.database.models import BiliUploadTemplate, BiliAccount
-            from playhouse.shortcuts import model_to_dict
-            
-            def get_template_sync():
-                template_info = BiliUploadTemplate.get_by_id_(template_id)
-                if not template_info:
-                    return None
-                
-                if template_info.bili_account_id is None:
-                    return None
-                
-                bili_account = BiliAccount.get_by_id_(template_info.bili_account_id)
-                if not bili_account:
-                    return None
-                
-                template_dict = model_to_dict(template_info)
-                template_dict['bili_account'] = model_to_dict(bili_account)
-                return template_dict
-            
-            return await run_blocking(get_template_sync)
-            
+            from luboman.database.db import DB, resolve_room_bili_template_ids
+
+            template_ids = resolve_room_bili_template_ids(self.room_data)
+            if not template_ids:
+                return []
+
+            return await run_blocking(DB.get_bili_templates_with_accounts, template_ids)
+
         except Exception as e:
-            logger.error(f'{self.log_prefix} 获取B站模板失败: {e}')
-            return None
+            logger.error(f'{self.log_prefix} 获取B站模板列表失败: {e}')
+            return []
     
     async def _filter_upload_files(self, file_list: List[Dict]) -> List[Dict]:
         """异步过滤上传文件"""

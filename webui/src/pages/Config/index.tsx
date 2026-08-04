@@ -12,7 +12,7 @@ import {
   ProFormSelect,
   ProFormText,
 } from '@ant-design/pro-components';
-import { Button, Space, message } from 'antd';
+import { Button, Space, Tabs, message } from 'antd';
 import { useState } from 'react';
 import styles from './index.less';
 
@@ -302,7 +302,7 @@ const ConfigPage: React.FC = () => {
         </ProCard>
 
         <ProCard
-          title={sectionTitle('平台设置', '配置各直播平台的特殊参数')}
+          title={sectionTitle('平台账号管理', '配置各直播平台的登录凭证')}
           bordered
           headerBordered
           style={{ marginBottom: 16 }}
@@ -313,26 +313,44 @@ const ConfigPage: React.FC = () => {
               某些平台需要登录凭证才能获取高质量直播流，请根据需要填写相关信息
             </span>
           </div>
-          <div className={styles.fieldGroup}>
-            <ProFormText
-              name="douyin_cookies"
-              label="抖音Cookie"
-              placeholder="从浏览器复制完整的Cookie字符串"
-              extra="用于获取抖音高质量直播流"
-            />
-            <ProFormText
-              name="afreecatv_username"
-              label="AfreecaTV用户名"
-              placeholder="AfreecaTV账号用户名"
-              extra="AfreecaTV平台登录用户名"
-            />
-            <ProFormText.Password
-              name="afreecatv_password"
-              label="AfreecaTV密码"
-              placeholder="AfreecaTV账号密码"
-              extra="AfreecaTV平台登录密码"
-            />
-          </div>
+          <Tabs
+            items={[
+              {
+                key: 'douyin',
+                label: '抖音',
+                children: (
+                  <div className={styles.fieldGroup}>
+                    <ProFormText
+                      name="douyin_cookies"
+                      label="抖音Cookie"
+                      placeholder="从浏览器复制完整的Cookie字符串"
+                      extra="用于获取抖音高质量直播流"
+                    />
+                  </div>
+                ),
+              },
+              {
+                key: 'afreecatv',
+                label: 'AfreecaTV',
+                children: (
+                  <div className={styles.fieldGroup}>
+                    <ProFormText
+                      name="afreecatv_username"
+                      label="AfreecaTV用户名"
+                      placeholder="AfreecaTV账号用户名"
+                      extra="AfreecaTV平台登录用户名"
+                    />
+                    <ProFormText.Password
+                      name="afreecatv_password"
+                      label="AfreecaTV密码"
+                      placeholder="AfreecaTV账号密码"
+                      extra="AfreecaTV平台登录密码"
+                    />
+                  </div>
+                ),
+              },
+            ]}
+          />
         </ProCard>
       </ProForm>
     </PageContainer>

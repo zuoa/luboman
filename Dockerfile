@@ -3,8 +3,8 @@ RUN \
   set -eux; \
   apt-get update; \
   apt-get install -y --no-install-recommends vim git g++ curl unzip xz-utils; \
-  curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip -o /tmp/aliyunpan.zip && \
-  unzip /tmp/aliyunpan.zip -d /opt &&  mv /opt/aliyunpan-v0.2.9-linux-amd64 /opt/aliyunpan
+  curl -L https://github.com/tickstep/aliyunpan/releases/download/v0.4.0/aliyunpan-v0.4.0-linux-amd64.zip -o /tmp/aliyunpan.zip && \
+  unzip /tmp/aliyunpan.zip -d /opt &&  mv /opt/aliyunpan-v0.4.0-linux-amd64 /opt/aliyunpan
 
 
 FROM python:3.11-slim

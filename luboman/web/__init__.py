@@ -131,6 +131,53 @@ def _delete_live_room(row_id):
     return DB.delete_live_room(row_id)
 
 
+def _probe_live_room(room_url):
+    """按 URL 匹配直播插件并抓取直播间信息（不启动录制）。
+
+    插件实例化会连带启动事件管理器与录制线程，探测完必须立即停用，
+    避免后台空转。未开播时多数平台拿不到房间信息，仅返回平台识别结果。
+    """
+    import re as _re
+
+    from luboman.core.decorators import PluginTool
+
+    plugin = None
+    platform = None
+    for pg_cls in PluginTool.live_plugins:
+        if _re.match(pg_cls.VALID_URL_BASE, room_url):
+            platform = pg_cls.__name__
+            plugin = pg_cls('', room_url)
+            break
+
+    if not plugin:
+        raise ValueError("未识别的直播间链接，暂不支持该平台")
+
+    try:
+        is_living = plugin.check_live(is_check_status=True)
+    except Exception as e:
+        logger.warning(f"探测直播间失败: {room_url}: {e}")
+        is_living = False
+    finally:
+        # 立即停用后台线程（录制线程最多再空转一个 3 秒轮询周期后自行退出）
+        try:
+            plugin._active = False
+            plugin.event_manager.stop()
+        except Exception:
+            pass
+
+    room_data = getattr(plugin, 'room_data', {}) or {}
+    return {
+        'room_platform': room_data.get('room_platform') or platform,
+        'live_state': 1 if is_living else 0,
+        # 房间名优先取主播昵称，退回直播标题
+        'room_name': room_data.get('room_owner') or room_data.get('room_title') or '',
+        'room_title': room_data.get('room_title', ''),
+        'room_owner': room_data.get('room_owner', ''),
+        'room_cover_url': room_data.get('room_cover_url', ''),
+        'room_owner_avatar': room_data.get('room_owner_avatar', ''),
+    }
+
+
 def _prepare_bili_account_payload(data, require_credentials):
     payload = dict(data)
     if payload.get('bili_cookies_filepath'):
@@ -812,6 +859,20 @@ async def del_room(request):
         await run_db(_delete_live_room, row_id)
         await stop_room_runtime(row_id)
         return success(row_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/LiveRoom/probe")
+async def probe_room(request):
+    data = await request.json()
+    room_url = (data.get('room_url') or '').strip()
+    if not room_url:
+        return error(1, "room_url is required")
+
+    try:
+        return success(await run_db(_probe_live_room, room_url))
     except Exception as e:
         logger.error(e)
         return error(1, str(e))

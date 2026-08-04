@@ -68,6 +68,19 @@ declare namespace API {
     notify_token?: string;
   }
 
+  /** 直播间探测结果（/v1/LiveRoom/probe） */
+  interface LiveRoomProbeResult {
+    room_platform: string;
+    /** 0 未开播 / 1 直播中 */
+    live_state: 0 | 1;
+    /** 建议房间名（主播昵称，其次直播标题；未开播可能为空） */
+    room_name: string;
+    room_title: string;
+    room_owner: string;
+    room_cover_url: string;
+    room_owner_avatar: string;
+  }
+
   /** B 站账号（BiliAccount） */
   interface BiliAccountInfo {
     id?: number;

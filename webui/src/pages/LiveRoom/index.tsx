@@ -12,6 +12,7 @@ import {
   EditOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SearchOutlined,
   TableOutlined,
 } from '@ant-design/icons';
 import {
@@ -21,6 +22,7 @@ import {
   Col,
   Descriptions,
   Empty,
+  Form,
   Popconfirm,
   Row,
   Segmented,
@@ -29,6 +31,7 @@ import {
   Table,
   Tag,
   Tooltip,
+  message,
 } from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
 import defaultRoomImg from '../../assets/default.jpg';
@@ -36,6 +39,7 @@ import styles from './index.less';
 
 const { listLiveRoom, addLiveRoom, updateLiveRoom, deleteLiveRoom } =
   services.LiveRoom;
+const { probeLiveRoom } = services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
 const { listDouyinUploadTemplate } = services.DouyinUploadTemplate;
 
@@ -94,6 +98,60 @@ function formatRelative(value?: string): string {
 }
 
 /**
+ * 直播间链接「探测」按钮：调用后端按链接抓取平台/房间名/开播状态，
+ * 自动回填房间名。挂在输入框 suffix 上，须在 Form 上下文内渲染。
+ */
+const ProbeButton: React.FC = () => {
+  const form = Form.useFormInstance();
+  const [probing, setProbing] = useState(false);
+
+  const handleProbe = async () => {
+    const url = (form.getFieldValue('room_url') || '').trim();
+    if (!url) {
+      message.warning('请先输入直播间链接');
+      return;
+    }
+    setProbing(true);
+    try {
+      const info = await probeLiveRoom(url);
+      if (info.room_name) {
+        form.setFieldsValue({ room_name: info.room_name });
+      }
+      if (info.live_state === 1) {
+        message.success(
+          `探测成功：${info.room_platform}${
+            info.room_title ? `｜${info.room_title}` : ''
+          }`,
+        );
+      } else if (info.room_name) {
+        message.info('主播当前未开播，已回填房间名');
+      } else {
+        message.warning(
+          `已识别平台：${info.room_platform}；主播未开播，暂无法获取房间名，请手动填写`,
+        );
+      }
+    } catch {
+      // 统一错误层已弹 toast
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  return (
+    <Button
+      type="link"
+      size="small"
+      icon={<SearchOutlined />}
+      loading={probing}
+      onClick={handleProbe}
+      style={{ paddingInline: 4 }}
+    >
+      探测
+    </Button>
+  );
+};
+
+/**
  * 后端 update_live_room 仅更新以下字段（白名单合并）：
  * room_name, room_url, custom_filename, bili_upload_template_id, bili_upload_template_ids,
  * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
@@ -107,6 +165,7 @@ const RoomFormFields: React.FC = () => (
       label="直播间链接"
       placeholder="https://..."
       rules={[{ required: true, message: '请输入直播间链接' }]}
+      fieldProps={{ suffix: <ProbeButton /> }}
     />
     <ProFormText name="room_name" label="直播间名称" placeholder="直播间名称" />
     <ProFormText
@@ -140,7 +199,7 @@ const RoomFormFields: React.FC = () => (
         }));
       }}
       placeholder="选择抖音投稿模板（可多选）"
-      extra="抖音查重严格：同一切片投多个抖音号易判搬运限流，建议只选一个模板"
+      extra="只支持切片投稿（如舞蹈切片），不支持完整录播；抖音查重严格：同一切片投多个抖音号易判搬运限流，建议只选一个模板"
       fieldProps={{ mode: 'multiple' }}
       allowClear
     />

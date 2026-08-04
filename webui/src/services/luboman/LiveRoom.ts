@@ -45,3 +45,18 @@ export async function deleteLiveRoom(
     ...(options || {}),
   });
 }
+
+/** 探测直播间：按链接抓取平台/房间名/标题/开播状态，用于表单自动回填 */
+export async function probeLiveRoom(
+  roomUrl: string,
+  options?: { [key: string]: any },
+) {
+  return request<API.LiveRoomProbeResult>(
+    REQUEST_HOST + '/v1/LiveRoom/probe',
+    {
+      method: 'POST',
+      data: { room_url: roomUrl },
+      ...(options || {}),
+    },
+  );
+}

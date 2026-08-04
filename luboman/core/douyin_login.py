@@ -296,7 +296,23 @@ async def _extract_qrcode_data_url(page, timeout: float = 30.0) -> Optional[str]
     return None
 
 
-async def _is_logged_in(page) -> bool:
+# 登录成功才会种下的会话 cookie（任一非空即视为已登录）
+_SESSION_COOKIE_NAMES = ('sessionid', 'sessionid_ss', 'sid_tt', 'sid_ucp_v1')
+
+
+async def _is_logged_in(context, page) -> bool:
+    """扫码确认后判定登录成功。
+
+    首选会话 cookie 判据：不依赖页面跳转行为（抖音扫码后可能停留原页
+    SPA 更新，也可能跳转 creator-micro，路径随版本变化）；URL 判定作兜底。
+    """
+    try:
+        for cookie in await context.cookies():
+            if cookie.get('name') in _SESSION_COOKIE_NAMES and cookie.get('value'):
+                return True
+    except Exception:
+        pass
+
     if page.url.startswith(_LOGIN_SUCCESS_URL_PREFIX) and 'login' not in page.url:
         # 登录标记不可见才算数（页面可能部分渲染）
         for marker_text in ('扫码登录', '手机号登录', '二维码失效'):
@@ -366,8 +382,13 @@ async def douyin_cookie_gen(
                 qrcode_callback(qrcode_src)
 
             last_qrcode = qrcode_src
+            last_url = page.url
             while time.time() < deadline:
-                if await _is_logged_in(page):
+                if page.url != last_url:
+                    # 扫码后页面跳转是最直观的信号，记录便于排查登录检测问题
+                    logger.info('抖音登录页跳转: %s -> %s', last_url, page.url)
+                    last_url = page.url
+                if await _is_logged_in(context, page):
                     await asyncio.sleep(2)  # 等 cookie 写稳
                     await context.storage_state(path=cookie_path)
                     result['success'] = True

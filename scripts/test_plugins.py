@@ -28,7 +28,7 @@ if which in ('huya', 'all'):
 if which in ('douyin', 'all'):
     test('douyin', Douyin('test', 'https://live.douyin.com/81482202'))
 if which in ('afreecatv', 'all'):
-    test('afreecatv', AfreecaTV('test', 'https://play.afreecatv.com/tildaaa/263094720'))
+    test('afreecatv', AfreecaTV('test', 'https://play.sooplive.com/tildaaa/263094720'))
 
 sys.stdout.flush()
 sys.stderr.flush()

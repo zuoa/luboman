@@ -10,15 +10,20 @@ from luboman.core.utils import match1, NamedLock
 from luboman.plugins import logger
 
 
-@PluginTool.live(regexp=r'https?://(.*?)\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?')
+# AfreecaTV 已于 2024 年更名为 SOOP；接口路径仍保留 afreeca 前缀。
+# 同时兼容新旧三种域名（sooplive.com / sooplive.co.kr / afreecatv.com，旧域名会 301 到新域名）。
+_URL_DOMAIN = r"(?:sooplive\.(?:com|co\.kr)|afreecatv\.com)"
+
+
+@PluginTool.live(regexp=rf'https?://(.*?)\.{_URL_DOMAIN}/(?P<username>\w+)(?:/\d+)?')
 class AfreecaTV(LiveBase):
-    VALID_URL_BASE = r"https?://.*?\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"
-    CHANNEL_API_URL = "https://live.afreecatv.com/afreeca/player_live_api.php"
+    VALID_URL_BASE = rf"https?://.*?\.{_URL_DOMAIN}/(?P<username>\w+)(?:/\d+)?"
+    CHANNEL_API_URL = "https://live.sooplive.com/afreeca/player_live_api.php"
     QUALITY = "original"
     # 对齐 biliup：固定现代 UA + referer，播放器接口与 CDN 都会校验
     USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    REFERER = "https://play.afreecatv.com/"
+    REFERER = "https://play.sooplive.com/"
 
     def __init__(self, room_name, room_url, suffix='flv'):
         super().__init__(room_name, room_url, suffix)
@@ -31,7 +36,7 @@ class AfreecaTV(LiveBase):
     def check_live(self, is_check_status=False):
         # 注意不能用 self.VALID_URL_BASE 提取：其第 1 捕获组是子域名（装饰器 regexp），
         # match1 返回 group(1) 会拿到 "play"/"www" 而非主播 ID（此前一直取错，导致平台永不判定开播）
-        username = match1(self.room_url, r"https?://(?:.*?)\.afreecatv\.com/(\w+)(?:/\d+)?")
+        username = match1(self.room_url, rf"https?://(?:.*?)\.{_URL_DOMAIN}/(\w+)(?:/\d+)?")
         if not username:
             logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 直播间地址错误")
             return False
@@ -58,8 +63,8 @@ class AfreecaTV(LiveBase):
             'room_title': channel.get('TITLE', ''),
             'room_owner': channel.get('BJNICK', ''),
             'room_owner_id': channel.get('BJID', ''),
-            'room_cover_url': f"https://liveimg.afreecatv.com/h/{bno}.webp",
-            'room_cover_frame_url': f"https://liveimg.afreecatv.com/h/{bno}.webp",
+            'room_cover_url': f"https://liveimg.sooplive.co.kr/h/{bno}.webp",
+            'room_cover_frame_url': f"https://liveimg.sooplive.co.kr/h/{bno}.webp",
             'live_state': 1
         })
 
@@ -108,7 +113,7 @@ class AfreecaTVUtils:
     # 缓存对应的凭据，配置变更后旧缓存立即失效（对齐 biliup 的 CachedLogin 行为）
     _cookie_credentials: Optional[tuple] = None
 
-    LOGIN_URL = "https://login.afreecatv.com/app/LoginAction.php"
+    LOGIN_URL = "https://login.sooplive.com/app/LoginAction.php"
     COOKIE_KEYS = ("RDB", "PdboxBbs", "PdboxTicket", "PdboxSaveTicket")
 
     @staticmethod
@@ -159,4 +164,4 @@ class AfreecaTVUtils:
 
 
 if __name__ == '__main__':
-    print(match1('https://play.afreecatv.com/tildaaa/263094720', r"https?://.*?\.afreecatv\.com/(?P<username>\w+)(?:/\d+)?"))
+    print(match1('https://play.sooplive.com/tildaaa/263094720', AfreecaTV.VALID_URL_BASE))

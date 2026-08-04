@@ -76,6 +76,11 @@ const PLATFORM_COLORS: Record<string, string> = {
   youtube: 'red',
 };
 
+// 平台存储值 → 显示名（存储键保持旧值以兼容存量数据）
+const PLATFORM_LABELS: Record<string, string> = {
+  afreecatv: 'SOOP',
+};
+
 /** wsrv.nl 图片代理：规避防盗链 + 转 webp */
 const proxyImg = (url?: string, w = 320, h = 180) =>
   url ? `https://wsrv.nl/?url=${encodeURIComponent(url)}&w=${w}&h=${h}&output=webp` : '';
@@ -406,7 +411,7 @@ const LiveRoomList: React.FC = () => {
               render: (_, r) =>
                 r.room_platform ? (
                   <Tag color={PLATFORM_COLORS[r.room_platform!.toLowerCase()]}>
-                    {r.room_platform}
+                    {PLATFORM_LABELS[r.room_platform!.toLowerCase()] || r.room_platform}
                   </Tag>
                 ) : (
                   <span className={styles.muted}>-</span>
@@ -536,7 +541,7 @@ const LiveRoomList: React.FC = () => {
                     </div>
                     <div className={styles.platformBadge}>
                       <span className={styles.platformTag}>
-                        {r.room_platform || '未知'}
+                        {(r.room_platform && PLATFORM_LABELS[r.room_platform.toLowerCase()]) || r.room_platform || '未知'}
                       </span>
                     </div>
                     {recording && (

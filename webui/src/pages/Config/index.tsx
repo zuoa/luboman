@@ -26,6 +26,7 @@ const ConfigPage: React.FC = () => {
     notify_platform: 'bark',
     notify_token: '',
     segment_duration: '01:00:00',
+    segment_file_size: 1024,
     filtering_threshold_file_size: 10,
     local_video_file_remain_days: 3,
     record_file_stale_timeout_seconds: 3600,
@@ -43,6 +44,22 @@ const ConfigPage: React.FC = () => {
     afreecatv_username: '',
     afreecatv_password: '',
   };
+
+  // 后端 GlobalConfig.value 是 TextField，读回来全是字符串；
+  // 数字类字段需转回 number，否则 ProFormDigit 显示异常
+  const NUMERIC_KEYS = [
+    'live_offline_judge_delay',
+    'segment_file_size',
+    'filtering_threshold_file_size',
+    'local_video_file_remain_days',
+    'record_file_stale_timeout_seconds',
+    'dance_clip_sample_interval',
+    'dance_clip_merge_gap_seconds',
+    'dance_clip_min_clip_seconds',
+    'dance_clip_pad_seconds',
+    'dance_clip_concurrency',
+    'dance_clip_boundary_gap_seconds',
+  ];
 
   const handleSubmit = async (values: any) => {
     setLoading(true);
@@ -96,11 +113,22 @@ const ConfigPage: React.FC = () => {
           ),
         }}
         request={async () => {
+          // 注意：ProForm request 的返回值直接作为表单初始值，不能再包一层 { data }
           try {
             const data = await getConfig();
-            return { data: { ...initialConfigValues, ...(data || {}) } };
+            const merged: Record<string, any> = {
+              ...initialConfigValues,
+              ...(data || {}),
+            };
+            NUMERIC_KEYS.forEach((k) => {
+              if (merged[k] !== '' && merged[k] != null) {
+                const n = Number(merged[k]);
+                if (!Number.isNaN(n)) merged[k] = n;
+              }
+            });
+            return merged;
           } catch {
-            return { data: initialConfigValues };
+            return initialConfigValues;
           }
         }}
         onFinish={handleSubmit}
@@ -331,20 +359,20 @@ const ConfigPage: React.FC = () => {
               },
               {
                 key: 'afreecatv',
-                label: 'AfreecaTV',
+                label: 'SOOP',
                 children: (
                   <div className={styles.fieldGroup}>
                     <ProFormText
                       name="afreecatv_username"
-                      label="AfreecaTV用户名"
-                      placeholder="AfreecaTV账号用户名"
-                      extra="AfreecaTV平台登录用户名"
+                      label="SOOP用户名"
+                      placeholder="SOOP账号用户名"
+                      extra="SOOP（原AfreecaTV）平台登录用户名"
                     />
                     <ProFormText.Password
                       name="afreecatv_password"
-                      label="AfreecaTV密码"
-                      placeholder="AfreecaTV账号密码"
-                      extra="AfreecaTV平台登录密码"
+                      label="SOOP密码"
+                      placeholder="SOOP账号密码"
+                      extra="SOOP（原AfreecaTV）平台登录密码"
                     />
                   </div>
                 ),

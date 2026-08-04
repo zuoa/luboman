@@ -62,7 +62,7 @@ const PLATFORM_VALUE_ENUM: Record<string, { text: string }> = {
   bili: { text: 'B站' },
   kuaishou: { text: '快手' },
   cc: { text: '网易CC' },
-  afreecatv: { text: 'AfreecaTV' },
+  afreecatv: { text: 'SOOP' },
   twitch: { text: 'Twitch' },
   youtube: { text: 'YouTube' },
 };

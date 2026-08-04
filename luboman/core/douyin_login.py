@@ -150,6 +150,32 @@ _QR_MIN_SIDE = 80
 _QR_MAX_SIDE = 600
 # data URL 最小长度：真实二维码 PNG 的 base64 通常数 KB，几百字节的是占位图
 _QR_MIN_DATA_URL_LEN = 1000
+# 元素截图最小字节数：空白/透明 canvas 截出来只有几百字节，不可能是二维码
+_QR_MIN_SCREENSHOT_BYTES = 400
+
+
+def _looks_like_qrcode(image_bytes: bytes) -> bool:
+    """二维码内容特征：几乎纯黑白（低彩色度）且有一定比例的黑色模块。
+
+    登录页的彩色装饰插画（如蓝色「+」图标）尺寸同样落在二维码区间，
+    单靠元素尺寸/位置无法区分，曾被误当二维码返回（前端显示为「破图」）。
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(image_bytes)).convert('RGB')
+        img.thumbnail((64, 64))  # 降采样加速判定
+        pixels = list(img.getdata())
+        if not pixels:
+            return False
+        total = len(pixels)
+        gray = sum(1 for r, g, b in pixels if max(r, g, b) - min(r, g, b) <= 30)
+        dark = sum(1 for r, g, b in pixels if (r + g + b) / 3 < 80)
+        return gray / total >= 0.85 and dark / total >= 0.05
+    except Exception:
+        return False
 
 
 async def _iter_qr_candidates(frame):
@@ -201,10 +227,30 @@ async def _extract_qrcode_data_url(page, timeout: float = 30.0) -> Optional[str]
                         continue
                     src = await element.get_attribute('src')
                     if src and src.startswith('data:image') and len(src) >= _QR_MIN_DATA_URL_LEN:
+                        try:
+                            raw = base64.b64decode(src.partition(',')[2])
+                        except Exception:
+                            continue
+                        # 彩色装饰插画的 data URL 也满足长度条件，需按内容甄别
+                        if not _looks_like_qrcode(raw):
+                            continue
                         logger.info('提取到抖音登录二维码 img data URL（%d 字符）', len(src))
                         return src
+                    # img 的 src 由前端异步填充：未加载完成时 bounding_box 已存在，
+                    # 此时截图只会得到浏览器渲染的「破图」占位图标，必须跳过等下一轮
+                    tag = await element.evaluate('(el) => el.tagName')
+                    if tag == 'IMG':
+                        loaded = await element.evaluate(
+                            '(el) => el.complete && el.naturalWidth > 0')
+                        if not loaded:
+                            continue
                     # canvas / blob: src / 过短的 data URL：直接对元素截图
                     png = await element.screenshot(type='png')
+                    if len(png) < _QR_MIN_SCREENSHOT_BYTES:
+                        # 空白/透明 canvas 截图只有几百字节，不是二维码
+                        continue
+                    if not _looks_like_qrcode(png):
+                        continue
                     data_url = 'data:image/png;base64,' + base64.b64encode(png).decode('ascii')
                     logger.info('通过元素截图提取抖音登录二维码（%.0fx%.0f px）', width, height)
                     return data_url
@@ -264,6 +310,15 @@ async def douyin_cookie_gen(
 
             qrcode_src = await _extract_qrcode_data_url(page)
             if not qrcode_src:
+                # 留档诊断：整页截图 + 当前 URL，便于确认是被风控/验证拦截还是页面结构变更
+                try:
+                    debug_path = os.path.join(
+                        os.path.dirname(cookie_path), 'douyin-login-debug.png')
+                    await page.screenshot(path=debug_path, full_page=True)
+                    logger.warning('未获取到抖音登录二维码，页面 URL: %s，诊断截图: %s',
+                                   page.url, debug_path)
+                except Exception:
+                    logger.warning('未获取到抖音登录二维码，页面 URL: %s（诊断截图失败）', page.url)
                 result['message'] = '未获取到抖音登录二维码（页面结构可能已变更）'
                 return result
             if qrcode_callback:

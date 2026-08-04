@@ -33,25 +33,6 @@ _LOGIN_SUCCESS_URL_PREFIX = 'https://creator.douyin.com/creator-micro/'
 _LOGIN_URL_KEYWORD = 'creator.douyin.com'
 
 
-def _as_bool(value, default: bool = False) -> bool:
-    """配置值（DB 里可能是字符串）安全转 bool：'false'/'0'/'no' → False。
-
-    直接把 config.get 的结果传给 headless= 危险——非空字符串 'false' 会被判真。
-    """
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    s = str(value).strip().lower()
-    if s in ('1', 'true', 'yes', 'y', 'on'):
-        return True
-    if s in ('0', 'false', 'no', 'n', 'off', ''):
-        return False
-    return default
-
-
 def douyin_cookie_base_dir() -> str:
     base_dir = config.get('douyin_cookie_dir')
     if not base_dir:
@@ -641,10 +622,7 @@ class DouyinLoginSession:
                 douyin_cookie_gen(
                     self.cookie_path,
                     qrcode_callback=self._on_qrcode,
-                    # 默认 headed：headless 极易被 creator.douyin.com 风控识别，
-                    # 导致 scanned→confirmed 被拦、session cookie 永不下发。
-                    # 容器内由 entrypoint 的 Xvfb 提供虚拟显示；可用配置覆盖。
-                    headless=_as_bool(config.get('douyin_login_headless', False), False),
+                    headless=True,
                     timeout=_SESSION_MAX_AGE,
                 )
             )

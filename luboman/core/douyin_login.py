@@ -326,47 +326,6 @@ async def _is_logged_in(context, page) -> bool:
     return False
 
 
-async def _current_qr_src(page) -> Optional[str]:
-    """读取页面「当前」二维码，用于检测抖音静默刷新。
-
-    抖音登录页每隔约 60s 直接换掉二维码 img 的 src（不显示「二维码失效」
-    文字）。若只在前端展示初始抓到的旧码，用户扫的会是已失效的 token，
-    扫码后页面毫无反应。等待循环里周期性调用本函数，发现 src 变化即把
-    新码推给前端。
-
-    优先取 img 的 data: src（便宜）；canvas/blob 场景回退到元素截图。
-    """
-    for frame in page.frames:
-        for selector in (
-            'img[aria-label="二维码"]',
-            'img[class*="qrcode"]',
-            'canvas[class*="qrcode"]',
-        ):
-            try:
-                el = frame.locator(selector).first
-                if not await el.count():
-                    continue
-                box = await el.bounding_box()
-                if not box or not (_QR_MIN_SIDE <= box['width'] <= _QR_MAX_SIDE
-                                   and _QR_MIN_SIDE <= box['height'] <= _QR_MAX_SIDE):
-                    continue
-                src = await el.get_attribute('src')
-                if src and src.startswith('data:image') and len(src) >= _QR_MIN_DATA_URL_LEN:
-                    try:
-                        raw = base64.b64decode(src.partition(',')[2])
-                    except Exception:
-                        raw = b''
-                    if raw and _looks_like_qrcode(raw):
-                        return src
-                # canvas / blob / 过短 data url：截图
-                png = await el.screenshot(type='png')
-                if len(png) >= _QR_MIN_SCREENSHOT_BYTES and _looks_like_qrcode(png):
-                    return 'data:image/png;base64,' + base64.b64encode(png).decode('ascii')
-            except Exception:
-                continue
-    return None
-
-
 async def douyin_cookie_gen(
     cookie_path: str,
     qrcode_callback: Optional[Callable[[str], None]] = None,
@@ -399,9 +358,48 @@ async def douyin_cookie_gen(
         context = await browser.new_context(viewport={'width': 1600, 'height': 900})
         try:
             page = await context.new_page()
+
+            # 网络层是唯一可信源：get_qrcode.data.qrcode 即当前轮询 token 对应的
+            # 二维码原图，check_qrconnect.data.status 直接反映扫码进度
+            # （new → scanned → confirmed）。拦截这两条，彻底规避「展示码与轮询
+            # token 错位」——此前从 img 元素截图取码，页面静默刷新 token 后前端
+            # 仍显示旧码，用户扫的是已失效 token，手机显示成功但本浏览器轮询的
+            # 是新 token，永远无响应。
+            net = {'qrcode': None, 'status': None, 'confirmed': False}
+
+            async def _on_response(resp):
+                u = resp.url
+                try:
+                    if 'passport/web/get_qrcode' in u:
+                        data = ((await resp.json()) or {}).get('data') or {}
+                        qr_b64 = data.get('qrcode')
+                        if qr_b64:
+                            data_url = 'data:image/png;base64,' + qr_b64
+                            if data_url != net['qrcode']:
+                                net['qrcode'] = data_url
+                                logger.info('捕获抖音二维码（get_qrcode）expire_time=%s',
+                                            data.get('expire_time'))
+                                if qrcode_callback:
+                                    qrcode_callback(data_url)
+                    elif 'passport/web/check_qrconnect' in u:
+                        data = ((await resp.json()) or {}).get('data') or {}
+                        status = data.get('status')
+                        if status and status != net['status']:
+                            logger.info('抖音扫码状态变更: %s -> %s', net['status'], status)
+                            net['status'] = status
+                        if status == 'confirmed':
+                            net['confirmed'] = True
+                except Exception:
+                    pass
+
+            page.on('response', _on_response)
             await page.goto('https://creator.douyin.com/')
 
-            qrcode_src = await _extract_qrcode_data_url(page, timeout=45)
+            # 优先等网络层捕获二维码（最准）；超时回退 img 元素提取
+            qr_deadline = time.time() + 30
+            while time.time() < qr_deadline and not net['qrcode']:
+                await asyncio.sleep(0.5)
+            qrcode_src = net['qrcode'] or await _extract_qrcode_data_url(page, timeout=20)
             if not qrcode_src:
                 # 留档诊断：整页截图 + 候选元素清单 + 当前 URL，
                 # 便于确认是被风控/验证拦截还是页面结构变更
@@ -419,19 +417,19 @@ async def douyin_cookie_gen(
                     logger.exception('候选元素诊断输出失败')
                 result['message'] = '未获取到抖音登录二维码（页面结构可能已变更）'
                 return result
-            if qrcode_callback:
+            # 仅当走 img 回退提取时才需手动推送；网络层捕获的码处理器已推过
+            if qrcode_callback and not net['qrcode']:
                 qrcode_callback(qrcode_src)
 
-            last_qrcode = qrcode_src
             last_url = page.url
             last_probe = 0.0
-            last_qr_sync = 0.0
             while time.time() < deadline:
                 if page.url != last_url:
-                    # 扫码后页面跳转是最直观的信号，记录便于排查登录检测问题
                     logger.info('抖音登录页跳转: %s -> %s', last_url, page.url)
                     last_url = page.url
-                if await _is_logged_in(context, page):
+                # 登录判据：网络层 check_qrconnect 返回 confirmed 最权威；
+                # cookie/URL 兜底（部分版本 confirmed 后才种 cookie）
+                if net['confirmed'] or await _is_logged_in(context, page):
                     await asyncio.sleep(2)  # 等 cookie 写稳
                     await context.storage_state(path=cookie_path)
                     result['success'] = True
@@ -439,48 +437,12 @@ async def douyin_cookie_gen(
                     logger.info('抖音扫码登录成功, cookie -> %s', cookie_path)
                     return result
 
-                # 关键：抖音每隔约 60s 静默刷新二维码 token（不显示「二维码失效」）。
-                # 必须周期性比对页面当前码，变了就推给前端，否则用户扫的永远是
-                # 初始那条已失效的旧码，扫码后页面零反应。
-                if time.time() - last_qr_sync >= 5:
-                    last_qr_sync = time.time()
-                    try:
-                        current_qr = await _current_qr_src(page)
-                        if current_qr and current_qr != last_qrcode:
-                            logger.info('检测到抖音页面二维码已刷新，同步新码到前端')
-                            last_qrcode = current_qr
-                            if qrcode_callback:
-                                qrcode_callback(current_qr)
-                    except Exception:
-                        pass
-
-                # 二维码过期：页面出现「二维码失效」时点击刷新并重新提取（兜底）
-                try:
-                    expired = page.get_by_text('二维码失效', exact=True).first
-                    if await expired.count() and await expired.is_visible():
-                        await expired.click(timeout=2000)
-                        await asyncio.sleep(1)
-                        refreshed = await _extract_qrcode_data_url(page, timeout=10)
-                        if refreshed and refreshed != last_qrcode:
-                            last_qrcode = refreshed
-                            if qrcode_callback:
-                                qrcode_callback(refreshed)
-                except Exception:
-                    pass
-
-                # 定期输出页面状态：扫码后页面是否感知（「扫描成功」提示/跳转/cookie）
-                if time.time() - last_probe >= 15:
+                # 周期输出当前扫码状态（status 由网络层捕获，准确反映扫码进度）
+                if time.time() - last_probe >= 10:
                     last_probe = time.time()
-                    try:
-                        markers = {}
-                        for text in ('二维码失效', '扫描成功', '扫码成功', '确认登录', '登录成功'):
-                            el = page.get_by_text(text, exact=False).first
-                            markers[text] = bool(await el.count()) and await el.is_visible()
-                        cookie_names = sorted({c.get('name', '') for c in await context.cookies()})
-                        logger.info('扫码等待中: url=%s 页面标记=%s cookies=%s',
-                                    page.url, markers, cookie_names)
-                    except Exception:
-                        pass
+                    cookie_names = sorted({c.get('name', '') for c in await context.cookies()})
+                    logger.info('扫码等待中: status=%s url=%s cookies=%s',
+                                net['status'], page.url, cookie_names)
 
                 await asyncio.sleep(poll_interval)
 

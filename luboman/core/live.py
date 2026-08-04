@@ -41,6 +41,9 @@ class LiveBase(object):
         self.is_recording = False
         self._active = True
         self.suffix = suffix.lower()
+        # 秒断判定阈值(秒)：单次录制时长小于此值视为流被对端秒断，
+        # 删除该小文件并转入失败重试，避免 record_func 成功分支立刻秒级重启。
+        self.min_record_seconds = 10
         self.event_manager = self.create_event_manager()
         self.record_thread = self.start_record_thread()
         self._status_task = None
@@ -260,6 +263,21 @@ class LiveBase(object):
             finally:
                 self.stopped()
 
+            # 秒断检测：录制时长过短视为流被对端秒断，删除小文件并转失败重试，
+            # 避免 record_func 成功分支立刻重启、产生秒级时间戳垃圾文件。
+            if ret and recording_context.get('begin_time'):
+                _duration = (datetime.datetime.now() - recording_context['begin_time']).total_seconds()
+                if _duration < self.min_record_seconds:
+                    logger.warning(
+                        f'{self.log_prefix} : 录制仅 {_duration:.1f}s，疑似流秒断，'
+                        f'删除小文件 {filepath}，走重试而非立刻重启')
+                    try:
+                        if filepath and os.path.exists(filepath):
+                            os.remove(filepath)
+                    except Exception as _e:
+                        logger.warning(f'{self.log_prefix} : 删除秒断小文件失败: {_e}')
+                    ret = False
+
             if ret:
                 # 成功下载重置重试次数
                 retry_count = 0
@@ -394,8 +412,12 @@ class LiveBase(object):
 
     def ffmpeg_download(self, filepath):
         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
-        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()), '-rw_timeout',
-                              '20000000']
+        # -reconnect*：HTTP 流断开时自动重连（对虎牙等会频繁断流的 CDN 必要），
+        # FLV 与 HLS 均生效；HLS 另叠加 -max_reload
+        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()),
+                              '-rw_timeout', '20000000',
+                              '-reconnect', '1', '-reconnect_streamed', '1',
+                              '-reconnect_delay_max', '5']
         parsed_url = urlparse(self.raw_stream_url)
         path = parsed_url.path
         if '.m3u8' in path:

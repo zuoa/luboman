@@ -18,9 +18,12 @@ RUN  set -eux; \
      apt-get install -y --no-install-recommends ffmpeg; \
      pip3 install --no-cache-dir -r requirements.txt; \
      if [ "$WITH_DOUYIN" = "true" ]; then \
+       apt-get install -y --no-install-recommends xvfb xauth; \
        patchright install --with-deps chromium; \
      fi
 COPY luboman ./luboman
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 RUN mkdir bin && ls -a
 
 COPY --from=tools --chmod=777 /opt/aliyunpan/aliyunpan /usr/bin/aliyunpan
@@ -34,4 +37,5 @@ ENV PYTHONPATH="/app:$PYTHONPATH"
 EXPOSE 5005/tcp
 VOLUME /data
 VOLUME /root/.bypy
-ENTRYPOINT ["python", "async_main.py"]
+# 经 entrypoint.sh 包 xvfb-run（完整镜像）或直跑（精简镜像），见 entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

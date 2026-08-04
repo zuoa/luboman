@@ -33,6 +33,25 @@ _LOGIN_SUCCESS_URL_PREFIX = 'https://creator.douyin.com/creator-micro/'
 _LOGIN_URL_KEYWORD = 'creator.douyin.com'
 
 
+def _as_bool(value, default: bool = False) -> bool:
+    """配置值（DB 里可能是字符串）安全转 bool：'false'/'0'/'no' → False。
+
+    直接把 config.get 的结果传给 headless= 危险——非空字符串 'false' 会被判真。
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ('1', 'true', 'yes', 'y', 'on'):
+        return True
+    if s in ('0', 'false', 'no', 'n', 'off', ''):
+        return False
+    return default
+
+
 def douyin_cookie_base_dir() -> str:
     base_dir = config.get('douyin_cookie_dir')
     if not base_dir:
@@ -305,11 +324,29 @@ async def _is_logged_in(context, page) -> bool:
 
     首选会话 cookie 判据：不依赖页面跳转行为（抖音扫码后可能停留原页
     SPA 更新，也可能跳转 creator-micro，路径随版本变化）；URL 判定作兜底。
+
+    MediaCrawler 式兜底：check_qrconnect 的 confirmed 偶发漏判（手机确认后
+    服务端可能返回空 data，见 TikTokDownload #608），但页面 JS 仍会写
+    LOGIN_STATUS=1 / localStorage.HasUserLogin=1，故一并采信，避免漏掉
+    「网络层没捕到 confirmed、但页面其实已登录」的窗口。
     """
     try:
         for cookie in await context.cookies():
-            if cookie.get('name') in _SESSION_COOKIE_NAMES and cookie.get('value'):
+            name = cookie.get('name')
+            value = cookie.get('value')
+            if name in _SESSION_COOKIE_NAMES and value:
                 return True
+            # 抖音页面 JS 登录成功后写 LOGIN_STATUS=1（与 sessionid 同源可靠）
+            if name == 'LOGIN_STATUS' and value == '1':
+                return True
+    except Exception:
+        pass
+
+    # localStorage.HasUserLogin=1：页面侧登录态标记（参考 MediaCrawler check_login_state）
+    try:
+        local_storage = await page.evaluate('() => window.localStorage')
+        if local_storage and local_storage.get('HasUserLogin') == '1':
+            return True
     except Exception:
         pass
 
@@ -323,6 +360,26 @@ async def _is_logged_in(context, page) -> bool:
             except Exception:
                 continue
         return True
+    return False
+
+
+async def _detect_captcha(page) -> bool:
+    """检测抖音登录后的滑块/验证码中间页（风控拦截信号）。
+
+    被风控时 check_qrconnect 永远停在 scanned 且不下发 session cookie，但页面会
+    弹出滑块验证码或跳到「验证码中间页」。识别到即视为本次登录被风控阻断，
+    主动报错而非静默卡到超时（参考 MediaCrawler check_page_display_slider）。
+    """
+    try:
+        if await page.locator('#captcha-verify-image').first.is_visible():
+            return True
+    except Exception:
+        pass
+    try:
+        if '验证码中间页' in (await page.title() or ''):
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -365,7 +422,15 @@ async def douyin_cookie_gen(
             # token 错位」——此前从 img 元素截图取码，页面静默刷新 token 后前端
             # 仍显示旧码，用户扫的是已失效 token，手机显示成功但本浏览器轮询的
             # 是新 token，永远无响应。
-            net = {'qrcode': None, 'status': None, 'confirmed': False}
+            net = {
+                'qrcode': None,
+                'status': None,
+                'confirmed': False,
+                'redirect_url': None,
+                # check_qrconnect 请求计数：scanned 之后是否仍在轮询
+                # （若停了，说明 SPA 卸载了轮询组件，状态会冻在 scanned）
+                'poll_count': 0,
+            }
 
             async def _on_response(resp):
                 u = resp.url
@@ -384,15 +449,34 @@ async def douyin_cookie_gen(
                     elif 'passport/web/check_qrconnect' in u:
                         data = ((await resp.json()) or {}).get('data') or {}
                         status = data.get('status')
+                        redirect_url = data.get('redirect_url')
+                        # 全量诊断：每条响应留痕。data 为空正是 #608「确认后返空」
+                        # （疑似风控拦截确认，手机端可能已显示成功）的特征。
+                        if not data:
+                            logger.warning(
+                                'check_qrconnect 返回空 data（疑似风控拦截确认）'
+                                ' http=%s url=%s', resp.status, u[:80])
+                        else:
+                            logger.debug('check_qrconnect: status=%s redirect=%s keys=%s',
+                                         status, bool(redirect_url), sorted(data.keys()))
                         if status and status != net['status']:
                             logger.info('抖音扫码状态变更: %s -> %s', net['status'], status)
                             net['status'] = status
-                        if status == 'confirmed':
+                        # confirmed 可能不带 status 字段、仅带 redirect_url，故两者任一即判成功
+                        if status == 'confirmed' or redirect_url:
                             net['confirmed'] = True
+                            if redirect_url:
+                                net['redirect_url'] = redirect_url
+                                logger.info('check_qrconnect 命中 redirect_url，将跳转落地 cookie')
                 except Exception:
                     pass
 
+            def _on_request(req):
+                if 'passport/web/check_qrconnect' in req.url:
+                    net['poll_count'] += 1
+
             page.on('response', _on_response)
+            page.on('request', _on_request)
             await page.goto('https://creator.douyin.com/')
 
             # 优先等网络层捕获二维码（最准）；超时回退 img 元素提取
@@ -428,8 +512,16 @@ async def douyin_cookie_gen(
                     logger.info('抖音登录页跳转: %s -> %s', last_url, page.url)
                     last_url = page.url
                 # 登录判据：网络层 check_qrconnect 返回 confirmed 最权威；
-                # cookie/URL 兜底（部分版本 confirmed 后才种 cookie）
+                # cookie/localStorage 兜底（部分版本 confirmed 漏判但页面已登录）
                 if net['confirmed'] or await _is_logged_in(context, page):
+                    # confirmed 多带 redirect_url：跳转后服务端才真正下发 session cookie
+                    if net['redirect_url']:
+                        try:
+                            logger.info('跳转 redirect_url 落地登录 cookie: %s',
+                                        net['redirect_url'][:80])
+                            await page.goto(net['redirect_url'], wait_until='domcontentloaded')
+                        except Exception:
+                            logger.exception('跳转 redirect_url 失败，回退用当前 context cookie')
                     await asyncio.sleep(2)  # 等 cookie 写稳
                     await context.storage_state(path=cookie_path)
                     result['success'] = True
@@ -437,12 +529,29 @@ async def douyin_cookie_gen(
                     logger.info('抖音扫码登录成功, cookie -> %s', cookie_path)
                     return result
 
+                # 风控显式检测：被风控时 check_qrconnect 永远停在 scanned 且不种 cookie，
+                # 但页面会弹滑块/验证码中间页。主动识别并报错，而非静默卡到超时。
+                if await _detect_captcha(page):
+                    debug_path = os.path.join(
+                        os.path.dirname(cookie_path), 'douyin-login-debug.png')
+                    try:
+                        await page.screenshot(path=debug_path, full_page=True)
+                    except Exception:
+                        debug_path = '(截图失败)'
+                    result['message'] = (
+                        '检测到滑块/验证码（风控拦截）：抖音判定本次登录环境异常。'
+                        '可重试，或改用 cookie 导入（真人浏览器扫码后导出 storage_state）。'
+                        f'诊断截图: {debug_path}'
+                    )
+                    logger.error(result['message'])
+                    return result
+
                 # 周期输出当前扫码状态（status 由网络层捕获，准确反映扫码进度）
                 if time.time() - last_probe >= 10:
                     last_probe = time.time()
                     cookie_names = sorted({c.get('name', '') for c in await context.cookies()})
-                    logger.info('扫码等待中: status=%s url=%s cookies=%s',
-                                net['status'], page.url, cookie_names)
+                    logger.info('扫码等待中: status=%s polls=%d url=%s cookies=%s',
+                                net['status'], net['poll_count'], page.url, cookie_names)
 
                 await asyncio.sleep(poll_interval)
 
@@ -532,7 +641,10 @@ class DouyinLoginSession:
                 douyin_cookie_gen(
                     self.cookie_path,
                     qrcode_callback=self._on_qrcode,
-                    headless=True,
+                    # 默认 headed：headless 极易被 creator.douyin.com 风控识别，
+                    # 导致 scanned→confirmed 被拦、session cookie 永不下发。
+                    # 容器内由 entrypoint 的 Xvfb 提供虚拟显示；可用配置覆盖。
+                    headless=_as_bool(config.get('douyin_login_headless', False), False),
                     timeout=_SESSION_MAX_AGE,
                 )
             )

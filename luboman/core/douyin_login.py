@@ -178,21 +178,57 @@ def _looks_like_qrcode(image_bytes: bytes) -> bool:
         return False
 
 
+# 二维码候选 selector（按优先级）：登录页结构多次变更，二维码可能是
+# img（data:/blob: src）或 canvas，也可能渲染在 iframe 里
+_QR_SELECTORS = (
+    'img[aria-label="二维码"]',
+    'img[class*="qrcode"]',
+    'canvas[class*="qrcode"]',
+    'img[src^="data:image"]',
+    'canvas',
+)
+
+
 async def _iter_qr_candidates(frame):
     """按优先级产出 frame 里可能是二维码的元素。"""
-    for selector in (
-        'img[aria-label="二维码"]',
-        'img[class*="qrcode"]',
-        'canvas[class*="qrcode"]',
-        'img[src^="data:image"]',
-        'canvas',
-    ):
+    for selector in _QR_SELECTORS:
         try:
             elements = await frame.locator(selector).all()
         except Exception:
             continue
         for element in elements:
             yield element
+
+
+async def _dump_qr_candidates(page, limit: int = 30):
+    """提取失败时输出候选元素诊断日志：selector / 尺寸 / src 前缀 / 加载态 / 内容判定。"""
+    for frame in page.frames:
+        dumped = 0
+        for selector in _QR_SELECTORS:
+            try:
+                elements = await frame.locator(selector).all()
+            except Exception:
+                continue
+            for element in elements:
+                if dumped >= limit:
+                    return
+                try:
+                    box = await element.bounding_box()
+                    if not box:
+                        continue
+                    width, height = box['width'], box['height']
+                    src = (await element.get_attribute('src')) or ''
+                    info = f'{selector} {width:.0f}x{height:.0f} src={src[:60]!r}'
+                    tag = await element.evaluate('(el) => el.tagName')
+                    info += f' tag={tag}'
+                    if tag == 'IMG':
+                        loaded = await element.evaluate(
+                            '(el) => el.complete && el.naturalWidth > 0')
+                        info += f' loaded={loaded}'
+                    logger.warning('二维码候选诊断[%s]: %s', frame.url[:60], info)
+                    dumped += 1
+                except Exception:
+                    continue
 
 
 async def _extract_qrcode_data_url(page, timeout: float = 30.0) -> Optional[str]:
@@ -308,9 +344,10 @@ async def douyin_cookie_gen(
             page = await context.new_page()
             await page.goto('https://creator.douyin.com/')
 
-            qrcode_src = await _extract_qrcode_data_url(page)
+            qrcode_src = await _extract_qrcode_data_url(page, timeout=45)
             if not qrcode_src:
-                # 留档诊断：整页截图 + 当前 URL，便于确认是被风控/验证拦截还是页面结构变更
+                # 留档诊断：整页截图 + 候选元素清单 + 当前 URL，
+                # 便于确认是被风控/验证拦截还是页面结构变更
                 try:
                     debug_path = os.path.join(
                         os.path.dirname(cookie_path), 'douyin-login-debug.png')
@@ -319,6 +356,10 @@ async def douyin_cookie_gen(
                                    page.url, debug_path)
                 except Exception:
                     logger.warning('未获取到抖音登录二维码，页面 URL: %s（诊断截图失败）', page.url)
+                try:
+                    await _dump_qr_candidates(page)
+                except Exception:
+                    logger.exception('候选元素诊断输出失败')
                 result['message'] = '未获取到抖音登录二维码（页面结构可能已变更）'
                 return result
             if qrcode_callback:
@@ -400,7 +441,7 @@ class DouyinLoginSession:
         )
         self._worker.start()
 
-    def wait_for_qrcode(self, timeout: float = 40.0):
+    def wait_for_qrcode(self, timeout: float = 55.0):
         """阻塞等待二维码就绪（status 离开 created），供 start_session 同步返回。"""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -502,7 +543,8 @@ class DouyinLoginManager:
             self._sessions[session.session_id] = session
         session.start()
         # 同步等二维码就绪再返回，前端即可直接拿到 status=waiting + qrcode_img
-        session.wait_for_qrcode(timeout=40)
+        # 容器内浏览器启动慢：提取超时 45s，这里再多留 10s 缓冲
+        session.wait_for_qrcode(timeout=55)
         self._schedule_cleanup()
         return session.snapshot()
 

@@ -51,7 +51,7 @@ export async function startDouyinLogin(
       method: 'POST',
       data: body,
       // 服务端首次拉起浏览器 + 抓二维码较慢，放宽超时
-      timeout: 60000,
+      timeout: 90000,
       ...(options || {}),
     },
   );

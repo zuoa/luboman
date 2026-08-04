@@ -383,6 +383,7 @@ async def douyin_cookie_gen(
 
             last_qrcode = qrcode_src
             last_url = page.url
+            last_probe = 0.0
             while time.time() < deadline:
                 if page.url != last_url:
                     # 扫码后页面跳转是最直观的信号，记录便于排查登录检测问题
@@ -410,8 +411,31 @@ async def douyin_cookie_gen(
                 except Exception:
                     pass
 
+                # 定期输出页面状态：扫码后页面是否感知（「扫描成功」提示/跳转/cookie）
+                if time.time() - last_probe >= 15:
+                    last_probe = time.time()
+                    try:
+                        markers = {}
+                        for text in ('二维码失效', '扫描成功', '扫码成功', '确认登录', '登录成功'):
+                            el = page.get_by_text(text, exact=False).first
+                            markers[text] = bool(await el.count()) and await el.is_visible()
+                        cookie_names = sorted({c.get('name', '') for c in await context.cookies()})
+                        logger.info('扫码等待中: url=%s 页面标记=%s cookies=%s',
+                                    page.url, markers, cookie_names)
+                    except Exception:
+                        pass
+
                 await asyncio.sleep(poll_interval)
 
+            # 超时留档：整页截图看扫码后页面实际状态
+            try:
+                debug_path = os.path.join(
+                    os.path.dirname(cookie_path), 'douyin-login-debug.png')
+                await page.screenshot(path=debug_path, full_page=True)
+                logger.warning('等待抖音扫码登录超时，页面 URL: %s，诊断截图: %s',
+                               page.url, debug_path)
+            except Exception:
+                pass
             result['message'] = '等待抖音扫码登录超时'
             return result
         finally:

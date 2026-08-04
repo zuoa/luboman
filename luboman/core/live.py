@@ -363,11 +363,18 @@ class LiveBase(object):
             except Exception as e:
                 logger.exception(f'{self.log_prefix} :  创建录制文件记录失败:{e}')
         
+        use_stream_gears = self._use_stream_gears()
         try:
-            if not self.ffmpeg_download(filepath):
-                logger.error(f'{self.log_prefix} :  ffmpeg 录制失败: {filepath}')
+            if use_stream_gears:
+                ok = self.stream_gears_download(filepath)
+            else:
+                ok = self.ffmpeg_download(filepath)
+            if not ok:
+                logger.error(f'{self.log_prefix} :  录制失败: {filepath}')
                 return False, filepath
-            rename(filepath)
+            if not use_stream_gears:
+                # ffmpeg 输出 {filepath}.part，需手动改名；stream_gears 自行 rename
+                rename(filepath)
             logger.info(f'{self.log_prefix} :  片段录制结束: {filepath}')
             return True, filepath
         except Exception as e:
@@ -423,6 +430,56 @@ class LiveBase(object):
         except Exception as e:
             logger.error(f"{self.log_prefix} | ffmpeg_download encountered an error: {e}")
             return False
+
+    def stream_gears_download(self, filepath):
+        """用 stream_gears（biliup 下载核心）录制 FLV 流，单文件模式录到下播。
+
+        stream_gears 自写 {prefix}.flv.part 并 rename 成 {prefix}.flv，最终落盘路径
+        == get_filepath() 的返回，与 DB 记录一致。time/size 均不设 → 不切片单文件。
+
+        网络失败/非 2xx 会抛 pyo3 PanicException（MRO: PanicException→BaseException，
+        不继承 Exception），用 except BaseException 兜住返回 False，交由 record_func 重试。
+        """
+        import stream_gears
+
+        # file_name 前缀：get_filepath() 已 strftime，结果为纯字面串（无 %），
+        # chrono 原样保留；扩展名 .flv 由 stream_gears(Rust) 追加。
+        suffix_dot = '.' + self.suffix
+        file_name_prefix = filepath[:-len(suffix_dot)] if filepath.endswith(suffix_dot) else filepath
+
+        # time/size 均不设 → 整场录制为单文件（录到下播）
+        segment = stream_gears.PySegment()
+
+        # header_map：复用 fake_headers，去掉 accept-encoding（FLV 二进制流不需要，
+        # 避免 reqwest 对可能的压缩响应做解压而干扰原始字节流）
+        headers = {k: v for k, v in self.fake_headers.items()
+                   if k.lower() != 'accept-encoding'}
+
+        try:
+            stream_gears.download(
+                self.raw_stream_url, headers, file_name_prefix, segment,
+                proxy=config.get('stream_gears_proxy') or None,
+            )
+            return True
+        except BaseException as e:  # 兜 pyo3 PanicException
+            logger.error(f'{self.log_prefix} | stream_gears 下载失败: {e}')
+            return False
+
+    def _use_stream_gears(self):
+        """是否用 stream_gears 录制：仅虎牙 + FLV 直链（非 m3u8）。
+
+        可由 GlobalConfig.huya_use_stream_gears 关闭以回退 ffmpeg。
+        """
+        val = config.get('huya_use_stream_gears', True)
+        if isinstance(val, str) and val.strip().lower() in ('0', 'false', 'no', 'off'):
+            return False
+        if self.__class__.__name__.lower() != 'huya':
+            return False
+        if self.suffix != 'flv':
+            return False
+        if self.raw_stream_url and '.m3u8' in urlparse(self.raw_stream_url).path:
+            return False
+        return True
 
 
     def get_filepath(self):

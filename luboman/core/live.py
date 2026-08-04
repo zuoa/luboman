@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from urllib.parse import urlparse
 
 import requests
@@ -439,7 +440,8 @@ class LiveBase(object):
         path = parsed_url.path
         if '.m3u8' in path:
             default_input_args += ['-max_reload', '1000']
-        command_args = [ffmpeg_path, '-y', *default_input_args,
+        command_args = [ffmpeg_path, '-y', '-hide_banner', '-nostats', '-loglevel', 'warning',
+                        *default_input_args,
                         '-i', self.raw_stream_url, *self.ffmpeg_opt_args,
                         '-c', 'copy', '-f', self.suffix]
 
@@ -453,14 +455,19 @@ class LiveBase(object):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
             ) as proc:
+                output_tail = deque(maxlen=20)
                 with proc.stdout as stdout:
                     for line in iter(stdout.readline, b''):
-                        decode_line = line.decode(errors='ignore')
-                        logger.debug(decode_line.rstrip())
+                        decode_line = line.decode(errors='ignore').rstrip()
+                        output_tail.append(decode_line)
+                        logger.debug(decode_line)
 
                 # The context manager's __exit__ will call proc.wait()
                 # but we can get the return code to check for success.
                 retval = proc.wait()
+                if retval != 0:
+                    logger.error(f"{self.log_prefix} :  ffmpeg 退出码 {retval}, 输出尾部: "
+                                 f"{' | '.join(output_tail)}")
                 return retval == 0
 
         except FileNotFoundError:

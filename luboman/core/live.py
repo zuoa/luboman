@@ -263,26 +263,42 @@ class LiveBase(object):
             finally:
                 self.stopped()
 
-            # 秒断检测：录制时长过短视为流被对端秒断，删除小文件并转失败重试，
-            # 避免 record_func 成功分支立刻重启、产生秒级时间戳垃圾文件。
+            # 秒断检测：录制时长过短视为流被对端秒断。虎牙 CDN 一个签名仅允许
+            # 一个连接，且对高频重连的 IP 渐进式 403 封禁（本机同出口 IP 实测复现），
+            # 因此连续秒断时指数退避（5s→…→300s 封顶）压住重连频率，避免越重连越封；
+            # 删除小文件，不产生秒级垃圾文件。不计入失败重试次数——主播在播只是
+            # 连接被封，不应误判下播。
             if ret and recording_context.get('begin_time'):
                 _duration = (datetime.datetime.now() - recording_context['begin_time']).total_seconds()
                 if _duration < self.min_record_seconds:
+                    self._consecutive_short = getattr(self, '_consecutive_short', 0) + 1
+                    _backoff = min(300, 5 * (2 ** (self._consecutive_short - 1)))
                     logger.warning(
-                        f'{self.log_prefix} : 录制仅 {_duration:.1f}s，疑似流秒断，'
-                        f'删除小文件 {filepath}，走重试而非立刻重启')
+                        f'{self.log_prefix} : 录制仅 {_duration:.1f}s，疑似流秒断'
+                        f'（连续第 {self._consecutive_short} 次），删除小文件 {filepath}，'
+                        f'退避 {_backoff}s 后重试')
                     try:
                         if filepath and os.path.exists(filepath):
                             os.remove(filepath)
                     except Exception as _e:
                         logger.warning(f'{self.log_prefix} : 删除秒断小文件失败: {_e}')
-                    ret = False
+                    # 秒断的 DB 记录即时标记完成（文件已删，由死记录清理脚本收敛）
+                    _rid = recording_context.get('id')
+                    if _rid:
+                        try:
+                            recording_context['end_time'] = datetime.datetime.now()
+                            DB.complete_record_file(_rid, recording_context)
+                        except Exception:
+                            pass
+                    time.sleep(_backoff)
+                    continue
 
             if ret:
-                # 成功下载重置重试次数
+                # 成功下载重置重试次数与秒断计数
                 retry_count = 0
                 retry_count_delay = 0
                 is_offline = False
+                self._consecutive_short = 0
 
                 recording_context["end_time"] = datetime.datetime.now()
                 recording_context["video"] = filepath
@@ -412,12 +428,13 @@ class LiveBase(object):
 
     def ffmpeg_download(self, filepath):
         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
-        # -reconnect*：HTTP 流断开时自动重连（对虎牙等会频繁断流的 CDN 必要），
-        # FLV 与 HLS 均生效；HLS 另叠加 -max_reload
-        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self.fake_headers.items()),
-                              '-rw_timeout', '20000000',
-                              '-reconnect', '1', '-reconnect_streamed', '1',
-                              '-reconnect_delay_max', '5']
+        default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self._record_headers().items()),
+                              '-rw_timeout', '20000000']
+        # 虎牙 CDN 一个签名仅允许一个连接、且对高频重连的 IP 渐进式 403 封禁（已实测），
+        # -reconnect 会以同一签名重连必 403、加速封禁 → 虎牙禁用；其他平台断线自动重连
+        if self.__class__.__name__.lower() != 'huya':
+            default_input_args += ['-reconnect', '1', '-reconnect_streamed', '1',
+                                   '-reconnect_delay_max', '5']
         parsed_url = urlparse(self.raw_stream_url)
         path = parsed_url.path
         if '.m3u8' in path:
@@ -453,6 +470,11 @@ class LiveBase(object):
             logger.error(f"{self.log_prefix} | ffmpeg_download encountered an error: {e}")
             return False
 
+    def _record_headers(self):
+        """录制/连流用的请求头。虎牙 wup 模式下插件会设置独立 stream_headers
+        （HYSDK UA + origin，与 wup 请求端一致）；其余平台用 fake_headers。"""
+        return getattr(self, 'stream_headers', None) or self.fake_headers
+
     def stream_gears_download(self, filepath):
         """用 stream_gears（biliup 下载核心）录制 FLV 流，单文件模式录到下播。
 
@@ -472,9 +494,9 @@ class LiveBase(object):
         # time/size 均不设 → 整场录制为单文件（录到下播）
         segment = stream_gears.PySegment()
 
-        # header_map：复用 fake_headers，去掉 accept-encoding（FLV 二进制流不需要，
-        # 避免 reqwest 对可能的压缩响应做解压而干扰原始字节流）
-        headers = {k: v for k, v in self.fake_headers.items()
+        # header_map：录制专用头（虎牙 wup 模式为 HYSDK UA + origin），去掉
+        # accept-encoding（FLV 二进制流不需要，避免 reqwest 解压干扰原始字节流）
+        headers = {k: v for k, v in self._record_headers().items()
                    if k.lower() != 'accept-encoding'}
 
         try:

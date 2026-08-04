@@ -217,7 +217,13 @@ class Huya(LiveBase):
                 anti_code = self.build_query(stream_name, anti_code, presenter_uid)
             # 启用 imgplus、wup 且非 mobile api
             elif self.huya_use_wup and not self.huya_mobile_api:
-                # 使用 Wup 获取的 anti_code，必须使用 Wup UA 进行连接
+                # 使用 Wup 获取的 anti_code，必须使用 Wup UA 进行连接：
+                # 流连接端 headers 与 wup 请求端保持一致（对齐上游 biliup update_headers），
+                # 否则虎牙 CDN 可能因两端 UA 不一致断流。
+                # 注意不能改 fake_headers——网页抓取仍需浏览器 UA，故用独立 stream_headers。
+                self.stream_headers = dict(self.fake_headers)
+                self.stream_headers['user-agent'] = UAGenerator.build_user_agent(UAType.HYSDK, Platform.WINDOWS)
+                self.stream_headers['origin'] = HUYA_WEB_BASE_URL
                 anti_code = self.get_true_anticode(cdn, stream_name, presenter_uid, proto)
             anti_code = f"{anti_code}&codec={self.huya_codec}"
             base_url = stream[f's{proto}Url'].replace('http://', 'https://')  # 强制https

@@ -13,9 +13,10 @@ from playhouse.shortcuts import model_to_dict
 from luboman.config import config
 from luboman.core import bili_account_health
 from luboman.core.async_utils import run_blocking
-from luboman.core.async_upload import UploadPriority, schedule_bili_submission
-from luboman.core.dance_clip import clip_scheduler
+from luboman.core.async_upload import UploadPriority, schedule_bili_submission, schedule_douyin_submission
+from luboman.core.dance_clip import clip_scheduler, ensure_douyin_clip, CLIP_SERIES_CODE_PREFIX
 from luboman.core.biliup_login import biliup_login_manager
+from luboman.core.douyin_login import douyin_login_manager
 from luboman.core.runtime import (
     collect_runtime_stats,
     reconcile_room_runtime,
@@ -30,10 +31,13 @@ from luboman.database.db import (
     RECORD_FILE_STATUS_RECORDING,
     SUBMISSION_TASK_SOURCE_FILE_MANAGER,
     resolve_room_bili_template_ids,
+    resolve_room_douyin_template_ids,
 )
 from luboman.database.models import (
     BiliAccount,
     BiliUploadTemplate,
+    DouyinAccount,
+    DouyinUploadTemplate,
     GlobalConfig,
     LiveRoom,
     RecordFile,
@@ -183,6 +187,165 @@ def _create_bili_upload_template(data):
 
 def _delete_bili_upload_template(template_id):
     return DB.delete_bili_upload_template(template_id)
+
+
+def _prepare_douyin_account_payload(data, require_credentials):
+    """校验抖音账号入参：cookie 为创作者平台扫码登录保存的 storage_state JSON。
+
+    文件路径存在时把内容冗余读进 douyin_cookies（备份/还原用，仿 B 站账号保存逻辑
+    :131-146 的思路）；不做远程登录态校验——有效性在扫码会话与上传时自然暴露。
+    """
+    payload = dict(data)
+    filepath = (payload.get('douyin_cookies_filepath') or '').strip()
+    if filepath:
+        filepath = os.path.abspath(os.path.expanduser(filepath))
+        if not os.path.isfile(filepath):
+            raise ValueError(f"douyin_cookies_filepath 文件不存在: {filepath}")
+        try:
+            with open(filepath, 'r', encoding='utf-8') as fp:
+                cookies_text = fp.read()
+            parsed = json.loads(cookies_text)
+            if not isinstance(parsed, dict) or 'cookies' not in parsed:
+                raise ValueError('not a storage_state json')
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"douyin_cookies_filepath 不是有效的 storage_state 文件: {filepath} ({exc})")
+        payload['douyin_cookies_filepath'] = filepath
+        payload['douyin_cookies'] = cookies_text
+    elif payload.get('douyin_cookies'):
+        try:
+            parsed = json.loads(payload['douyin_cookies'])
+            if not isinstance(parsed, dict) or 'cookies' not in parsed:
+                raise ValueError('not a storage_state json')
+        except (TypeError, ValueError):
+            raise ValueError("douyin_cookies 不是合法的 storage_state JSON")
+    elif require_credentials:
+        raise ValueError("douyin_cookies_filepath or douyin_cookies is required（请先扫码登录）")
+
+    return payload
+
+
+def _create_douyin_account(data):
+    payload = _prepare_douyin_account_payload(data, require_credentials=True)
+    return DB.create_douyin_account(payload)
+
+
+def _update_douyin_account(data):
+    if not data.get('id'):
+        raise ValueError("id is required")
+    payload = _prepare_douyin_account_payload(data, require_credentials=False)
+    return DB.update_douyin_account(payload)
+
+
+def _disable_douyin_account(douyin_account_id):
+    if not douyin_account_id:
+        raise ValueError("id is required")
+    return DB.update_douyin_account({"id": douyin_account_id, "state_active": 0})
+
+
+def _create_douyin_upload_template(data):
+    return DB.create_douyin_upload_template(data)
+
+
+def _delete_douyin_upload_template(template_id):
+    return DB.delete_douyin_upload_template(template_id)
+
+
+def _build_douyin_publish_room_data(douyin_upload_template_id, live_room_id, room_data_override):
+    """组装抖音上传插件需要的 room_data.douyin_upload_template 上下文。"""
+    try:
+        template = DouyinUploadTemplate.get_by_id_(douyin_upload_template_id)
+    except DouyinUploadTemplate.DoesNotExist:
+        raise ValueError(f'douyin_upload_template not found: {douyin_upload_template_id}')
+    if template.douyin_account_id is None:
+        raise ValueError('douyin_upload_template has no douyin_account_id')
+    try:
+        account = DouyinAccount.get_by_id_(template.douyin_account_id)
+    except DouyinAccount.DoesNotExist:
+        raise ValueError(f'douyin_account not found: {template.douyin_account_id}')
+
+    template_info = model_to_dict(template)
+    template_info['douyin_account'] = model_to_dict(account)
+
+    room_data = {}
+    if live_room_id:
+        try:
+            room = LiveRoom.get_by_id_(live_room_id)
+            room_data = model_to_dict(room)
+        except LiveRoom.DoesNotExist:
+            raise ValueError(f'live_room not found: {live_room_id}')
+
+    # 仅允许覆盖少量标题模板相关字段，避免误改模板/账号上下文
+    for field in BILI_PUBLISH_ROOM_DATA_FIELDS:
+        if field in room_data_override:
+            room_data[field] = room_data_override[field]
+
+    room_data['douyin_upload_template'] = template_info
+    room_data['douyin_upload_template_id'] = template_info['id']
+    return room_data
+
+
+def _prepare_douyin_publish(data):
+    """同步校验并组装手动发布到抖音的上下文，返回 (template_ids, live_room_id, room_data_override, file_list)。"""
+    file_ids = data.get('file_ids')
+    videos = data.get('videos')
+    template_ids = resolve_room_douyin_template_ids(data)
+    live_room_id = _as_int(data.get('live_room_id'))
+    room_data_override = data.get('room_data') or {}
+
+    if not template_ids:
+        raise ValueError('douyin_upload_template_ids is required')
+    if not file_ids and not videos:
+        raise ValueError('file_ids or videos is required')
+
+    video_dir = os.path.realpath(get_video_dir())
+    min_size = int(config.get('filtering_threshold_file_size', 5)) * 1024 * 1024
+
+    if file_ids:
+        raw_items = _resolve_publish_record_files_from_ids(file_ids)
+    else:
+        raw_items = [{'video': video} for video in videos]
+
+    file_list = []
+    for raw_item in raw_items:
+        raw_path = raw_item.get('video')
+        real = _validate_publish_video_path(raw_path, video_dir, min_size)
+        file_info = {'video': real}
+        if raw_item.get('id') is not None:
+            file_info['id'] = raw_item.get('id')
+        file_list.append(file_info)
+
+    if not file_list:
+        raise ValueError('no files to publish')
+
+    return template_ids, live_room_id, room_data_override, file_list
+
+
+def _douyin_publish_file_list(file_list, template_info, room_data):
+    """按模板把文件列表转成抖音可投的 mp4（切片按 vertical_crop 裁竖屏，其余仅转码）。
+
+    竖屏裁剪只对切片记录（series_code=CLIP:*，必为三分屏）生效——整录/普通录像
+    裁中栏会切掉主体。无 record id 的裸路径文件原样透传（插件预检会拦截超限文件）。
+    """
+    vertical_enabled = int(template_info.get('vertical_crop') if template_info.get('vertical_crop') is not None else 1) == 1
+    room_name = room_data.get('room_name')
+    converted = []
+    for file_info in file_list:
+        record_id = file_info.get('id')
+        if record_id is None:
+            converted.append(file_info)
+            continue
+        try:
+            record = DB.get_record_file(record_id)
+        except Exception:
+            converted.append(file_info)
+            continue
+        is_clip = str(record.get('series_code') or '').startswith(CLIP_SERIES_CODE_PREFIX)
+        try:
+            douyin_video = ensure_douyin_clip(record, room_name, vertical=vertical_enabled and is_clip)
+        except Exception as exc:
+            raise ValueError(f'抖音版转码失败（record {record_id}）: {exc}')
+        converted.append({**file_info, 'video': douyin_video})
+    return converted
 
 
 # 录像文件列表/手动发布相关常量与辅助方法
@@ -838,6 +1001,137 @@ async def del_bili_upload_template(request):
         return error(1, str(e))
 
 
+@routes.post("/v1/DouyinAccount/listAll")
+async def list_douyin_account(request):
+    res = await run_db(DB.list_douyin_account)
+    return success(res)
+
+
+@routes.post("/v1/DouyinAccount/login/start")
+async def start_douyin_login(request):
+    data = await request.json()
+    try:
+        # start_session 内同步等浏览器出二维码（阻塞），必须放线程池
+        snapshot = await run_db(
+            douyin_login_manager.start_session,
+            data.get('douyin_cookies_filepath'),
+            data.get('account_name'),
+        )
+        return success(snapshot)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinAccount/login/status")
+async def get_douyin_login_status(request):
+    data = await request.json()
+    try:
+        return success(douyin_login_manager.snapshot(
+            data.get('session_id'),
+            since=_as_int(data.get('since')),
+        ))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinAccount/login/stop")
+async def stop_douyin_login(request):
+    data = await request.json()
+    try:
+        return success(douyin_login_manager.stop_session(data.get('session_id')))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinAccount/add")
+async def add_douyin_account(request):
+    data = await request.json()
+    try:
+        return success(await run_db(_create_douyin_account, data))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinAccount/update")
+async def update_douyin_account(request):
+    data = await request.json()
+    try:
+        return success(await run_db(_update_douyin_account, data))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinAccount/del")
+async def del_douyin_account(request):
+    data = await request.json()
+    douyin_account_id = data.get('id')
+    if not douyin_account_id:
+        return error(1, "id is required")
+
+    try:
+        await run_db(_disable_douyin_account, douyin_account_id)
+        return success(douyin_account_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinUploadTemplate/listAll")
+async def list_douyin_upload_template(request):
+    res = await run_db(DB.list_douyin_upload_template)
+    return success(res)
+
+
+@routes.post("/v1/DouyinUploadTemplate/add")
+async def add_douyin_upload_template(request):
+    data = await request.json()
+    if not data.get('template_name'):
+        return error(1, "template_name is required")
+
+    if not data.get('douyin_account_id'):
+        return error(1, "douyin_account_id is required")
+
+    try:
+        return success(await run_db(_create_douyin_upload_template, data))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinUploadTemplate/update")
+async def update_douyin_upload_template(request):
+    data = await request.json()
+    if not data.get('id'):
+        return error(1, "id is required")
+
+    try:
+        row = await run_db(DB.update_douyin_upload_template, data)
+        return success(row)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/DouyinUploadTemplate/del")
+async def del_douyin_upload_template(request):
+    data = await request.json()
+    template_id = data.get('id')
+    if not template_id:
+        return error(1, "id is required")
+
+    try:
+        await run_db(_delete_douyin_upload_template, template_id)
+        return success(template_id)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
 @routes.post('/v1/RecordFile/list')
 async def list_record_file(request):
     try:
@@ -935,6 +1229,51 @@ async def publish_record_file_to_bili(request):
 
         if not tasks:
             return error(1, '; '.join(f"模板 {e['bili_upload_template_id']}: {e['error']}" for e in errors))
+        return success({'tasks': tasks, 'errors': errors})
+    except ValueError as e:
+        return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/RecordFile/publishDouyin')
+async def publish_record_file_to_douyin(request):
+    try:
+        data = await request.json()
+        template_ids, live_room_id, room_data_override, file_list = await run_db(_prepare_douyin_publish, data)
+
+        # 每个模板（账号）创建一个投稿任务，单个失败不影响其他模板
+        tasks = []
+        errors = []
+        for template_id in template_ids:
+            try:
+                room_data = await run_db(
+                    _build_douyin_publish_room_data, template_id, live_room_id, room_data_override
+                )
+                # 切片按模板配置裁竖屏，整录仅转码 mp4（flv 抖音不接受）
+                douyin_file_list = await run_db(
+                    _douyin_publish_file_list, file_list, room_data['douyin_upload_template'], room_data
+                )
+                result = await schedule_douyin_submission(
+                    file_list=douyin_file_list,
+                    room_data=room_data,
+                    source=SUBMISSION_TASK_SOURCE_FILE_MANAGER,
+                    priority=UploadPriority.HIGH,
+                    metadata={
+                        'created_from': 'record_file',
+                        'douyin_upload_template_id': template_id,
+                        'file_ids': data.get('file_ids') or [],
+                        'videos': data.get('videos') or [],
+                    },
+                )
+                tasks.append(result)
+            except Exception as e:
+                logger.error(f'手动投稿抖音任务创建失败: template_id={template_id}, 错误={e}')
+                errors.append({'douyin_upload_template_id': template_id, 'error': str(e)})
+
+        if not tasks:
+            return error(1, '; '.join(f"模板 {e['douyin_upload_template_id']}: {e['error']}" for e in errors))
         return success({'tasks': tasks, 'errors': errors})
     except ValueError as e:
         return error(1, str(e))

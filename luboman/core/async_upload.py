@@ -184,11 +184,15 @@ class AsyncUploadScheduler:
     def _init_platform_semaphores(self):
         """初始化平台信号量"""
         platforms = ['biliweb', 'biliup-rs', 'alipan', 'bdpan', 'telegram', 'local']
-        
+
         for platform in platforms:
             self.platform_semaphores[platform] = asyncio.Semaphore(
                 self.max_concurrent_per_platform
             )
+
+        # 抖音走创作者平台模拟发布，风控敏感，固定串行（模块级 scheduler 在 import 时构造，
+        # 此时 DB 配置未必已加载，故并发数硬编码而不读 config）
+        self.platform_semaphores['douyin'] = asyncio.Semaphore(1)
     
     async def _upload_worker(self, worker_name: str):
         """上传工作器"""
@@ -678,14 +682,22 @@ def _extract_record_file_ids(file_list: List[Dict[str, Any]]) -> List[int]:
     return ids
 
 
-async def schedule_bili_submission(
+async def schedule_submission(
+    platform: str,
     file_list: List[Dict[str, Any]],
     room_data: Optional[Dict[str, Any]] = None,
     source: str = 'AUTO',
     priority: UploadPriority = UploadPriority.HIGH,
     metadata: Optional[Dict[str, Any]] = None,
+    template_field: str = 'bili_upload_template',
 ) -> Dict[str, Any]:
-    """创建投稿任务记录并排入异步上传调度器。"""
+    """创建投稿任务记录并排入异步上传调度器（平台无关）。
+
+    platform 为上传插件注册名（如 biliup-rs / douyin）；template_field 为
+    room_data 中模板上下文的键名（模板 id 字段约定为 f'{template_field}_id'）。
+    模板 id/name 统一写入 SubmissionTask 的 bili_upload_template_id/name 列
+    （历史列名，事实上已泛化为"模板 id/name"，避免加列迁移）。
+    """
     if not async_upload_scheduler.running:
         raise RuntimeError('async upload scheduler is not running, please start the service via async_main.py')
 
@@ -693,11 +705,9 @@ async def schedule_bili_submission(
     metadata = metadata or {}
     task_id = str(uuid.uuid4())
 
-    from luboman.core.upload import resolve_bili_uploader
     from luboman.database.db import DB
 
-    platform = resolve_bili_uploader(room_data)
-    template_info = room_data.get('bili_upload_template') or {}
+    template_info = room_data.get(template_field) or {}
     record_file_ids = _extract_record_file_ids(file_list)
     task_metadata = {
         **metadata,
@@ -718,7 +728,7 @@ async def schedule_bili_submission(
         'room_name': room_data.get('room_name'),
         'room_platform': room_data.get('room_platform'),
         'bili_upload_template_id': _as_int(
-            room_data.get('bili_upload_template_id') or template_info.get('id')
+            room_data.get(f'{template_field}_id') or template_info.get('id')
         ),
         'bili_upload_template_name': template_info.get('template_name'),
         'uploader': platform,
@@ -745,6 +755,46 @@ async def schedule_bili_submission(
         'file_count': len(file_list or []),
         'uploader': platform,
     }
+
+
+async def schedule_bili_submission(
+    file_list: List[Dict[str, Any]],
+    room_data: Optional[Dict[str, Any]] = None,
+    source: str = 'AUTO',
+    priority: UploadPriority = UploadPriority.HIGH,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """创建B站投稿任务记录并排入异步上传调度器。"""
+    from luboman.core.upload import resolve_bili_uploader
+
+    return await schedule_submission(
+        platform=resolve_bili_uploader(room_data),
+        file_list=file_list,
+        room_data=room_data,
+        source=source,
+        priority=priority,
+        metadata=metadata,
+        template_field='bili_upload_template',
+    )
+
+
+async def schedule_douyin_submission(
+    file_list: List[Dict[str, Any]],
+    room_data: Optional[Dict[str, Any]] = None,
+    source: str = 'AUTO',
+    priority: UploadPriority = UploadPriority.HIGH,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """创建抖音投稿任务记录并排入异步上传调度器。"""
+    return await schedule_submission(
+        platform='douyin',
+        file_list=file_list,
+        room_data=room_data,
+        source=source,
+        priority=priority,
+        metadata=metadata,
+        template_field='douyin_upload_template',
+    )
 
 
 # 上传事件处理器

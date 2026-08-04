@@ -74,6 +74,23 @@ export default defineConfig({
         },
       ],
     },
+    {
+      name: '抖音投稿',
+      path: '/douyin',
+
+      routes: [
+        {
+          name: '投稿账号',
+          path: '/douyin/account',
+          component: './Douyin/DouyinAccount',
+        },
+        {
+          name: '投稿模版',
+          path: '/douyin/template',
+          component: './Douyin/DouyinUploadTemplate',
+        },
+      ],
+    },
   ],
   npmClient: 'npm',
 });

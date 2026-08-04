@@ -74,9 +74,10 @@ def run():
 
     def fake_detect(src, params):
         # seg1: 舞蹈从 300s 持续到文件尾（600s）；seg2: 开头到 200s 仍是舞蹈
+        # 返回值含各区间聚合的三分屏线位（供抖音竖屏精剪）
         if src.endswith('seg1.flv'):
-            return [(300.0, 600.0)], 600.0
-        return [(0.0, 200.0)], 600.0
+            return [(300.0, 600.0)], 600.0, [(0.33, 0.66)]
+        return [(0.0, 200.0)], 600.0, [(0.34, 0.67)]
 
     def fake_cut(src, dst, start, end, accurate=False):
         cuts.append((src, dst, start, end, accurate))
@@ -127,6 +128,8 @@ def run():
         assert merged['begin_time'] == begin1 + datetime.timedelta(seconds=300), merged['begin_time']
         assert merged['end_time'] == begin2 + datetime.timedelta(seconds=200), merged['end_time']
         assert merged['series_code'] == 'CLIP:1', merged['series_code']
+        # 挂起态携带的线位应透传到合并切片的 upload_info（供抖音竖屏精剪）
+        assert merged.get('upload_info', {}).get('three_split_lines') == [0.33, 0.66], merged.get('upload_info')
         assert 42 not in dc._PENDING_TAILS, '拼接后挂起应清空'
         assert finished['t2'][1] == [101], finished['t2']
         print('PASS 2: seg1尾+seg2头 拼接为一个切片并注册')

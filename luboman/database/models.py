@@ -80,6 +80,30 @@ class BiliAccount(BaseModel):
     state_active = IntegerField(default=1)  # 状态, 0为未激活, 1为激活
 
 
+class DouyinAccount(BaseModel):
+    """抖音账号（cookie 为创作者服务平台 creator.douyin.com 的 storage_state）"""
+    id = AutoField(primary_key=True)  # 自增主键
+    account_name = CharField(null=True)  # 账号名称
+    account_avatar = CharField(null=True)  # 头像地址
+    douyin_cookies_filepath = CharField(null=True)  # 抖音cookie文件路径（storage_state json）
+    douyin_cookies = TextField(null=True)  # 抖音cookie（storage_state JSON文本，备份/还原用）
+    state_active = IntegerField(default=1)  # 状态, 0为未激活, 1为激活
+
+
+class DouyinUploadTemplate(BaseModel):
+    """抖音投稿模板（账号绑定在模板上，与B站模板结构对称）"""
+    id = AutoField(primary_key=True)  # 自增主键
+    template_name = CharField()  # 模板名称
+    douyin_account_id = IntegerField()  # 抖音账号ID
+    title = CharField(null=True)  # 标题模板，支持strftime与{room_name}等占位符，渲染后截30字
+    description = TextField(null=True)  # 作品描述
+    tags = JSONField(null=True)  # 话题列表（不含#号）
+    cover_path = CharField(null=True)  # 封面路径
+    dtime = IntegerField(null=True)  # 定时发布时间戳，需距提交2小时~7天内，越界降级为立即发布
+    self_declaration = CharField(null=True, default='opinion')  # 自主声明（发布必选项），目前固定"内容为个人观点或见解"
+    vertical_crop = IntegerField(default=1)  # 切片投抖音前裁中栏转9:16竖屏, 0关 1开
+
+
 class BiliUploadTemplate(BaseModel):
     """投稿模板"""
     id = AutoField(primary_key=True)  # 自增主键
@@ -123,6 +147,7 @@ class LiveRoom(BaseModel):
     custom_filename = CharField(null=True)  # 文件名配置
     bili_upload_template_id = IntegerField(null=True)  # 旧单模板字段，仅兼容保留（回退用），以 bili_upload_template_ids 为准
     bili_upload_template_ids = JSONField(null=True)  # B站投稿模板id列表，一份录播可投稿到多个账号（账号绑定在模板上）
+    douyin_upload_template_ids = JSONField(null=True)  # 抖音投稿模板id列表（账号绑定在模板上）
     bili_upower_level_id = CharField(null=True)  # B站充电专属等级ID
     upload_storage_platform = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True, default="flv")  # 视频格式

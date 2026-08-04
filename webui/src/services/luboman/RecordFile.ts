@@ -75,3 +75,29 @@ export async function publishRecordFileToBili(
     },
   );
 }
+
+/**
+ * 手动发布录像到抖音（异步排队发布，每个模板创建一个任务，立即返回任务列表）。
+ * 切片按模板 vertical_crop 裁竖屏，整录仅转码 mp4；抖音限 ≤4G/≤15 分钟。
+ * body：douyin_upload_template_ids(必填) + (file_ids | videos 二选一) +
+ *       可选 live_room_id、room_data(仅 room_name/title/url/owner/platform 生效)。
+ */
+export async function publishRecordFileToDouyin(
+  body: {
+    douyin_upload_template_ids: number[];
+    file_ids?: number[];
+    videos?: string[];
+    live_room_id?: number;
+    room_data?: Record<string, any>;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<API.RecordFilePublishResult>(
+    REQUEST_HOST + '/v1/RecordFile/publishDouyin',
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}

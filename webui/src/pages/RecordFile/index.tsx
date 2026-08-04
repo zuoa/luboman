@@ -41,10 +41,12 @@ const {
   listRecordFile,
   listRecordFileRoomSummary,
   publishRecordFileToBili,
+  publishRecordFileToDouyin,
 } = services.RecordFile;
 const { detectDanceClip } = services.ClipTask;
 const { listLiveRoom } = services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
+const { listDouyinUploadTemplate } = services.DouyinUploadTemplate;
 
 const ALL_ROOM_KEY = 'all';
 type RoomFilterKey = typeof ALL_ROOM_KEY | number;
@@ -174,6 +176,7 @@ const RecordFileList: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [selectedRows, setSelectedRows] = useState<API.RecordFileInfo[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [publishDouyinOpen, setPublishDouyinOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<API.RecordFileInfo[]>([]);
   const [playTarget, setPlayTarget] = useState<API.RecordFileInfo>();
 
@@ -233,6 +236,12 @@ const RecordFileList: React.FC = () => {
     if (!rows.length) return;
     setPublishTarget(rows);
     setPublishOpen(true);
+  };
+
+  const openPublishDouyin = (rows: API.RecordFileInfo[]) => {
+    if (!rows.length) return;
+    setPublishTarget(rows);
+    setPublishDouyinOpen(true);
   };
 
   const openPlayer = (row: API.RecordFileInfo) => {
@@ -321,6 +330,53 @@ const RecordFileList: React.FC = () => {
       } else {
         message.success(
           `已创建 ${taskCount} 个投稿任务（${bili_upload_template_ids.length} 个模板 × ${target.length} 个文件）`,
+        );
+      }
+      clearSelection();
+      actionRef.current?.reload();
+      return true;
+    } catch {
+      // 统一错误层已弹 toast
+      return false;
+    }
+  };
+
+  const handlePublishDouyin = async (values: any) => {
+    const { douyin_upload_template_ids, live_room_id, room_data } = values;
+    const target = publishTarget;
+    if (target.some((row) => !isRecordCompleted(row))) {
+      message.warning('录制中的文件不能发布');
+      return false;
+    }
+    // 后端单次调用只接受 file_ids 或 videos：全部有 id 用 file_ids，否则统一用 video 路径
+    const allHaveId = target.length > 0 && target.every((r) => r.id != null);
+    const roomData = room_data
+      ? Object.fromEntries(
+          Object.entries(room_data).filter(([, v]) => v != null && v !== ''),
+        )
+      : undefined;
+    try {
+      const res = await publishRecordFileToDouyin({
+        douyin_upload_template_ids,
+        live_room_id,
+        ...(allHaveId
+          ? { file_ids: target.map((r) => r.id as number) }
+          : { videos: target.map((r) => r.video) }),
+        ...(roomData && Object.keys(roomData).length
+          ? { room_data: roomData }
+          : {}),
+      });
+      const taskCount = res.tasks?.length ?? 0;
+      const errCount = res.errors?.length ?? 0;
+      if (errCount > 0) {
+        message.warning(
+          `已创建 ${taskCount} 个抖音投稿任务，${errCount} 个模板失败：${res.errors
+            .map((e) => `模板 ${e.douyin_upload_template_id}(${e.error})`)
+            .join('；')}`,
+        );
+      } else {
+        message.success(
+          `已创建 ${taskCount} 个抖音投稿任务（${douyin_upload_template_ids.length} 个模板 × ${target.length} 个文件）`,
         );
       }
       clearSelection();
@@ -464,6 +520,7 @@ const RecordFileList: React.FC = () => {
           <Space size={8}>
             <a onClick={() => openPlayer(r)}>播放</a>
             <a onClick={() => openPublish([r])}>发布</a>
+            <a onClick={() => openPublishDouyin([r])}>投抖音</a>
           </Space>
         );
       },
@@ -624,6 +681,18 @@ const RecordFileList: React.FC = () => {
                 发布到 B 站
                 {selectedRows.length ? ` (${selectedRows.length})` : ''}
               </Button>,
+              <Button
+                key="publishDouyin"
+                icon={<CloudUploadOutlined />}
+                disabled={!selectedRows.length || hasRecordingSelection}
+                title={
+                  hasRecordingSelection ? '录制中的文件不能发布' : undefined
+                }
+                onClick={() => openPublishDouyin(selectedRows)}
+              >
+                发布到抖音
+                {selectedRows.length ? ` (${selectedRows.length})` : ''}
+              </Button>,
             ]}
             request={async (params) => {
               try {
@@ -760,6 +829,68 @@ const RecordFileList: React.FC = () => {
           valueEnum={PLATFORM_VALUE_ENUM}
           placeholder="覆盖平台"
           allowClear
+        />
+      </ModalForm>
+
+      <ModalForm
+        title={`发布到抖音（${publishTarget.length} 个文件）`}
+        width={560}
+        open={publishDouyinOpen}
+        onOpenChange={setPublishDouyinOpen}
+        modalProps={{ destroyOnClose: true }}
+        onFinish={handlePublishDouyin}
+        initialValues={{ live_room_id: publishDefaultRoomId }}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="抖音限 ≤4G / ≤15 分钟（超限会被拦截）；切片按模板配置自动裁竖屏。查重严格，勿将同一切片投多个抖音号。"
+        />
+        <ProFormSelect
+          name="douyin_upload_template_ids"
+          label="投稿模板"
+          rules={[{ required: true, message: '请至少选择一个抖音投稿模板' }]}
+          request={async () => {
+            const list = await listDouyinUploadTemplate();
+            return (list || []).map((t) => ({
+              label: t.template_name,
+              value: t.id,
+            }));
+          }}
+          placeholder="选择抖音投稿模板（可多选，每个模板绑定一个抖音账号）"
+          fieldProps={{ mode: 'multiple' }}
+        />
+        <ProFormSelect
+          name="live_room_id"
+          label="关联直播间"
+          allowClear
+          request={async () => {
+            const list = await listLiveRoom();
+            return (list || []).map((r) => ({
+              label: r.room_name || `#${r.id}`,
+              value: r.id,
+            }));
+          }}
+          placeholder="可选，用于回填标题上下文"
+        />
+        <div className={styles.overrideTitle}>
+          覆盖信息（可选，留空则用模板/房间默认值）
+        </div>
+        <ProFormText
+          name={['room_data', 'room_name']}
+          label="房间名"
+          placeholder="覆盖稿件关联的房间名"
+        />
+        <ProFormText
+          name={['room_data', 'room_title']}
+          label="房间标题"
+          placeholder="覆盖房间标题"
+        />
+        <ProFormText
+          name={['room_data', 'room_owner']}
+          label="主播"
+          placeholder="覆盖主播名"
         />
       </ModalForm>
     </>

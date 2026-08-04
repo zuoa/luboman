@@ -38,6 +38,7 @@ const ConfigPage: React.FC = () => {
     dance_clip_boundary_gap_seconds: 10,
     dance_clip_title_template:
       '【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}',
+    dance_clip_douyin_title_template: '【{room_name}】舞蹈片段{seq}',
     douyin_cookies: '',
     afreecatv_username: '',
     afreecatv_password: '',
@@ -290,6 +291,12 @@ const ConfigPage: React.FC = () => {
               label="投稿标题模板"
               placeholder="【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}"
               extra="支持 {room_name} 主播名称、{room_title} 直播标题、{seq} 切片序号，以及 %Y年%m月%d日 %H时 等时间格式（取切片开始时间）"
+            />
+            <ProFormText
+              name="dance_clip_douyin_title_template"
+              label="抖音投稿标题模板"
+              placeholder="【{room_name}】舞蹈片段{seq}"
+              extra="占位符同上；抖音标题上限 30 字，超出自动截断"
             />
           </div>
         </ProCard>

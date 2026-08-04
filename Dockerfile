@@ -12,8 +12,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN  set -eux; \
      apt-get update; \
-     apt-get install -y --no-install-recommends  ffmpeg; \
-     pip3 install --no-cache-dir -r requirements.txt
+     apt-get install -y --no-install-recommends ffmpeg wget gnupg; \
+     pip3 install --no-cache-dir -r requirements.txt; \
+     patchright install --with-deps chromium
 COPY luboman ./luboman
 RUN mkdir bin && ls -a
 

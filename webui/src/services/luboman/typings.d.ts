@@ -37,6 +37,8 @@ declare namespace API {
     bili_upload_template_id?: number;
     /** 关联的 B 站投稿模板 id 列表（一份录播可投多个账号） */
     bili_upload_template_ids?: number[] | null;
+    /** 关联的抖音投稿模板 id 列表（账号绑定在模板上） */
+    douyin_upload_template_ids?: number[] | null;
     /** B 站充电等级 id */
     bili_upower_level_id?: string;
     /** 网盘上传平台：bdpan / alipan */
@@ -158,6 +160,49 @@ declare namespace API {
     lines?: string;
   }
 
+  /** 抖音账号（DouyinAccount） */
+  interface DouyinAccountInfo {
+    id?: number;
+    account_name?: string;
+    account_avatar?: string;
+    /** 创作者平台扫码登录保存的 storage_state 文件路径 */
+    douyin_cookies_filepath?: string;
+    /** storage_state JSON 文本（备份/还原用） */
+    douyin_cookies?: string;
+    /** 0 停用 / 1 启用 */
+    state_active?: 0 | 1;
+  }
+
+  /** 抖音扫码登录会话（二维码是 data URL，前端直接 <img> 渲染） */
+  interface DouyinLoginSession {
+    session_id: string;
+    cookie_path: string;
+    status: BiliupLoginStatus | string;
+    qrcode_img?: string | null;
+    error_message?: string | null;
+    created_at: number;
+    updated_at: number;
+  }
+
+  /** 抖音投稿模板（DouyinUploadTemplate） */
+  interface DouyinUploadTemplateInfo {
+    id?: number;
+    template_name: string;
+    douyin_account_id?: number;
+    /** 标题模板，渲染后截 30 字 */
+    title?: string;
+    description?: string;
+    /** 话题列表（不含 #） */
+    tags?: string[];
+    cover_path?: string;
+    /** 定时发布时间戳，需距提交 2 小时~7 天内 */
+    dtime?: number;
+    /** 自主声明选项 */
+    self_declaration?: string;
+    /** 切片裁中栏转 9:16 竖屏 0/1，默认 1 */
+    vertical_crop?: 0 | 1;
+  }
+
   /** @/v1/bili/archive/pre 返回的 B 站原始 archive/pre 响应 */
   interface BiliArchivePre {
     code?: number;
@@ -215,10 +260,14 @@ declare namespace API {
     page: number;
   }
 
-  /** RecordFile/publishBili 响应 data：每个模板一个任务，单个失败不影响其他 */
+  /** RecordFile/publishBili、publishDouyin 响应 data：每个模板一个任务，单个失败不影响其他 */
   interface RecordFilePublishResult {
     tasks: { task_id: string; file_count: number; uploader: string }[];
-    errors: { bili_upload_template_id: number; error: string }[];
+    errors: {
+      bili_upload_template_id?: number;
+      douyin_upload_template_id?: number;
+      error: string;
+    }[];
   }
 
   type SubmissionTaskStatus =

@@ -37,6 +37,7 @@ import styles from './index.less';
 const { listLiveRoom, addLiveRoom, updateLiveRoom, deleteLiveRoom } =
   services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
+const { listDouyinUploadTemplate } = services.DouyinUploadTemplate;
 
 const VIEW_KEY = 'luboman_liveRoomView';
 type ViewMode = 'table' | 'card';
@@ -116,7 +117,7 @@ const RoomFormFields: React.FC = () => (
     />
     <ProFormSelect
       name="bili_upload_template_ids"
-      label="投稿模板"
+      label="B 站投稿模板"
       request={async () => {
         const list = await listBiliUploadTemplate();
         return (list || []).map((t) => ({
@@ -125,6 +126,21 @@ const RoomFormFields: React.FC = () => (
         }));
       }}
       placeholder="选择 B 站投稿模板（可多选，每个模板绑定一个账号）"
+      fieldProps={{ mode: 'multiple' }}
+      allowClear
+    />
+    <ProFormSelect
+      name="douyin_upload_template_ids"
+      label="抖音投稿模板"
+      request={async () => {
+        const list = await listDouyinUploadTemplate();
+        return (list || []).map((t) => ({
+          label: t.template_name,
+          value: t.id,
+        }));
+      }}
+      placeholder="选择抖音投稿模板（可多选）"
+      extra="抖音查重严格：同一切片投多个抖音号易判搬运限流，建议只选一个模板"
       fieldProps={{ mode: 'multiple' }}
       allowClear
     />
@@ -158,6 +174,7 @@ const LiveRoomList: React.FC = () => {
   const [list, setList] = useState<API.LiveRoomInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [templateMap, setTemplateMap] = useState<Record<number, string>>({});
+  const [douyinTemplateMap, setDouyinTemplateMap] = useState<Record<number, string>>({});
   // 视图模式持久化：默认表格，记忆上次选择
   const [view, setView] = useState<ViewMode>(() =>
     localStorage.getItem(VIEW_KEY) === 'card' ? 'card' : 'table',
@@ -190,6 +207,15 @@ const LiveRoomList: React.FC = () => {
         setTemplateMap(map);
       })
       .catch(() => {});
+    listDouyinUploadTemplate()
+      .then((list) => {
+        const map: Record<number, string> = {};
+        (list || []).forEach((t) => {
+          if (t.id != null) map[t.id] = t.template_name;
+        });
+        setDouyinTemplateMap(map);
+      })
+      .catch(() => {});
   }, [fetchData]);
 
   const changeView = (v: ViewMode) => {
@@ -212,6 +238,11 @@ const LiveRoomList: React.FC = () => {
           : [];
     return ids.map((id) => templateMap[id] || `投稿 #${id}`);
   };
+
+  const douyinTemplateLabels = (r: API.LiveRoomInfo): string[] =>
+    (r.douyin_upload_template_ids || []).map(
+      (id) => douyinTemplateMap[id] || `抖音投稿 #${id}`,
+    );
 
   const toolbar = (
     <div className={styles.toolbar}>
@@ -342,16 +373,22 @@ const LiveRoomList: React.FC = () => {
               width: 180,
               render: (_, r) => {
                 const tmpls = templateLabels(r);
+                const douyinTmpls = douyinTemplateLabels(r);
                 const storage = r.upload_storage_platform
                   ? STORAGE_LABELS[r.upload_storage_platform] ||
                     r.upload_storage_platform
                   : null;
-                if (!tmpls.length && !storage)
+                if (!tmpls.length && !douyinTmpls.length && !storage)
                   return <span className={styles.muted}>-</span>;
                 return (
                   <Space size={4} wrap>
                     {tmpls.map((name) => (
                       <Tag key={name} color="blue">
+                        {name}
+                      </Tag>
+                    ))}
+                    {douyinTmpls.map((name) => (
+                      <Tag key={name} color="magenta">
                         {name}
                       </Tag>
                     ))}
@@ -487,6 +524,11 @@ const LiveRoomList: React.FC = () => {
                           {name}
                         </Tag>
                       ))}
+                      {douyinTemplateLabels(r).map((name) => (
+                        <Tag key={name} color="magenta">
+                          {name}
+                        </Tag>
+                      ))}
                       {r.upload_storage_platform && (
                         <Tag color="geekblue">
                           {STORAGE_LABELS[r.upload_storage_platform] ||
@@ -567,6 +609,8 @@ const LiveRoomList: React.FC = () => {
                   (editing.bili_upload_template_id != null
                     ? [editing.bili_upload_template_id]
                     : undefined),
+                douyin_upload_template_ids:
+                  editing.douyin_upload_template_ids ?? undefined,
               }
             : undefined
         }

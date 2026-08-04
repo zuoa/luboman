@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 from peewee import JOIN, fn
 from playhouse.shortcuts import model_to_dict
 
-from .models import db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile, SubmissionTask, ClipTask
+from .models import (
+    db, LiveRoom, GlobalConfig, BiliAccount, BiliUploadTemplate, RecordFile, SubmissionTask, ClipTask,
+    DouyinAccount, DouyinUploadTemplate,
+)
 
 logger = logging.getLogger('luboman')
 
@@ -37,19 +40,19 @@ def datetime_to_struct_time(date: datetime):
     return time.localtime(date.timestamp())
 
 
-def resolve_room_bili_template_ids(room_data):
-    """解析直播间绑定的B站投稿模板id列表（全后端唯一权威读取点）。
+def resolve_room_template_ids(room_data, multi_key, single_key=None):
+    """解析直播间绑定的投稿模板id列表。
 
-    优先读新字段 bili_upload_template_ids（列表）；为空时回退旧单值字段
-    bili_upload_template_id（兼容迁移前的数据与旧客户端）。去重、保序、过滤非法值。
+    优先读多值字段 multi_key（列表）；为空时回退旧单值字段 single_key
+    （兼容迁移前的数据与旧客户端）。去重、保序、过滤非法值。
     """
     room_data = room_data or {}
-    raw = room_data.get('bili_upload_template_ids')
-    if not raw:
-        single = room_data.get('bili_upload_template_id')
+    raw = room_data.get(multi_key)
+    if not raw and single_key:
+        single = room_data.get(single_key)
         raw = [single] if single else []
     if not isinstance(raw, (list, tuple)):
-        raw = [raw]
+        raw = [raw] if raw else []
     ids = []
     for item in raw:
         try:
@@ -59,6 +62,16 @@ def resolve_room_bili_template_ids(room_data):
         if tid not in ids:
             ids.append(tid)
     return ids
+
+
+def resolve_room_bili_template_ids(room_data):
+    """解析直播间绑定的B站投稿模板id列表（全后端唯一权威读取点）。"""
+    return resolve_room_template_ids(room_data, 'bili_upload_template_ids', 'bili_upload_template_id')
+
+
+def resolve_room_douyin_template_ids(room_data):
+    """解析直播间绑定的抖音投稿模板id列表（全后端唯一权威读取点）。"""
+    return resolve_room_template_ids(room_data, 'douyin_upload_template_ids')
 
 
 class DB:
@@ -71,12 +84,15 @@ class DB:
         LiveRoom.create_table(safe=True)
         BiliAccount.create_table(safe=True)
         BiliUploadTemplate.create_table(safe=True)
+        DouyinAccount.create_table(safe=True)
+        DouyinUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
         SubmissionTask.create_table(safe=True)
         ClipTask.create_table(safe=True)
         cls._ensure_record_file_schema()
         cls._ensure_live_room_schema()
         cls._ensure_live_room_bili_template_ids_schema()
+        cls._ensure_live_room_douyin_template_ids_schema()
         cls._ensure_clip_task_schema()
         cls.recover_interrupted_submission_tasks()
         cls.recover_interrupted_clip_tasks()
@@ -138,6 +154,20 @@ class DB:
             logger.info('LiveRoom 多投稿模板字段就绪')
         except Exception:
             logger.warning('补齐 LiveRoom 多投稿模板字段失败', exc_info=True)
+
+    @classmethod
+    def _ensure_live_room_douyin_template_ids_schema(cls):
+        """兼容旧库：补齐 LiveRoom 抖音投稿模板列表列（新字段，无需回填）。"""
+        table = LiveRoom._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS douyin_upload_template_ids JSON'
+                )
+            logger.info('LiveRoom 抖音投稿模板字段就绪')
+        except Exception:
+            logger.warning('补齐 LiveRoom 抖音投稿模板字段失败', exc_info=True)
 
     @classmethod
     def _ensure_clip_task_schema(cls):
@@ -282,9 +312,89 @@ class DB:
             return BiliAccount.update(**update_data).where(BiliAccount.id == data["id"]).execute()
 
     @classmethod
+    def create_douyin_account(cls, data):
+        with db.connection_context():
+            account = DouyinAccount.create(**cls.filter_model_data(DouyinAccount, data))
+            return model_to_dict(account)
+
+    @classmethod
+    def update_douyin_account(cls, data):
+        with db.connection_context():
+            update_columns = [
+                "account_name", "account_avatar", "douyin_cookies_filepath",
+                "douyin_cookies", "state_active"
+            ]
+            update_data = cls.filter_model_data(DouyinAccount, data, update_columns)
+
+            if not update_data:
+                return 0
+
+            return DouyinAccount.update(**update_data).where(DouyinAccount.id == data["id"]).execute()
+
+    @classmethod
+    def delete_douyin_account(cls, row_id):
+        with db.connection_context():
+            return DouyinAccount.delete_by_id(row_id)
+
+    @classmethod
+    def list_douyin_account(cls):
+        with db.connection_context():
+            return [model_to_dict(item) for item in DouyinAccount.select()]
+
+    @classmethod
+    def create_douyin_upload_template(cls, data):
+        with db.connection_context():
+            template = DouyinUploadTemplate.create(**cls.filter_model_data(DouyinUploadTemplate, data))
+            return template.id
+
+    @classmethod
+    def update_douyin_upload_template(cls, data):
+        with db.connection_context():
+            update_columns = [
+                "template_name", "douyin_account_id", "title", "description",
+                "tags", "cover_path", "dtime", "self_declaration", "vertical_crop"
+            ]
+            update_data = cls.filter_model_data(DouyinUploadTemplate, data, update_columns)
+
+            if not update_data:
+                return 0
+
+            return DouyinUploadTemplate.update(**update_data).where(DouyinUploadTemplate.id == data["id"]).execute()
+
+    @classmethod
+    def delete_douyin_upload_template(cls, template_id):
+        with db.connection_context():
+            result = DouyinUploadTemplate.delete_by_id(template_id)
+        cls._remove_douyin_template_from_rooms(template_id)
+        return result
+
+    @classmethod
+    def _remove_douyin_template_from_rooms(cls, template_id):
+        """删除抖音模板后，从所有房间的抖音模板列表中剔除残留id。失败仅告警，不阻塞删除。"""
+        table = LiveRoom._meta.table_name
+        try:
+            tid = int(template_id)
+            with db.atomic():
+                db.execute_sql(
+                    f'UPDATE "{table}" SET douyin_upload_template_ids = COALESCE('
+                    f"(SELECT json_agg(e) FROM json_array_elements(douyin_upload_template_ids) e "
+                    f"WHERE (e #>> '{{}}')::int != {tid}), '[]'::json) "
+                    f'WHERE douyin_upload_template_ids IS NOT NULL '
+                    f'AND douyin_upload_template_ids::jsonb @> to_jsonb({tid})'
+                )
+        except Exception:
+            logger.warning(f'清理房间中残留的抖音投稿模板id失败: template_id={template_id}', exc_info=True)
+
+    @classmethod
+    def list_douyin_upload_template(cls):
+        with db.connection_context():
+            return [model_to_dict(item) for item in DouyinUploadTemplate.select()]
+
+    @classmethod
     def update_live_room(cls, data):
         with db.connection_context():
             update_columns = ["room_name", "room_url", "custom_filename", "bili_upload_template_id", "bili_upload_template_ids",
+                              "douyin_upload_template_ids",
                               "upload_storage_platform",
                               "stream_video_format", "active_state", "active_begin", "active_end", "ffmpeg_options",
                               "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id",
@@ -296,6 +406,11 @@ class DB:
                 ids = resolve_room_bili_template_ids({'bili_upload_template_ids': update_data["bili_upload_template_ids"]})
                 update_data["bili_upload_template_ids"] = ids
                 update_data["bili_upload_template_id"] = ids[0] if ids else None
+
+            if "douyin_upload_template_ids" in update_data:
+                update_data["douyin_upload_template_ids"] = resolve_room_douyin_template_ids(
+                    {'douyin_upload_template_ids': update_data["douyin_upload_template_ids"]}
+                )
 
             update_data["gmt_updated"] = datetime.now()
 
@@ -964,6 +1079,29 @@ class DB:
                 templates.append(cls.get_bili_template_with_account(template_id))
             except Exception:
                 logger.warning(f'加载B站投稿模板失败，已跳过: template_id={template_id}', exc_info=True)
+        return templates
+
+    @classmethod
+    def get_douyin_template_with_account(cls, template_id):
+        """加载抖音投稿模板及其绑定的账号，返回附带 douyin_account 的模板字典。"""
+        with db.connection_context():
+            template = DouyinUploadTemplate.get_by_id(template_id)
+            if template.douyin_account_id is None:
+                raise ValueError('douyin_upload_template has no douyin_account_id')
+            account = DouyinAccount.get_by_id(template.douyin_account_id)
+            template_info = model_to_dict(template)
+            template_info['douyin_account'] = model_to_dict(account)
+            return template_info
+
+    @classmethod
+    def get_douyin_templates_with_accounts(cls, template_ids):
+        """批量加载抖音投稿模板及其绑定账号；单个失效（不存在/无账号）记 warning 跳过，不拖死整批。"""
+        templates = []
+        for template_id in template_ids or []:
+            try:
+                templates.append(cls.get_douyin_template_with_account(template_id))
+            except Exception:
+                logger.warning(f'加载抖音投稿模板失败，已跳过: template_id={template_id}', exc_info=True)
         return templates
 
     @classmethod

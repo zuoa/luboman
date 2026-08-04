@@ -66,6 +66,10 @@ CLIP_SERIES_CODE_PREFIX = 'CLIP:'
 # strftime 时间格式（取切片开始时间）。全局配置项 dance_clip_title_template。
 DEFAULT_CLIP_TITLE_TEMPLATE = '【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}'
 
+# 抖音切片标题模板（全局配置项 dance_clip_douyin_title_template）。
+# 抖音标题上限 30 字（插件内截断），默认模板比B站的短。
+DEFAULT_DOUYIN_CLIP_TITLE_TEMPLATE = '【{room_name}】舞蹈片段{seq}'
+
 
 class _MissingKeyDict(dict):
     """format_map 用：未知占位符渲染为空串，避免下游标题模板再次 .format 时报错。"""
@@ -173,8 +177,12 @@ def _panel_similarities(gray, x1: int, x2: int) -> Optional[List[float]]:
     return sims
 
 
-def _analyze_frame(frame, params) -> bool:
-    """判断单帧是否为三分屏布局（两条竖直分界线 + 三栏各自达到最小栏宽 + 三栏内容一致）。"""
+def _analyze_frame(frame, params) -> Optional[Tuple[float, float]]:
+    """判断单帧是否为三分屏布局（两条竖直分界线 + 三栏各自达到最小栏宽 + 三栏内容一致）。
+
+    命中时返回归一化分界线位置 (x1r, x2r)（0~1，相对画面宽度）——供抖音竖屏
+    精剪按线位裁中栏；未命中返回 None。
+    """
     import cv2
     import numpy as np
 
@@ -198,7 +206,7 @@ def _analyze_frame(frame, params) -> bool:
     proj = edges.sum(axis=0).astype(np.float64)
     max_proj = proj.max()
     if max_proj <= 0:
-        return False
+        return None
 
     # 候选列：投影强度达标 且 列内边缘行覆盖率达标（竖线需纵向贯通）
     min_rows = params['dance_clip_line_height_ratio'] * height
@@ -208,7 +216,7 @@ def _analyze_frame(frame, params) -> bool:
         (row_counts >= min_rows)
     )[0]
     if len(candidates) < 2:
-        return False
+        return None
 
     # 相邻候选列聚类，取投影峰值列作为线位
     cluster_gap = max(2, int(width * 0.03))
@@ -225,7 +233,7 @@ def _analyze_frame(frame, params) -> bool:
     lines.append(start + int(seg.argmax()))
 
     if len(lines) < 2:
-        return False
+        return None
 
     # 枚举所有线位对，找满足三分屏约束的组合（比"取最强两条"更稳健：
     # 分屏内容自身可能含强竖线，两条分界线未必是投影最强的两条）。
@@ -251,12 +259,12 @@ def _analyze_frame(frame, params) -> bool:
                 sims = _panel_similarities(gray, x1, x2)
                 if sims is None or any(s < sim_threshold for s in sims):
                     continue
-            return True
-    return False
+            return (x1 / width, x2 / width)
+    return None
 
 
-def _samples_to_intervals(hits: List[Tuple[float, bool]], duration: float, params) -> List[Tuple[float, float]]:
-    """把 (时间点, 是否三分屏) 采样序列转成区间列表：滞回防抖 → 合并 → 丢弃过短 → padding。"""
+def _samples_to_intervals(hits: List[Tuple[float, Optional[Tuple[float, float]]]], duration: float, params) -> List[Tuple[float, float]]:
+    """把 (时间点, 命中线位或None) 采样序列转成区间列表：滞回防抖 → 合并 → 丢弃过短 → padding。"""
     interval = params['dance_clip_sample_interval']
     hysteresis = params['dance_clip_hysteresis']
 
@@ -309,8 +317,36 @@ def _samples_to_intervals(hits: List[Tuple[float, bool]], duration: float, param
     return [(s, e) for s, e in final]
 
 
-def detect_three_split_intervals(video_path: str, params: Dict[str, Any]) -> Tuple[List[Tuple[float, float]], float]:
-    """探测视频中三分屏布局的持续区间，返回 ([(start_sec, end_sec), ...], duration_sec)。
+def _aggregate_interval_lines(
+    hits: List[Tuple[float, Optional[Tuple[float, float]]]],
+    intervals: List[Tuple[float, float]],
+) -> List[Optional[Tuple[float, float]]]:
+    """按区间聚合采样线位（x1r/x2r 各取中位数），返回与 intervals 对齐的线位列表。
+
+    区间内无有效线位样本（理论上不会发生——区间由命中样本构成）时返回 None，
+    下游转码回退画面中 1/3。
+    """
+    import statistics
+
+    result: List[Optional[Tuple[float, float]]] = []
+    for start, end in intervals:
+        xs1 = [lines[0] for t, lines in hits if lines and start <= t <= end]
+        xs2 = [lines[1] for t, lines in hits if lines and start <= t <= end]
+        if xs1 and xs2:
+            result.append((statistics.median(xs1), statistics.median(xs2)))
+        else:
+            result.append(None)
+    return result
+
+
+def detect_three_split_intervals(
+    video_path: str,
+    params: Dict[str, Any],
+) -> Tuple[List[Tuple[float, float]], float, List[Optional[Tuple[float, float]]]]:
+    """探测视频中三分屏布局的持续区间。
+
+    返回 (intervals, duration_sec, interval_lines)：intervals 为 [(start_sec, end_sec), ...]，
+    interval_lines 与 intervals 对齐，为各区间聚合的归一化分界线位置（供竖屏精剪裁中栏）。
 
     顺序扫描 + grab 跳帧（只对采样帧解码），不依赖 seek——部分容器
     （尤其直播录像 flv）的 seek 不可靠，会导致采样帧全部读取失败。
@@ -332,7 +368,7 @@ def detect_three_split_intervals(video_path: str, params: Dict[str, Any]) -> Tup
         # 采样帧步长：fps 未知时退化为每 25 帧采一帧（约 1s @25fps）
         step = max(1, int(round(fps * interval))) if fps > 0 else 25
 
-        hits: List[Tuple[float, bool]] = []
+        hits: List[Tuple[float, Optional[Tuple[float, float]]]] = []
         index = 0
         while True:
             ok = cap.grab()
@@ -341,18 +377,19 @@ def detect_three_split_intervals(video_path: str, params: Dict[str, Any]) -> Tup
             if index % step == 0:
                 ok, frame = cap.retrieve()
                 t = index / fps if fps > 0 else float(index)
-                hit = bool(ok and frame is not None and _analyze_frame(frame, params))
-                hits.append((t, hit))
+                lines = _analyze_frame(frame, params) if ok and frame is not None else None
+                hits.append((t, lines))
             index += 1
 
         if fps <= 0:
             duration = hits[-1][0] if hits else 0
         intervals = _samples_to_intervals(hits, duration, params)
+        interval_lines = _aggregate_interval_lines(hits, intervals)
         logger.info(
             '三分屏探测完成 %s: 采样 %d 帧, 检出 %d 个区间',
             os.path.basename(video_path), len(hits), len(intervals),
         )
-        return intervals, duration
+        return intervals, duration, interval_lines
     finally:
         cap.release()
 
@@ -423,6 +460,76 @@ def _sanitize_dir_name(name: str) -> str:
     return name.strip('._') or 'unknown'
 
 
+def transcode_clip_for_douyin(src: str, dst: str, lines: Optional[Tuple[float, float]] = None, vertical: bool = False) -> None:
+    """把切片转码为抖音可投的 mp4（h264/aac/faststart）。
+
+    vertical=True 时按三分屏线位裁中栏转 9:16 竖屏（1080x1920）：
+    lines 为归一化分界线 (x1r, x2r)（0~1，相对画面宽度），缺省回退画面中 1/3。
+    滤镜链用 cover 策略（放大铺满后居中裁）——中栏约 0.59:1 略宽于 9:16，
+    仅损失两侧约 5% 画面，主体无损，优于 pad 黑边。
+    """
+    ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    command = [ffmpeg_path, '-y', '-i', src]
+    if vertical:
+        x1r, x2r = lines if lines else (1.0 / 3, 2.0 / 3)
+        vf = (
+            f'crop=w=iw*{x2r - x1r:.6f}:h=ih:x=iw*{x1r:.6f}:y=0,'
+            'scale=1080:1920:force_original_aspect_ratio=increase,'
+            'crop=1080:1920'
+        )
+        command += ['-vf', vf]
+    command += [
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+        '-c:a', 'aac', '-movflags', '+faststart', dst,
+    ]
+    logger.info('抖音版转码命令: %s', ' '.join(command))
+    proc = subprocess.run(command, capture_output=True, text=True, timeout=3600)
+    if proc.returncode != 0:
+        tail = (proc.stderr or '').strip().splitlines()[-5:]
+        raise RuntimeError(f'ffmpeg douyin transcode failed ({proc.returncode}): {" | ".join(tail)}')
+    if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
+        raise RuntimeError(f'ffmpeg douyin transcode produced empty file: {dst}')
+
+
+def ensure_douyin_clip(record: Dict[str, Any], room_name: Optional[str] = None, vertical: bool = False) -> str:
+    """产出（或复用）切片的抖音版转码文件，返回文件路径。
+
+    产物是派生文件，放 clips/{房间}/douyin/ 下、不注册为 RecordFile
+    （避免污染文件管理与被二次切片）。已存在且不旧于源文件时直接复用——
+    同一切片投多个抖音模板（多账号）只转码一次。
+    """
+    src = (record or {}).get('video')
+    if not src or not os.path.isfile(src):
+        raise ValueError(f'clip video file not found: {src}')
+
+    base = os.path.splitext(os.path.basename(src))[0]
+    suffix = '__v.mp4' if vertical else '__h.mp4'
+    out_dir = os.path.join(
+        get_video_dir(), 'clips',
+        _sanitize_dir_name(room_name or f"room_{record.get('live_room_id')}"),
+        'douyin',
+    )
+    dst = os.path.join(out_dir, f'{base}{suffix}')
+
+    if os.path.isfile(dst) and os.path.getsize(dst) > 0 \
+            and os.path.getmtime(dst) >= os.path.getmtime(src):
+        logger.info('复用已转码的抖音版切片: %s', dst)
+        return dst
+
+    lines = None
+    if vertical:
+        upload_info = record.get('upload_info') or {}
+        raw_lines = upload_info.get('three_split_lines')
+        if isinstance(raw_lines, (list, tuple)) and len(raw_lines) == 2:
+            try:
+                lines = (float(raw_lines[0]), float(raw_lines[1]))
+            except (TypeError, ValueError):
+                lines = None
+    transcode_clip_for_douyin(src, dst, lines=lines, vertical=vertical)
+    return dst
+
+
 def _build_clip_output_path(src: str, room_name: Optional[str], live_room_id, start: float, end: float, accurate: bool) -> str:
     clips_dir = os.path.join(get_video_dir(), 'clips', _sanitize_dir_name(room_name or f'room_{live_room_id}'))
     base = os.path.splitext(os.path.basename(src))[0]
@@ -465,8 +572,9 @@ def _temp_work_path(clips_dir: str, prefix: str, suffix: str) -> str:
     return os.path.join(clips_dir, f'{prefix}{uuid.uuid4().hex}{suffix}')
 
 
-def _make_raw_pending(record_data: Dict[str, Any], room_name, start: float, end: float, params) -> Dict[str, Any]:
-    """由贴文件尾的区间构造挂起态（尚未切割）。"""
+def _make_raw_pending(record_data: Dict[str, Any], room_name, start: float, end: float, params,
+                      lines: Optional[Tuple[float, float]] = None) -> Dict[str, Any]:
+    """由贴文件尾的区间构造挂起态（尚未切割）。lines 为该区间聚合的三分屏线位。"""
     accurate = params['dance_clip_accurate_cut']
     begin_time = record_data['begin_time']
     return {
@@ -486,6 +594,7 @@ def _make_raw_pending(record_data: Dict[str, Any], room_name, start: float, end:
         'room_name': room_name,
         'accurate': accurate,
         'suffix': '.mp4' if accurate else (os.path.splitext(record_data['video'])[1] or '.mp4'),
+        'lines': lines,
     }
 
 
@@ -502,14 +611,18 @@ def _build_merged_clip_path(pending: Dict[str, Any]) -> str:
 
 def _register_pending_clip(pending: Dict[str, Any], dst: str, end_time) -> Dict[str, Any]:
     from luboman.database.db import DB
-    clip_record, _ = DB.upsert_clip_record_file({
+    payload: Dict[str, Any] = {
         'live_room_id': pending['live_room_id'],
         'begin_time': pending['begin_time'],
         'end_time': end_time,
         'video': dst,
         'duration_seconds': int(pending['total_duration']),
         'series_code': f"{CLIP_SERIES_CODE_PREFIX}{pending['origin_record_id']}",
-    })
+    }
+    lines = pending.get('lines')
+    if lines:
+        payload['upload_info'] = {'three_split_lines': [lines[0], lines[1]]}
+    clip_record, _ = DB.upsert_clip_record_file(payload)
     return clip_record
 
 
@@ -637,7 +750,11 @@ def run_clip_task(task_id: str) -> None:
             if not src or not os.path.isfile(src):
                 raise ValueError(f'video file not found: {src}')
 
-            intervals, duration = detect_three_split_intervals(src, params)
+            intervals, duration, interval_lines = detect_three_split_intervals(src, params)
+            # 区间 -> 聚合线位（供抖音竖屏精剪裁中栏），以区间元组为键
+            lines_by_interval = {
+                (s, e): lines for (s, e), lines in zip(intervals, interval_lines)
+            }
             file_entry: Dict[str, Any] = {
                 'record_file_id': record_id,
                 'video': src,
@@ -661,6 +778,9 @@ def run_clip_task(task_id: str) -> None:
                     )
                     if gap_ok:
                         continues = tail is not None and tail is head
+                        # 挂起态缺线位时补用当前头区间的（同源同布局，头段线位不变）
+                        if pending.get('lines') is None and head is not None:
+                            pending['lines'] = lines_by_interval.get(tuple(head))
                         finalized, new_pending = _absorb_head(pending, record_data, head, continues)
                         if finalized is not None:
                             clip_record_file_ids.append(finalized['id'])
@@ -675,20 +795,27 @@ def run_clip_task(task_id: str) -> None:
             for start, end in process_intervals:
                 if is_auto and tail is not None and (start, end) == tuple(tail):
                     # 贴文件尾的区间挂起，等下一分段完成后再决定是否拼接
-                    new_pending = _make_raw_pending(record_data, room_name, start, end, params)
+                    new_pending = _make_raw_pending(
+                        record_data, room_name, start, end, params,
+                        lines=lines_by_interval.get((start, end)),
+                    )
                     continue
                 dst = _build_clip_output_path(src, room_name, record_data['live_room_id'], start, end, accurate)
                 cut_clip(src, dst, start, end, accurate)
                 begin_time = record_data['begin_time'] + timedelta(seconds=start) if record_data['begin_time'] else None
                 end_time = record_data['begin_time'] + timedelta(seconds=end) if record_data['begin_time'] else None
-                clip_record, _ = DB.upsert_clip_record_file({
+                clip_payload: Dict[str, Any] = {
                     'live_room_id': record_data['live_room_id'],
                     'begin_time': begin_time,
                     'end_time': end_time,
                     'video': dst,
                     'duration_seconds': int(end - start),
                     'series_code': f'{CLIP_SERIES_CODE_PREFIX}{record_id}',
-                })
+                }
+                interval_line = lines_by_interval.get((start, end))
+                if interval_line:
+                    clip_payload['upload_info'] = {'three_split_lines': [interval_line[0], interval_line[1]]}
+                clip_record, _ = DB.upsert_clip_record_file(clip_payload)
                 clip_record_file_ids.append(clip_record['id'])
 
             if is_auto and new_pending is not None:
@@ -727,9 +854,9 @@ def run_clip_task(task_id: str) -> None:
 
 
 async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
-    """把切片逐个投稿到B站（复用房间投稿模板，多模板即多账号）。房间未开开关或未配模板时只入库不投稿。"""
-    from luboman.database.db import DB, resolve_room_bili_template_ids
-    from luboman.core.async_upload import UploadPriority, schedule_bili_submission
+    """把切片逐个投稿到B站/抖音（复用房间投稿模板，多模板即多账号）。房间未开开关或未配模板时只入库不投稿。"""
+    from luboman.database.db import DB, resolve_room_bili_template_ids, resolve_room_douyin_template_ids
+    from luboman.core.async_upload import UploadPriority, schedule_bili_submission, schedule_douyin_submission
 
     if not clip_ids or not live_room_id:
         return
@@ -741,16 +868,26 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
     if int(room_data.get('auto_dance_clip') or 0) != 1:
         logger.info('房间 %s 已关闭自动舞蹈切片，产出切片不再投稿', live_room_id)
         return
-    template_ids = resolve_room_bili_template_ids(room_data)
-    if not template_ids:
-        logger.info('房间 %s 未配置B站投稿模板，舞蹈切片仅入库不投稿', live_room_id)
+
+    bili_template_ids = resolve_room_bili_template_ids(room_data)
+    douyin_template_ids = resolve_room_douyin_template_ids(room_data)
+    if not bili_template_ids and not douyin_template_ids:
+        logger.info('房间 %s 未配置投稿模板，舞蹈切片仅入库不投稿', live_room_id)
         return
-    templates = await run_blocking(DB.get_bili_templates_with_accounts, template_ids)
-    if not templates:
+    bili_templates = (
+        await run_blocking(DB.get_bili_templates_with_accounts, bili_template_ids)
+        if bili_template_ids else []
+    )
+    douyin_templates = (
+        await run_blocking(DB.get_douyin_templates_with_accounts, douyin_template_ids)
+        if douyin_template_ids else []
+    )
+    if not bili_templates and not douyin_templates:
         logger.warning('房间 %s 配置的投稿模板均不可用，舞蹈切片仅入库不投稿', live_room_id)
         return
 
-    title_template = config.get('dance_clip_title_template')
+    bili_title_template = config.get('dance_clip_title_template')
+    douyin_title_template = config.get('dance_clip_douyin_title_template')
     for seq, record_id in enumerate(clip_ids, start=1):
         try:
             record = await run_blocking(DB.get_record_file, record_id)
@@ -760,11 +897,11 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
         video = record.get('video')
         if not video or not os.path.isfile(video):
             continue
-        for template_info in templates:
+        for template_info in bili_templates:
             clip_room_data = {
                 **room_data,
                 # 每个切片单独投稿，标题按全局模板渲染（含序号避免多稿同名）
-                'room_title': format_clip_title(title_template, room_data, seq, record.get('begin_time')),
+                'room_title': format_clip_title(bili_title_template, room_data, seq, record.get('begin_time')),
                 'bili_upload_template': template_info,
                 'bili_upload_template_id': template_info['id'],
             }
@@ -779,6 +916,38 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
                 logger.info('舞蹈切片投稿任务已创建: 模板=%s, %s', template_info.get('template_name'), result)
             except Exception:
                 logger.exception('舞蹈切片 %s 投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
+
+        for template_info in douyin_templates:
+            vertical = _to_bool(template_info.get('vertical_crop'), default=True)
+            try:
+                # 按模板配置转码：竖屏裁中栏 9:16 / 横版仅转 mp4（flv 抖音不接受）
+                douyin_video = await run_blocking(
+                    ensure_douyin_clip, record, room_data.get('room_name'), vertical,
+                )
+            except Exception:
+                logger.exception('舞蹈切片 %s 抖音版转码失败，跳过该模板: 模板=%s', record_id, template_info.get('template_name'))
+                continue
+            clip_room_data = {
+                **room_data,
+                'room_title': format_clip_title(douyin_title_template, room_data, seq, record.get('begin_time')),
+                'douyin_upload_template': template_info,
+                'douyin_upload_template_id': template_info['id'],
+            }
+            try:
+                result = await schedule_douyin_submission(
+                    file_list=[{'id': record_id, 'video': douyin_video}],
+                    room_data=clip_room_data,
+                    source='AUTO',
+                    priority=UploadPriority.HIGH,
+                    metadata={
+                        'created_from': 'auto_dance_clip',
+                        'douyin_upload_template_id': template_info['id'],
+                        'origin_video': video,
+                    },
+                )
+                logger.info('舞蹈切片抖音投稿任务已创建: 模板=%s, %s', template_info.get('template_name'), result)
+            except Exception:
+                logger.exception('舞蹈切片 %s 抖音投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
 
 
 async def _auto_submit_task_clips(task_id: str) -> None:

@@ -326,6 +326,47 @@ async def _is_logged_in(context, page) -> bool:
     return False
 
 
+async def _current_qr_src(page) -> Optional[str]:
+    """读取页面「当前」二维码，用于检测抖音静默刷新。
+
+    抖音登录页每隔约 60s 直接换掉二维码 img 的 src（不显示「二维码失效」
+    文字）。若只在前端展示初始抓到的旧码，用户扫的会是已失效的 token，
+    扫码后页面毫无反应。等待循环里周期性调用本函数，发现 src 变化即把
+    新码推给前端。
+
+    优先取 img 的 data: src（便宜）；canvas/blob 场景回退到元素截图。
+    """
+    for frame in page.frames:
+        for selector in (
+            'img[aria-label="二维码"]',
+            'img[class*="qrcode"]',
+            'canvas[class*="qrcode"]',
+        ):
+            try:
+                el = frame.locator(selector).first
+                if not await el.count():
+                    continue
+                box = await el.bounding_box()
+                if not box or not (_QR_MIN_SIDE <= box['width'] <= _QR_MAX_SIDE
+                                   and _QR_MIN_SIDE <= box['height'] <= _QR_MAX_SIDE):
+                    continue
+                src = await el.get_attribute('src')
+                if src and src.startswith('data:image') and len(src) >= _QR_MIN_DATA_URL_LEN:
+                    try:
+                        raw = base64.b64decode(src.partition(',')[2])
+                    except Exception:
+                        raw = b''
+                    if raw and _looks_like_qrcode(raw):
+                        return src
+                # canvas / blob / 过短 data url：截图
+                png = await el.screenshot(type='png')
+                if len(png) >= _QR_MIN_SCREENSHOT_BYTES and _looks_like_qrcode(png):
+                    return 'data:image/png;base64,' + base64.b64encode(png).decode('ascii')
+            except Exception:
+                continue
+    return None
+
+
 async def douyin_cookie_gen(
     cookie_path: str,
     qrcode_callback: Optional[Callable[[str], None]] = None,
@@ -384,6 +425,7 @@ async def douyin_cookie_gen(
             last_qrcode = qrcode_src
             last_url = page.url
             last_probe = 0.0
+            last_qr_sync = 0.0
             while time.time() < deadline:
                 if page.url != last_url:
                     # 扫码后页面跳转是最直观的信号，记录便于排查登录检测问题
@@ -397,7 +439,22 @@ async def douyin_cookie_gen(
                     logger.info('抖音扫码登录成功, cookie -> %s', cookie_path)
                     return result
 
-                # 二维码过期：页面出现「二维码失效」时点击刷新并重新提取
+                # 关键：抖音每隔约 60s 静默刷新二维码 token（不显示「二维码失效」）。
+                # 必须周期性比对页面当前码，变了就推给前端，否则用户扫的永远是
+                # 初始那条已失效的旧码，扫码后页面零反应。
+                if time.time() - last_qr_sync >= 5:
+                    last_qr_sync = time.time()
+                    try:
+                        current_qr = await _current_qr_src(page)
+                        if current_qr and current_qr != last_qrcode:
+                            logger.info('检测到抖音页面二维码已刷新，同步新码到前端')
+                            last_qrcode = current_qr
+                            if qrcode_callback:
+                                qrcode_callback(current_qr)
+                    except Exception:
+                        pass
+
+                # 二维码过期：页面出现「二维码失效」时点击刷新并重新提取（兜底）
                 try:
                     expired = page.get_by_text('二维码失效', exact=True).first
                     if await expired.count() and await expired.is_visible():

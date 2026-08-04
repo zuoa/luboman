@@ -21,8 +21,11 @@ class AfreecaTV(LiveBase):
     CHANNEL_API_URL = "https://live.sooplive.com/afreeca/player_live_api.php"
     QUALITY = "original"
     # broad_stream_assign 的 return_type 不能直接透传 CDN 字段：
-    # gs_cdn 必须映射为 gs_cdn_pc_web，否则接口返回空响应（对齐 streamlink soop 插件）
-    CDN_TYPE_MAPPING = {"gs_cdn": "gs_cdn_pc_web"}
+    # gs_cdn/lg_cdn 必须映射为 *_pc_web，否则接口返回 404 空响应（对齐 streamlink soop 插件）
+    CDN_TYPE_MAPPING = {
+        "gs_cdn": "gs_cdn_pc_web",
+        "lg_cdn": "lg_cdn_pc_web",
+    }
     # 对齐 biliup：固定现代 UA + referer，播放器接口与 CDN 都会校验
     USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -100,7 +103,8 @@ class AfreecaTV(LiveBase):
             self.raw_stream_url = view_url + "?aid=" + aid
         except Exception as e:
             body = resp.text[:200] if resp is not None else ''
-            logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 获取流地址失败: {e}, 响应: {body}")
+            req_url = resp.url if resp is not None else ''
+            logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 获取流地址失败: {e}, 请求: {req_url}, 响应: {body}")
             return False
 
         return True

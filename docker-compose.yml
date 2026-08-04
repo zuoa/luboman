@@ -1,68 +1,72 @@
 version: "3"
+
+# 可配置项（镜像 tag、数据库账号密码、端口、时区）经 ${VAR:-默认值} 从 .env 读取，
+# 见 .env.example（cp .env.example .env 后按需修改）；无 .env 时用默认值也可直接启动。
+
+# 服务公共配置：重启策略 + 接入网络（各服务用 << 合并键引入）
+x-common-service: &common-service
+  restart: "always"
+  networks:
+    - bridge_net
+
 # 服务配置
 services:
   postgres:
+    <<: *common-service
     image: postgres:13.16
     command: postgres -c 'max_connections=300'
     container_name: luboman-postgres
-    restart: always
     environment:
-      - "TZ=Asia/Shanghai"
-      - "POSTGRES_USER=luboman"
-      - "POSTGRES_PASSWORD=luboman@2024#Hangzhou"
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_USER: ${POSTGRES_USER:-luboman}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-luboman@2024#Hangzhou}"
     ports:
-      - 54321:5432
+      - "${POSTGRES_PORT:-54321}:5432"
     volumes:
       - ./data/pgsql/data:/var/lib/postgresql/data
-    networks:
-      - bridge_net
 
   app:
-    image: ghcr.io/zuoa/luboman:main
-    # 完整版（main）含 Chrome，抖音投稿可用；不需要抖音投稿可换精简版 ghcr.io/zuoa/luboman:main-slim（小约 400MB）
-    # image: 生产拉取已发布镜像；build: 供本地 `docker compose build` 从源码构建
-    # 本地构建精简版：`docker compose build --build-arg WITH_DOUYIN=false`（或在 build 块加 args）
+    <<: *common-service
+    image: ghcr.io/zuoa/luboman:${LUBOMAN_APP_TAG:-main}
+    # image 拉取已发布镜像（tag 由 .env 的 LUBOMAN_APP_TAG 控制：main=完整版含 Chrome，
+    # 抖音投稿可用；main-slim=精简版，小约 400MB）；
+    # build 供本地 `docker compose build` 从源码构建，精简版加 --build-arg WITH_DOUYIN=false
     build:
       context: .
       dockerfile: Dockerfile
     container_name: luboman
-    restart: "always"
     environment:
-      - "TZ=Asia/Shanghai"
-      - "DATABASE_HOST=postgres"
-      - "DATABASE_PORT=5432"
-      - "DATABASE_USER=luboman"
-      - "DATABASE_PASSWORD=luboman@2024#Hangzhou"
-      - "DATABASE_NAME=luboman"
+      TZ: ${TZ:-Asia/Shanghai}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_USER: ${POSTGRES_USER:-luboman}
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:-luboman@2024#Hangzhou}"
+      DATABASE_NAME: ${POSTGRES_DB:-luboman}
     depends_on:
       - postgres
     ports:
-      - "5005:5005"
+      - "${APP_PORT:-5005}:5005"
     volumes:
       - ./data/app:/data
       - ~/.bypy:/root/.bypy
-    networks:
-      - bridge_net
 
   webui:
-    image: ghcr.io/zuoa/luboman-webui:main
+    <<: *common-service
+    image: ghcr.io/zuoa/luboman-webui:${LUBOMAN_WEBUI_TAG:-main}
     # image: 生产拉取已发布镜像；build: 供本地 `docker compose build` 从 webui/ 源码构建
     build:
       context: ./webui
     container_name: luboman-webui
-    restart: "always"
     environment:
-      - "TZ=Asia/Shanghai"
+      TZ: ${TZ:-Asia/Shanghai}
     depends_on:
       - app
     links:
       - "app:luboman-service"
     ports:
-      - "5001:5001"
+      - "${WEBUI_PORT:-5001}:5001"
     volumes:
       - ./data/app/video:/data/video:ro
-    networks:
-      - bridge_net
 
 # 网络配置
 networks:

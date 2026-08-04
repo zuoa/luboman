@@ -18,6 +18,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -45,6 +46,7 @@ DEFAULT_DETECT_PARAMS: Dict[str, Any] = {
     'dance_clip_concurrency': 1,              # 切片任务并发数（OpenCV 吃 CPU，默认 1）
     'dance_clip_boundary_gap_seconds': 10,    # 相邻分段允许的最大时间间隔，用于跨分段舞蹈拼接
     'dance_clip_panel_similarity': 0.6,       # 三栏内容两两相似度阈值（全部达标才算三分屏，0 关闭校验）
+    'dance_clip_task_timeout_hours': 2.0,     # 任务无进度更新的最长小时数，超时由看门狗标记失败（可手动重试）
 }
 
 _INT_KEYS = {
@@ -56,11 +58,35 @@ _FLOAT_KEYS = {
     'dance_clip_min_segment_ratio', 'dance_clip_max_pair_ratio',
     'dance_clip_merge_gap_seconds', 'dance_clip_min_clip_seconds',
     'dance_clip_pad_seconds', 'dance_clip_boundary_gap_seconds',
-    'dance_clip_panel_similarity',
+    'dance_clip_panel_similarity', 'dance_clip_task_timeout_hours',
 }
 _BOOL_KEYS = {'dance_clip_accurate_cut'}
 
 CLIP_SERIES_CODE_PREFIX = 'CLIP:'
+
+
+class ClipTaskAborted(Exception):
+    """切片任务被外部请求中止（看门狗超时 / 服务停止）。"""
+
+
+# 任务中止标志：看门狗对超时任务 set，任务体在探测循环里定期检查。
+_CLIP_TASK_ABORT_FLAGS: Dict[str, threading.Event] = {}
+_CLIP_TASK_ABORT_LOCK = threading.Lock()
+
+
+def _clip_task_abort_event(task_id: str) -> threading.Event:
+    with _CLIP_TASK_ABORT_LOCK:
+        return _CLIP_TASK_ABORT_FLAGS.setdefault(task_id, threading.Event())
+
+
+def request_clip_task_abort(task_id: str) -> None:
+    """请求中止任务（协作式：探测循环检查到标志后抛 ClipTaskAborted）。"""
+    _clip_task_abort_event(task_id).set()
+
+
+def clear_clip_task_abort(task_id: str) -> None:
+    with _CLIP_TASK_ABORT_LOCK:
+        _CLIP_TASK_ABORT_FLAGS.pop(task_id, None)
 
 # 舞蹈切片投稿标题模板：支持 {room_name} {room_title} {seq} 占位符和
 # strftime 时间格式（取切片开始时间）。全局配置项 dance_clip_title_template。
@@ -342,6 +368,7 @@ def _aggregate_interval_lines(
 def detect_three_split_intervals(
     video_path: str,
     params: Dict[str, Any],
+    abort_event: Optional[threading.Event] = None,
 ) -> Tuple[List[Tuple[float, float]], float, List[Optional[Tuple[float, float]]]]:
     """探测视频中三分屏布局的持续区间。
 
@@ -350,6 +377,7 @@ def detect_three_split_intervals(
 
     顺序扫描 + grab 跳帧（只对采样帧解码），不依赖 seek——部分容器
     （尤其直播录像 flv）的 seek 不可靠，会导致采样帧全部读取失败。
+    abort_event 置位时抛 ClipTaskAborted（长录像扫描可能耗时很久，供看门狗中止）。
     """
     import cv2
 
@@ -368,9 +396,17 @@ def detect_three_split_intervals(
         # 采样帧步长：fps 未知时退化为每 25 帧采一帧（约 1s @25fps）
         step = max(1, int(round(fps * interval))) if fps > 0 else 25
 
+        logger.info(
+            '三分屏探测开始 %s: %.1f 分钟, 共约 %d 帧, 每 %d 帧采样',
+            os.path.basename(video_path), duration / 60, int(frame_count), step,
+        )
+
         hits: List[Tuple[float, Optional[Tuple[float, float]]]] = []
         index = 0
+        last_progress_log = time.monotonic()
         while True:
+            if abort_event is not None and index % 2000 == 0 and abort_event.is_set():
+                raise ClipTaskAborted(f'任务已中止（已扫描 {index} 帧）')
             ok = cap.grab()
             if not ok:
                 break
@@ -380,6 +416,15 @@ def detect_three_split_intervals(
                 lines = _analyze_frame(frame, params) if ok and frame is not None else None
                 hits.append((t, lines))
             index += 1
+            # 定期打印扫描进度——长录像全文件扫描可能耗时较久，便于排查卡住的任务
+            now = time.monotonic()
+            if now - last_progress_log >= 60:
+                pct = (index / frame_count * 100) if frame_count > 0 else 0
+                logger.info(
+                    '三分屏探测中 %s: 已扫描 %d/%d 帧 (%.1f%%)',
+                    os.path.basename(video_path), index, int(frame_count), pct,
+                )
+                last_progress_log = now
 
         if fps <= 0:
             duration = hits[-1][0] if hits else 0
@@ -730,8 +775,11 @@ def run_clip_task(task_id: str) -> None:
     all_intervals: List[Dict[str, Any]] = []
     clip_record_file_ids: List[int] = []
     errors: List[str] = []
+    abort_event = _clip_task_abort_event(task_id)
 
     for index, record_id in enumerate(source_ids):
+        if abort_event.is_set():
+            break
         try:
             with db.connection_context():
                 record = RecordFile.get_by_id(record_id)
@@ -750,7 +798,7 @@ def run_clip_task(task_id: str) -> None:
             if not src or not os.path.isfile(src):
                 raise ValueError(f'video file not found: {src}')
 
-            intervals, duration, interval_lines = detect_three_split_intervals(src, params)
+            intervals, duration, interval_lines = detect_three_split_intervals(src, params, abort_event)
             # 区间 -> 聚合线位（供抖音竖屏精剪裁中栏），以区间元组为键
             lines_by_interval = {
                 (s, e): lines for (s, e), lines in zip(intervals, interval_lines)
@@ -822,6 +870,10 @@ def run_clip_task(task_id: str) -> None:
                 _hold_pending_tail(record_data['live_room_id'], new_pending)
 
             all_intervals.append(file_entry)
+        except ClipTaskAborted as e:
+            # 看门狗已把任务标记为失败，这里不再回写状态，直接退出任务体
+            logger.warning('切片任务 %s 处理文件 %s 被中止: %s', task_id, record_id, e)
+            return
         except Exception as e:
             logger.warning('切片任务 %s 处理文件 %s 失败: %s', task_id, record_id, e, exc_info=True)
             errors.append(f'record {record_id}: {e}')
@@ -842,6 +894,7 @@ def run_clip_task(task_id: str) -> None:
             clip_record_file_ids=clip_record_file_ids,
             intervals=all_intervals,
             error_message='; '.join(errors)[:2000],
+            only_if_active=True,
         )
         return
 
@@ -850,6 +903,7 @@ def run_clip_task(task_id: str) -> None:
         clip_record_file_ids=clip_record_file_ids,
         intervals=all_intervals,
         error_message='; '.join(errors)[:2000] if errors else None,
+        only_if_active=True,
     )
 
 
@@ -971,6 +1025,7 @@ class AsyncClipScheduler:
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=500)
         self.running = False
         self.workers: List[asyncio.Task] = []
+        self.watchdog: Optional[asyncio.Task] = None
         self.executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
 
     async def start(self):
@@ -988,28 +1043,61 @@ class AsyncClipScheduler:
             _safe_remove(stale)
         for i in range(concurrency):
             self.workers.append(asyncio.create_task(self._worker(), name=f'clip-worker-{i}'))
+        self.watchdog = asyncio.create_task(self._watchdog(), name='clip-watchdog')
         logger.info('切片任务调度器启动，并发: %d', concurrency)
 
     async def stop(self):
         if not self.running and not self.workers:
             return
         self.running = False
-        for worker in self.workers:
-            if not worker.done():
-                worker.cancel()
-        if self.workers:
+        tasks = list(self.workers)
+        if self.watchdog:
+            tasks.append(self.watchdog)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*self.workers, return_exceptions=True),
+                    asyncio.gather(*tasks, return_exceptions=True),
                     timeout=10.0,
                 )
             except asyncio.TimeoutError:
                 logger.warning('切片任务工作器停止超时')
         self.workers.clear()
+        self.watchdog = None
         if self.executor:
             self.executor.shutdown(wait=False)
             self.executor = None
         logger.info('切片任务调度器已关闭')
+
+    async def _watchdog(self):
+        """看门狗：RUNNING 任务长时间无进度更新（卡在 OpenCV 扫描/ffmpeg）时，
+        请求中止并标记失败，避免任务永远挂死。阈值取 dance_clip_task_timeout_hours。"""
+        from luboman.database.db import DB
+
+        while self.running:
+            try:
+                await asyncio.sleep(60)
+                timeout_hours = load_detect_params()['dance_clip_task_timeout_hours']
+                if timeout_hours <= 0:
+                    continue
+                stale_ids = await run_blocking(DB.list_stale_running_clip_tasks, timeout_hours)
+                for task_id in stale_ids:
+                    logger.warning(
+                        '切片任务 %s 超过 %.1f 小时无进度更新，标记失败并请求中止',
+                        task_id, timeout_hours,
+                    )
+                    request_clip_task_abort(task_id)
+                    await run_blocking(
+                        DB.finish_clip_task, task_id, False,
+                        error_message=f'任务超时：超过 {timeout_hours:g} 小时无进度更新，已自动终止，可点击重试',
+                        only_if_active=True,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.error('切片任务看门狗异常', exc_info=True)
 
     async def _worker(self):
         while self.running:
@@ -1019,6 +1107,7 @@ class AsyncClipScheduler:
                 except asyncio.TimeoutError:
                     continue
                 try:
+                    clear_clip_task_abort(task_id)
                     await run_blocking(run_clip_task, task_id, executor=self.executor)
                 except Exception as e:
                     logger.error('切片任务 %s 执行异常: %s', task_id, e, exc_info=True)
@@ -1026,6 +1115,7 @@ class AsyncClipScheduler:
                         from luboman.database.db import DB
                         await run_blocking(
                             DB.finish_clip_task, task_id, False, None, None, str(e),
+                            only_if_active=True,
                         )
                     except Exception:
                         logger.warning('切片任务失败态回写失败: %s', task_id, exc_info=True)
@@ -1068,6 +1158,24 @@ class AsyncClipScheduler:
             raise RuntimeError(message)
 
         return {'task_id': task_id, 'file_count': len(file_ids)}
+
+    async def retry(self, task_id: str) -> Dict[str, Any]:
+        """把失败的任务重置为 PENDING 并重新排队（沿用原任务 ID 与参数快照）。"""
+        if not self.running:
+            raise RuntimeError('clip scheduler is not running')
+
+        from luboman.database.db import DB
+
+        task = await run_blocking(DB.reset_clip_task_for_retry, task_id)
+        clear_clip_task_abort(task_id)
+        try:
+            self.queue.put_nowait(task_id)
+        except asyncio.QueueFull:
+            message = 'clip task queue is full'
+            await run_blocking(DB.finish_clip_task, task_id, False, None, None, message)
+            raise RuntimeError(message)
+        logger.info('切片任务 %s 已重新排队（来源文件 %d 个）', task_id, task.get('record_file_count') or 0)
+        return {'task_id': task_id, 'file_count': task.get('record_file_count') or 0}
 
     async def flush_pending_tail(self, live_room_id) -> None:
         """直播结束：把挂起的跨分段边界片段物化为普通切片，并按 AUTO 规则投稿。"""

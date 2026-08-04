@@ -6,6 +6,7 @@ import {
   Descriptions,
   Drawer,
   Empty,
+  Popconfirm,
   Progress,
   Space,
   Statistic,
@@ -13,6 +14,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  message,
 } from 'antd';
 import React, {
   useCallback,
@@ -23,7 +25,8 @@ import React, {
 } from 'react';
 import styles from './index.less';
 
-const { listClipTask, getClipTask, getClipTaskStats } = services.ClipTask;
+const { listClipTask, getClipTask, getClipTaskStats, retryClipTask } =
+  services.ClipTask;
 
 const STATUS_VALUE_ENUM = {
   PENDING: { text: '排队中' },
@@ -109,6 +112,16 @@ const ClipTaskList: React.FC = () => {
   const reload = () => {
     fetchStats();
     actionRef.current?.reload();
+  };
+
+  const retryTask = async (row: API.ClipTaskInfo) => {
+    try {
+      await retryClipTask({ task_id: row.task_id });
+      message.success('已重新排队执行');
+      reload();
+    } catch {
+      // 失败提示由统一 errorHandler 弹出
+    }
   };
 
   const openDetail = async (row: API.ClipTaskInfo) => {
@@ -245,8 +258,22 @@ const ClipTaskList: React.FC = () => {
     {
       title: '操作',
       valueType: 'option',
-      width: 80,
-      render: (_, row) => <a onClick={() => openDetail(row)}>详情</a>,
+      width: 120,
+      render: (_, row) => (
+        <Space size={8}>
+          <a onClick={() => openDetail(row)}>详情</a>
+          {row.status === 'FAILED' && (
+            <Popconfirm
+              title="重新排队执行该任务？"
+              okText="重试"
+              cancelText="取消"
+              onConfirm={() => retryTask(row)}
+            >
+              <a>重试</a>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
     },
   ];
 

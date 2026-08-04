@@ -1468,6 +1468,22 @@ async def get_clip_task_stats(request):
         return error(1, str(e))
 
 
+@routes.post('/v1/ClipTask/retry')
+async def retry_clip_task(request):
+    try:
+        data = await request.json()
+        task_id = (data.get('task_id') or '').strip()
+        if not task_id:
+            return error(1, 'task_id is required')
+        result = await clip_scheduler.retry(task_id)
+        return success(result)
+    except ValueError as e:
+        return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
 @routes.post('/v1/Auth/login')
 async def auth_login(request):
     if not auth.AUTH_ENABLED:

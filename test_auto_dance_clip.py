@@ -72,7 +72,7 @@ def run():
     cuts = []        # (src, dst, start, end, accurate)
     concats = []     # (pieces, dst)
 
-    def fake_detect(src, params):
+    def fake_detect(src, params, abort_event=None):
         # seg1: 舞蹈从 300s 持续到文件尾（600s）；seg2: 开头到 200s 仍是舞蹈
         # 返回值含各区间聚合的三分屏线位（供抖音竖屏精剪）
         if src.endswith('seg1.flv'):

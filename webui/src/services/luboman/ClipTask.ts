@@ -54,3 +54,15 @@ export async function getClipTaskStats(options?: { [key: string]: any }) {
     ...(options || {}),
   });
 }
+
+/** 重试失败的切片任务（沿用原任务 ID 与参数快照重新排队）。 */
+export async function retryClipTask(
+  body: { task_id: string },
+  options?: { [key: string]: any },
+) {
+  return request(REQUEST_HOST + '/v1/ClipTask/retry', {
+    method: 'POST',
+    data: body,
+    ...(options || {}),
+  });
+}

@@ -10,6 +10,7 @@ cookie 文件统一放 ``douyin_cookie_base_dir()``（Docker 内 /data/douyin-co
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -143,30 +144,72 @@ def _browser_launch_kwargs(headless: bool) -> dict:
     }
 
 
+# 二维码候选元素的尺寸约束（像素）：登录二维码一般在 150~300px，
+# 小于 80 的是 loading 图标/装饰图，大于 600 的是背景大图，都不可能是二维码。
+_QR_MIN_SIDE = 80
+_QR_MAX_SIDE = 600
+# data URL 最小长度：真实二维码 PNG 的 base64 通常数 KB，几百字节的是占位图
+_QR_MIN_DATA_URL_LEN = 1000
+
+
+async def _iter_qr_candidates(frame):
+    """按优先级产出 frame 里可能是二维码的元素。"""
+    for selector in (
+        'img[aria-label="二维码"]',
+        'img[class*="qrcode"]',
+        'canvas[class*="qrcode"]',
+        'img[src^="data:image"]',
+        'canvas',
+    ):
+        try:
+            elements = await frame.locator(selector).all()
+        except Exception:
+            continue
+        for element in elements:
+            yield element
+
+
 async def _extract_qrcode_data_url(page, timeout: float = 30.0) -> Optional[str]:
-    """从登录页提取二维码图片（data URL）。前端改版时只需调整这里的 selector。"""
+    """从登录页提取二维码图片（data URL）。前端改版时只需调整 _iter_qr_candidates 的 selector。
+
+    抖音登录页结构多次变更：二维码可能是 img（data:/blob: src）、canvas，
+    也可能渲染在 iframe 里。因此遍历所有 frame，按「尺寸像二维码的可见元素」
+    筛选候选；优先取 img 的 data: src（需足够长，排除占位小图），
+    取不到就对元素截图转 PNG data URL（覆盖 canvas / blob: 场景）。
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        # 优先走「扫码登录」标签页（部分版本默认是手机号登录）
-        try:
-            scan_tab = page.get_by_text('扫码登录', exact=True).first
-            if await scan_tab.count():
-                await scan_tab.click(timeout=2000)
-        except Exception:
-            pass
-        for selector in (
-            'img[aria-label="二维码"]',
-            'img[class*="qrcode"]',
-            'img[src^="data:image"]',
-        ):
+        for frame in page.frames:
+            # 优先走「扫码登录」标签页（部分版本默认是手机号登录）
             try:
-                img = page.locator(selector).first
-                if await img.count():
-                    src = await img.get_attribute('src')
-                    if src and src.startswith('data:image'):
-                        return src
+                scan_tab = frame.get_by_text('扫码登录', exact=True).first
+                if await scan_tab.count():
+                    await scan_tab.click(timeout=2000)
             except Exception:
-                continue
+                pass
+            async for element in _iter_qr_candidates(frame):
+                try:
+                    box = await element.bounding_box()
+                    if not box:
+                        continue
+                    width, height = box['width'], box['height']
+                    if not (_QR_MIN_SIDE <= width <= _QR_MAX_SIDE
+                            and _QR_MIN_SIDE <= height <= _QR_MAX_SIDE):
+                        continue
+                    # 二维码近正方形，排除横幅/竖条装饰图
+                    if not (0.6 <= width / height <= 1.6):
+                        continue
+                    src = await element.get_attribute('src')
+                    if src and src.startswith('data:image') and len(src) >= _QR_MIN_DATA_URL_LEN:
+                        logger.info('提取到抖音登录二维码 img data URL（%d 字符）', len(src))
+                        return src
+                    # canvas / blob: src / 过短的 data URL：直接对元素截图
+                    png = await element.screenshot(type='png')
+                    data_url = 'data:image/png;base64,' + base64.b64encode(png).decode('ascii')
+                    logger.info('通过元素截图提取抖音登录二维码（%.0fx%.0f px）', width, height)
+                    return data_url
+                except Exception:
+                    continue
         await asyncio.sleep(1)
     return None
 

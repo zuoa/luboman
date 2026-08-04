@@ -1011,12 +1011,19 @@ class DB:
             return model_to_dict(task)
 
     @classmethod
-    def finish_clip_task(cls, task_id, success, clip_record_file_ids=None, intervals=None, error_message=None):
+    def finish_clip_task(cls, task_id, success, clip_record_file_ids=None, intervals=None,
+                         error_message=None, only_if_active=False):
         with db.connection_context():
             try:
                 task = ClipTask.get(ClipTask.task_id == task_id)
             except ClipTask.DoesNotExist:
                 return None
+
+            # only_if_active：看门狗/重试已把任务收敛到终态后，不允许迟到的回写覆盖
+            if only_if_active and task.status not in (
+                CLIP_TASK_STATUS_PENDING, CLIP_TASK_STATUS_RUNNING,
+            ):
+                return model_to_dict(task)
 
             now = datetime.now()
             task.status = CLIP_TASK_STATUS_SUCCESS if success else CLIP_TASK_STATUS_FAILED
@@ -1030,6 +1037,41 @@ class DB:
                 task.progress = 100
             task.updated_at = now
             task.finished_at = now
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def list_stale_running_clip_tasks(cls, timeout_hours):
+        """RUNNING 且 updated_at 超过 timeout_hours 未刷新的任务（卡死嫌疑），返回 task_id 列表。"""
+        with db.connection_context():
+            deadline = datetime.now() - timedelta(hours=float(timeout_hours))
+            rows = (
+                ClipTask
+                .select(ClipTask.task_id)
+                .where(
+                    (ClipTask.status == CLIP_TASK_STATUS_RUNNING) &
+                    (ClipTask.updated_at.is_null(False)) &
+                    (ClipTask.updated_at < deadline)
+                )
+            )
+            return [row.task_id for row in rows]
+
+    @classmethod
+    def reset_clip_task_for_retry(cls, task_id):
+        """把失败任务重置为 PENDING 供重新排队。非失败态拒绝重置（防止重复执行）。"""
+        with db.connection_context():
+            try:
+                task = ClipTask.get(ClipTask.task_id == task_id)
+            except ClipTask.DoesNotExist:
+                raise ValueError(f'切片任务不存在: {task_id}')
+            if task.status != CLIP_TASK_STATUS_FAILED:
+                raise ValueError(f'仅失败的任务可重试（当前状态: {task.status}）')
+            task.status = CLIP_TASK_STATUS_PENDING
+            task.progress = 0
+            task.error_message = None
+            task.started_at = None
+            task.finished_at = None
+            task.updated_at = datetime.now()
             task.save()
             return model_to_dict(task)
 

@@ -108,6 +108,14 @@ def _preflight_error(video_path: str) -> Optional[str]:
     return None
 
 
+def _browser_missing_hint(exc: Exception) -> str:
+    return (
+        f'启动浏览器失败: {exc}。当前镜像/环境未安装抖音发布所需的浏览器——'
+        'slim 镜像（main-slim tag）不含 Chrome，请改用完整镜像（main tag），'
+        '或执行 patchright install --with-deps chromium 后重试'
+    )
+
+
 @PluginTool.upload(platform='douyin')
 @PluginTool.upload(platform='douyin_web')
 class DouyinUploader(Uploader):
@@ -174,10 +182,14 @@ class DouyinUploader(Uploader):
         interval = _as_int(_config_get('douyin_publish_interval_seconds', 30), 30)
 
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(
-                headless=headless,
-                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
-            )
+            try:
+                browser = await playwright.chromium.launch(
+                    headless=headless,
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
+                )
+            except Exception as exc:
+                logger.error(_browser_missing_hint(exc))
+                return self._failure(_browser_missing_hint(exc))
             context = await browser.new_context(
                 storage_state=cookie_path,
                 viewport={'width': 1600, 'height': 900},

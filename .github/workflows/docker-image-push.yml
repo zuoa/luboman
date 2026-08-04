@@ -11,13 +11,24 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # 后端镜像：构建上下文为仓库根，镜像名沿用 ${github.repository} = zuoa/luboman
+  # 后端镜像：构建上下文为仓库根，镜像名沿用 ${github.repository} = zuoa/luboman。
+  # matrix 出两个变体：
+  #   main       完整版，含 patchright + Chrome（抖音投稿可用）
+  #   main-slim  精简版，不含浏览器（抖音投稿不可用），镜像小约 400MB
   build-app:
     name: Build & push backend image (luboman)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag_suffix: ''
+            with_douyin: 'true'
+          - tag_suffix: '-slim'
+            with_douyin: 'false'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,11 +43,14 @@ jobs:
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=ref,event=branch,suffix=${{ matrix.tag_suffix }}
       - name: Build and push Docker image
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
           context: .
           push: true
+          build-args: WITH_DOUYIN=${{ matrix.with_douyin }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 

@@ -58,6 +58,13 @@ https://member.bilibili.com/x/vupre/web/archive/pre?lang=cn&t=1757769600025
 
 ## 抖音投稿
 
+后端镜像有两个变体：
+
+| tag | 说明 |
+|---|---|
+| `ghcr.io/zuoa/luboman:main` | 完整版，含 patchright + Chrome，抖音投稿可用 |
+| `ghcr.io/zuoa/luboman:main-slim` | 精简版（小约 400MB），不含浏览器，抖音投稿不可用，其余功能一致 |
+
 舞蹈切片除 B 站外可分发到抖音：在「抖音投稿」页扫码登录抖音账号（创作者服务平台 cookie，存于 `/data/douyin-cookies`）、新建投稿模板（账号绑定在模板上），再到直播间绑定模板即可；切片产出后会按模板配置自动裁中栏转 9:16 竖屏（1080x1920）并发布。
 
 注意事项：

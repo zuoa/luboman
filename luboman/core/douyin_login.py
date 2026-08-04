@@ -204,7 +204,16 @@ async def douyin_cookie_gen(
     result = {'success': False, 'message': '抖音扫码登录失败', 'cookie_path': cookie_path}
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(**_browser_launch_kwargs(headless))
+        try:
+            browser = await playwright.chromium.launch(**_browser_launch_kwargs(headless))
+        except Exception as exc:
+            result['message'] = (
+                f'启动浏览器失败: {exc}。当前镜像/环境未安装浏览器——'
+                'slim 镜像（main-slim tag）不含 Chrome，请改用完整镜像（main tag），'
+                '或执行 patchright install --with-deps chromium 后重试'
+            )
+            logger.error(result['message'])
+            return result
         context = await browser.new_context(viewport={'width': 1600, 'height': 900})
         try:
             page = await context.new_page()

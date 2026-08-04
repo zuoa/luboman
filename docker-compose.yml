@@ -19,7 +19,9 @@ services:
 
   app:
     image: ghcr.io/zuoa/luboman:main
+    # 完整版（main）含 Chrome，抖音投稿可用；不需要抖音投稿可换精简版 ghcr.io/zuoa/luboman:main-slim（小约 400MB）
     # image: 生产拉取已发布镜像；build: 供本地 `docker compose build` 从源码构建
+    # 本地构建精简版：`docker compose build --build-arg WITH_DOUYIN=false`（或在 build 块加 args）
     build:
       context: .
       dockerfile: Dockerfile

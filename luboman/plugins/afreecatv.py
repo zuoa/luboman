@@ -20,6 +20,9 @@ class AfreecaTV(LiveBase):
     VALID_URL_BASE = rf"https?://.*?\.{_URL_DOMAIN}/(?P<username>\w+)(?:/\d+)?"
     CHANNEL_API_URL = "https://live.sooplive.com/afreeca/player_live_api.php"
     QUALITY = "original"
+    # broad_stream_assign 的 return_type 不能直接透传 CDN 字段：
+    # gs_cdn 必须映射为 gs_cdn_pc_web，否则接口返回空响应（对齐 streamlink soop 插件）
+    CDN_TYPE_MAPPING = {"gs_cdn": "gs_cdn_pc_web"}
     # 对齐 biliup：固定现代 UA + referer，播放器接口与 CDN 都会校验
     USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -72,23 +75,32 @@ class AfreecaTV(LiveBase):
             return True
 
         try:
-            aid = self._channel_api(username, bno=bno, api_type="aid").get("CHANNEL", {}).get("AID", "")
+            aid_resp = self._channel_api(username, bno=bno, api_type="aid").get("CHANNEL", {})
+            aid = aid_resp.get("AID", "")
             if not aid:
-                logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: AID 为空")
+                logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: AID 为空(RESULT={aid_resp.get('RESULT')})")
                 return False
+        except Exception as e:
+            logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 获取 AID 失败: {e}")
+            return False
 
-            view_info = requests.get(f'{channel["RMD"]}/broad_stream_assign.html', params={
-                "return_type": channel["CDN"],
+        resp = None
+        try:
+            return_type = next((v for k, v in self.CDN_TYPE_MAPPING.items() if k in channel["CDN"]), channel["CDN"])
+            resp = requests.get(f'{channel["RMD"]}/broad_stream_assign.html', params={
+                "return_type": return_type,
                 "broad_key": f'{bno}-common-{self.QUALITY}-hls'
-            }, headers=self.fake_headers, timeout=5).json()
+            }, headers=self.fake_headers, timeout=5)
+            view_info = resp.json()
 
             view_url = view_info.get("view_url", "")
             if not view_url:
-                logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 播放地址为空")
+                logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 播放地址为空: {view_info}")
                 return False
             self.raw_stream_url = view_url + "?aid=" + aid
         except Exception as e:
-            logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 获取流地址失败: {e}")
+            body = resp.text[:200] if resp is not None else ''
+            logger.warning(f"{AfreecaTV.__name__}: {self.room_url}: 获取流地址失败: {e}, 响应: {body}")
             return False
 
         return True

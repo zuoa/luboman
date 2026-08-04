@@ -54,7 +54,7 @@ services:
 
   webui:
     <<: *common-service
-    image: ghcr.io/zuoa/luboman-webui:${LUBOMAN_WEBUI_TAG:-main}
+    image: ghcr.io/zuoa/luboman-web:${LUBOMAN_WEBUI_TAG:-main}
     # image: 生产拉取已发布镜像；build: 供本地 `docker compose build` 从 webui/ 源码构建
     build:
       context: ./webui

@@ -46,7 +46,9 @@ class Huya(LiveBase):
         self.huya_max_ratio = int(config.get('huya_max_ratio', 0) or 0)
         # huyacdn 为旧配置键，将于后续版本移除
         self.huya_cdn = (config.get('huya_cdn', config.get('huyacdn', '')) or '').upper()
-        self.huya_protocol = 'Hls' if config.get('huya_protocol') == 'Hls' else 'Flv'
+        # 默认 HLS：浏览器看直播即走 HLS 分片链路，不受虎牙 CDN 对 FLV 直链
+        # 长连接的限流（一签名一连接 + 新连接频率限制）；显式配置 Flv 可回退
+        self.huya_protocol = 'Flv' if config.get('huya_protocol') == 'Flv' else 'Hls'
         self.huya_imgplus = _cfg_bool('huya_imgplus', True)
         self.huya_cdn_fallback = _cfg_bool('huya_cdn_fallback', False)
         self.huya_mobile_api = _cfg_bool('huya_mobile_api', False)

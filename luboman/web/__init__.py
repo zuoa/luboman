@@ -33,6 +33,7 @@ from luboman.database.db import (
     resolve_room_bili_template_ids,
     resolve_room_douyin_template_ids,
 )
+from luboman.web import auth
 from luboman.database.models import (
     BiliAccount,
     BiliUploadTemplate,
@@ -1406,6 +1407,71 @@ async def get_clip_task_stats(request):
         return error(1, str(e))
 
 
+@routes.post('/v1/Auth/login')
+async def auth_login(request):
+    if not auth.AUTH_ENABLED:
+        return success({'enabled': False})
+
+    ip = auth.client_ip(request)
+    lock_remaining = auth.ip_lock_remaining(ip)
+    if lock_remaining > 0:
+        await auth.constant_delay()
+        return json_response(
+            {'success': False, 'code': 429,
+             'message': f'尝试次数过多，请 {int(lock_remaining // 60) + 1} 分钟后再试'},
+            status=429)
+    if auth.global_limit_hit():
+        await auth.constant_delay()
+        return json_response(
+            {'success': False, 'code': 429, 'message': '尝试次数过多，请稍后再试'},
+            status=429)
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if auth.verify_password(data.get('password')):
+        auth.clear_failures(ip)
+        token = auth.create_session()
+        resp = success()
+        resp.set_cookie(auth.COOKIE_NAME, token, max_age=auth.SESSION_TTL,
+                        httponly=True, samesite='Lax', path='/')
+        return resp
+
+    auth.record_failure(ip)
+    lock_remaining = auth.ip_lock_remaining(ip)
+    await auth.constant_delay()
+    if lock_remaining > 0:
+        return json_response(
+            {'success': False, 'code': 429,
+             'message': f'尝试次数过多，请 {int(lock_remaining // 60) + 1} 分钟后再试'},
+            status=429)
+    return json_response({'success': False, 'code': 401, 'message': '密码错误'},
+                         status=401)
+
+
+@routes.post('/v1/Auth/logout')
+async def auth_logout(request):
+    auth.drop_session(auth.token_from_request(request))
+    resp = success()
+    resp.del_cookie(auth.COOKIE_NAME, path='/')
+    return resp
+
+
+@routes.get('/v1/Auth/status')
+@routes.post('/v1/Auth/status')
+async def auth_status(request):
+    return success({'enabled': auth.AUTH_ENABLED, 'logged_in': auth.is_logged_in(request)})
+
+
+@routes.get('/v1/Auth/check')
+async def auth_check(request):
+    """nginx auth_request 子请求专用：已登录 200，未登录 401，空 body。"""
+    if not auth.AUTH_ENABLED or auth.is_logged_in(request):
+        return web.Response(status=200)
+    return web.Response(status=401)
+
+
 @web.middleware
 async def error_middleware(request, handler):
     try:
@@ -1420,7 +1486,7 @@ async def error_middleware(request, handler):
     return web.json_response({'error': message})
 
 
-app = web.Application(logger=logger, middlewares=[error_middleware])
+app = web.Application(logger=logger, middlewares=[auth.auth_middleware, error_middleware])
 app.add_routes(routes)
 
 

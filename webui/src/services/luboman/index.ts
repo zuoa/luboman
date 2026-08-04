@@ -1,3 +1,4 @@
+import * as Auth from './Auth';
 import * as BiliAccount from './BiliAccount';
 import * as BiliUploadTemplate from './BiliUploadTemplate';
 import * as ClipTask from './ClipTask';
@@ -10,6 +11,7 @@ import * as SubmissionTask from './SubmissionTask';
 import * as System from './System';
 
 export default {
+  Auth,
   LiveRoom,
   BiliAccount,
   BiliUploadTemplate,

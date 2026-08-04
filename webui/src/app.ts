@@ -4,11 +4,28 @@ import { RequestConfig } from '@umijs/max';
 import { ConfigProvider, message as antdMessage, theme as antdTheme } from 'antd';
 import { themeTokens } from '@/theme/tokens';
 import SystemStatus from '@/components/SystemStatus';
+import LogoutButton from '@/components/LogoutButton';
+import { getStatus } from '@/services/luboman/Auth';
 import logoUrl from '@/assets/logo.svg';
 
 // 全局初始化数据配置，用于 Layout 用户信息和权限初始化
-export async function getInitialState(): Promise<{ name: string }> {
-  return { name: '录播Man' };
+// authEnabled/loggedIn 来自后端鉴权状态；查询失败（含未登录 401）静默降级，
+// 后续业务请求若 401 会由统一错误层跳转登录页
+export async function getInitialState(): Promise<{
+  name: string;
+  authEnabled?: boolean;
+  loggedIn?: boolean;
+}> {
+  let authEnabled = false;
+  let loggedIn = false;
+  try {
+    const status = await getStatus({ skipErrorHandler: true });
+    authEnabled = !!status?.enabled;
+    loggedIn = !!status?.logged_in;
+  } catch (error) {
+    // 忽略：未登录/网络异常时不阻塞页面初始化
+  }
+  return { name: '录播Man', authEnabled, loggedIn };
 }
 
 export const layout = () => {
@@ -17,6 +34,8 @@ export const layout = () => {
     menu: {
       locale: false,
     },
+    // 顶栏右侧：退出登录（仅启用访问密码时渲染）
+    actionsRender: () => [createElement(LogoutButton)],
     // 侧边菜单底部系统状态（app.ts 不能用 JSX，见 rootContainer 注释）
     menuFooterRender: (props: any) =>
       createElement(SystemStatus, { collapsed: props?.collapsed }),
@@ -73,6 +92,13 @@ export const request: RequestConfig = {
     errorHandler(error: any, opts: any) {
       // 允许单个请求通过 { skipErrorHandler: true } 关闭统一 toast（自行降级处理）
       if (opts?.skipErrorHandler) {
+        throw error;
+      }
+      // 401（未登录/会话过期）：跳转登录页，不弹 toast
+      if (error?.response?.status === 401) {
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
+        }
         throw error;
       }
       const msg =

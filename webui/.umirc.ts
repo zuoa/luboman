@@ -24,6 +24,12 @@ export default defineConfig({
   },
   routes: [
     {
+      // 登录页：无侧边栏布局，不进菜单
+      path: '/login',
+      component: './Login',
+      layout: false,
+    },
+    {
       path: '/',
       redirect: '/home',
     },

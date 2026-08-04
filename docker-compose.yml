@@ -42,6 +42,8 @@ services:
       DATABASE_USER: ${POSTGRES_USER:-luboman}
       DATABASE_PASSWORD: "${POSTGRES_PASSWORD:-luboman@2024#Hangzhou}"
       DATABASE_NAME: ${POSTGRES_DB:-luboman}
+      # WebUI 访问密码：设置后前端需密码登录（含防暴力破解限流）；留空则无需登录
+      WEBUI_PASSWORD: "${WEBUI_PASSWORD:-}"
     depends_on:
       - postgres
     ports:

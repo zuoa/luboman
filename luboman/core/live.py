@@ -431,14 +431,16 @@ class LiveBase(object):
         ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
         default_input_args = ['-headers', ''.join('%s: %s\r\n' % x for x in self._record_headers().items()),
                               '-rw_timeout', '20000000']
-        # 虎牙 CDN 一个签名仅允许一个连接、且对高频重连的 IP 渐进式 403 封禁（已实测），
-        # -reconnect 会以同一签名重连必 403、加速封禁 → 虎牙禁用；其他平台断线自动重连
-        if self.__class__.__name__.lower() != 'huya':
+        # 虎牙 CDN 的 FLV 直链一个签名仅允许一个连接、且对高频重连的 IP 渐进式 403
+        # 封禁（已实测），-reconnect 会以同一签名重连必 403、加速封禁 → 虎牙 FLV 禁用；
+        # 但 HLS 不受此限——浏览器看直播就是拿同一签名 URL 高频 reload 播放列表，
+        # 是 CDN 预期的访问模式。虎牙 HLS 禁用 reconnect 会导致 CDN 一抖动 ffmpeg
+        # 就退出、外层换新签名重开（约 5 分钟一个分段文件），故 HLS 恢复自动重连。
+        is_hls = '.m3u8' in urlparse(self.raw_stream_url).path
+        if self.__class__.__name__.lower() != 'huya' or is_hls:
             default_input_args += ['-reconnect', '1', '-reconnect_streamed', '1',
                                    '-reconnect_delay_max', '5']
-        parsed_url = urlparse(self.raw_stream_url)
-        path = parsed_url.path
-        if '.m3u8' in path:
+        if is_hls:
             default_input_args += ['-max_reload', '1000']
         command_args = [ffmpeg_path, '-y', '-hide_banner', '-nostats', '-loglevel', 'warning',
                         *default_input_args,

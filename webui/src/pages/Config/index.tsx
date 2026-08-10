@@ -43,6 +43,8 @@ const ConfigPage: React.FC = () => {
     douyin_cookies: '',
     afreecatv_username: '',
     afreecatv_password: '',
+    quark_cookie: '',
+    quark_root_dir: '',
   };
 
   // 后端 GlobalConfig.value 是 TextField，读回来全是字符串；
@@ -373,6 +375,26 @@ const ConfigPage: React.FC = () => {
                       label="SOOP密码"
                       placeholder="SOOP账号密码"
                       extra="SOOP（原AfreecaTV）平台登录密码"
+                    />
+                  </div>
+                ),
+              },
+              {
+                key: 'quark',
+                label: '夸克网盘',
+                children: (
+                  <div className={styles.fieldGroup}>
+                    <ProFormText
+                      name="quark_cookie"
+                      label="夸克网盘Cookie"
+                      placeholder="从浏览器 pan.quark.cn 复制完整 Cookie 字符串"
+                      extra="用于录像上传夸克网盘；Cookie 会自动续期，失效后需重新填写"
+                    />
+                    <ProFormText
+                      name="quark_root_dir"
+                      label="夸克网盘根目录"
+                      placeholder="留空则上传到网盘根目录下"
+                      extra="可选：文件保存到 根目录/video/平台/房间/日期/ 下"
                     />
                   </div>
                 ),

@@ -183,7 +183,7 @@ class AsyncUploadScheduler:
     
     def _init_platform_semaphores(self):
         """初始化平台信号量"""
-        platforms = ['biliweb', 'biliup-rs', 'alipan', 'bdpan', 'telegram', 'local']
+        platforms = ['biliweb', 'biliup-rs', 'alipan', 'bdpan', 'quark', 'telegram', 'local']
 
         for platform in platforms:
             self.platform_semaphores[platform] = asyncio.Semaphore(

@@ -41,7 +41,7 @@ declare namespace API {
     douyin_upload_template_ids?: number[] | null;
     /** B 站充电等级 id */
     bili_upower_level_id?: string;
-    /** 网盘上传平台：bdpan / alipan */
+    /** 网盘上传平台：bdpan / alipan / quark */
     upload_storage_platform?: string;
     /** 直播流封装格式，默认 flv */
     stream_video_format?: string;

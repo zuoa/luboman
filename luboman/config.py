@@ -16,6 +16,16 @@ class Config(UserDict):
 
         logger.info(f"Config: {self.data}")
 
+    def set_persistent(self, key, value):
+        """写入 GlobalConfig 表并热更新内存配置（供插件回写自动续期的凭证等）。"""
+        cfg = GlobalConfig.get_or_none(GlobalConfig.key == key)
+        if cfg is None:
+            GlobalConfig.create(key=key, value=str(value))
+        else:
+            cfg.value = str(value)
+            cfg.save()
+        self.data[key] = str(value)
+
     def get_live_check_interval(self, default=10):
         """直播间在线检测间隔（秒）。
 

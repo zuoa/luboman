@@ -50,6 +50,7 @@ const STORAGE_PLATFORM_OPTIONS = [
   { label: '不上传', value: '' },
   { label: '百度网盘', value: 'bdpan' },
   { label: '阿里云盘', value: 'alipan' },
+  { label: '夸克网盘', value: 'quark' },
 ];
 
 const VIDEO_FORMAT_OPTIONS = [
@@ -62,6 +63,7 @@ const VIDEO_FORMAT_OPTIONS = [
 const STORAGE_LABELS: Record<string, string> = {
   bdpan: '百度网盘',
   alipan: '阿里云盘',
+  quark: '夸克网盘',
 };
 
 // 直播平台 → Tag 配色（未命中走默认中性色）

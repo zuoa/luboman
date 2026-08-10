@@ -767,6 +767,16 @@ async def schedule_bili_submission(
     """创建B站投稿任务记录并排入异步上传调度器。"""
     from luboman.core.upload import resolve_bili_uploader
 
+    # 片头（按投稿账号配置）：schedule 单点拼接，自动/手动两条投稿链路都汇聚于此；
+    # 产物落盘缓存，调度器重试复用已记录的 file_list，不重复拼接
+    room_data = room_data or {}
+    intro_path = (
+        (room_data.get('bili_upload_template') or {}).get('bili_account') or {}
+    ).get('intro_video_path')
+    if intro_path:
+        from luboman.core.upload_prep import prepend_intro_to_file_list
+        file_list = await run_blocking(prepend_intro_to_file_list, file_list, intro_path)
+
     return await schedule_submission(
         platform=resolve_bili_uploader(room_data),
         file_list=file_list,

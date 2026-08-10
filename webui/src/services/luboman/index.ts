@@ -9,6 +9,7 @@ import * as LiveRoom from './LiveRoom';
 import * as RecordFile from './RecordFile';
 import * as SubmissionTask from './SubmissionTask';
 import * as System from './System';
+import * as Upload from './Upload';
 
 export default {
   Auth,
@@ -22,4 +23,5 @@ export default {
   ClipTask,
   Config,
   System,
+  Upload,
 };

@@ -66,6 +66,13 @@ declare namespace API {
     /** 通知平台：bark / pushplus / tg */
     notify_platform?: string;
     notify_token?: string;
+    /**
+     * B 站投稿封面模式：custom 自定义上传 / latest_live 最近直播封面 / none 不传封面；
+     * null/空 = 跟随投稿模板的 cover_path
+     */
+    cover_mode?: 'custom' | 'latest_live' | 'none' | null;
+    /** cover_mode=custom 时的自定义封面服务器路径 */
+    custom_cover_path?: string | null;
   }
 
   /** 直播间探测结果（/v1/LiveRoom/probe） */
@@ -90,6 +97,18 @@ declare namespace API {
     bili_cookies?: string;
     /** 0 停用 / 1 启用 */
     state_active?: 0 | 1;
+    /** 片头视频服务器路径；该账号所有 B 站投稿的每个视频前拼接，空则不处理 */
+    intro_video_path?: string | null;
+  }
+
+  /** 文件上传结果（/v1/Upload/cover、/v1/Upload/intro） */
+  interface UploadFileResult {
+    /** 服务器绝对路径（存入表单字段） */
+    path: string;
+    /** /public 相对地址（拼 /api 前缀后可预览） */
+    url: string;
+    size: number;
+    filename: string;
   }
 
   type BiliAccountLoginStatus =

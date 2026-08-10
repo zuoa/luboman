@@ -78,6 +78,7 @@ class BiliAccount(BaseModel):
     bili_cookies_filepath = CharField(null=True)  # B站cookie文件路径
     bili_cookies = TextField(null=True)  # B站cookie
     state_active = IntegerField(default=1)  # 状态, 0为未激活, 1为激活
+    intro_video_path = CharField(null=True)  # 片头视频路径，该账号所有B站投稿的每个视频文件前拼接；为空不处理
 
 
 class DouyinAccount(BaseModel):
@@ -165,6 +166,10 @@ class LiveRoom(BaseModel):
     patron_link = CharField(null=True)
     notify_platform = CharField(null=True)  # 专属推送平台
     notify_token = TextField(null=True)  # 专属推送token
+    # B站投稿封面模式：custom 自定义上传 / latest_live 用最近直播封面 / none 完全不传封面；
+    # 为空（NULL）保持现状，回退使用投稿模板的 cover_path
+    cover_mode = CharField(null=True)
+    custom_cover_path = CharField(null=True)  # cover_mode=custom 时的自定义封面图片路径
 
 
 # 文件记录

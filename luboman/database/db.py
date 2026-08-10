@@ -93,6 +93,8 @@ class DB:
         cls._ensure_live_room_schema()
         cls._ensure_live_room_bili_template_ids_schema()
         cls._ensure_live_room_douyin_template_ids_schema()
+        cls._ensure_live_room_cover_schema()
+        cls._ensure_bili_account_schema()
         cls._ensure_clip_task_schema()
         cls.recover_interrupted_submission_tasks()
         cls.recover_interrupted_clip_tasks()
@@ -168,6 +170,38 @@ class DB:
             logger.info('LiveRoom 抖音投稿模板字段就绪')
         except Exception:
             logger.warning('补齐 LiveRoom 抖音投稿模板字段失败', exc_info=True)
+
+    @classmethod
+    def _ensure_live_room_cover_schema(cls):
+        """兼容旧库：补齐 LiveRoom B站投稿封面设置列（新字段，无需回填）。"""
+        table = LiveRoom._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS cover_mode VARCHAR(16)'
+                )
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS custom_cover_path VARCHAR(255)'
+                )
+            logger.info('LiveRoom 投稿封面字段就绪')
+        except Exception:
+            logger.warning('补齐 LiveRoom 投稿封面字段失败', exc_info=True)
+
+    @classmethod
+    def _ensure_bili_account_schema(cls):
+        """兼容旧库：补齐 BiliAccount 片头视频列（新字段，无需回填）。"""
+        table = BiliAccount._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS intro_video_path VARCHAR(255)'
+                )
+            logger.info('BiliAccount 片头字段就绪')
+        except Exception:
+            logger.warning('补齐 BiliAccount 片头字段失败', exc_info=True)
 
     @classmethod
     def _ensure_clip_task_schema(cls):
@@ -302,7 +336,7 @@ class DB:
         with db.connection_context():
             update_columns = [
                 "account_name", "account_avatar", "bili_cookies_filepath",
-                "bili_cookies", "state_active"
+                "bili_cookies", "state_active", "intro_video_path"
             ]
             update_data = cls.filter_model_data(BiliAccount, data, update_columns)
 
@@ -398,8 +432,19 @@ class DB:
                               "upload_storage_platform",
                               "stream_video_format", "active_state", "active_begin", "active_end", "ffmpeg_options",
                               "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id",
-                              "auto_dance_clip"]
+                              "auto_dance_clip", "cover_mode", "custom_cover_path"]
             update_data = cls.filter_model_data(LiveRoom, data, update_columns)
+
+            # 封面模式规范化：非法值/空串归一为 None（跟随投稿模板 cover_path）
+            if "cover_mode" in update_data:
+                cover_mode = update_data["cover_mode"]
+                if cover_mode not in ("custom", "latest_live", "none"):
+                    cover_mode = None
+                update_data["cover_mode"] = cover_mode
+                if cover_mode != "custom":
+                    update_data["custom_cover_path"] = None
+            elif "custom_cover_path" in update_data and not update_data["custom_cover_path"]:
+                update_data["custom_cover_path"] = None
 
             # 新列表字段为权威：写入时规范化并把旧单模板列同步为首元素（旧客户端退化为"只投第一个"）
             if "bili_upload_template_ids" in update_data:

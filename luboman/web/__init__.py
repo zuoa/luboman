@@ -4,6 +4,7 @@ import functools
 import json
 import logging
 import os
+import uuid
 from urllib.parse import quote
 
 import aiohttp_cors
@@ -24,7 +25,7 @@ from luboman.core.runtime import (
     stop_room_runtime,
 )
 from luboman.core.upload import BiliBili, Data
-from luboman.core.utils import get_video_dir
+from luboman.core.utils import get_public_dir, get_video_dir
 from luboman.database.db import (
     DB,
     RECORD_FILE_STATUS_COMPLETED,
@@ -1238,6 +1239,112 @@ async def serve_video_static(request):
     except Exception as e:
         logger.error(e)
         return web.Response(status=500, text=str(e))
+
+
+@routes.get('/public/{path:.*}')
+async def serve_public_static(request):
+    """后端直接提供 /public/ 静态文件（直播封面缓存、自定义封面、片头等），
+    使无 nginx 的部署也能预览。与 serve_video_static 同款 realpath+前缀校验。"""
+    try:
+        public_dir = os.path.realpath(get_public_dir())
+        rel_path = request.match_info.get('path') or ''
+        real = os.path.realpath(os.path.join(public_dir, rel_path))
+        if real != public_dir and not real.startswith(public_dir + os.sep):
+            return web.Response(status=403, text='forbidden')
+        if not os.path.isfile(real):
+            return web.Response(status=404, text=f'file not found: {rel_path}')
+        return web.FileResponse(real)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        logger.error(e)
+        return web.Response(status=500, text=str(e))
+
+
+# 上传文件类型/大小限制（大小可用全局配置 upload_cover_max_mb / upload_intro_max_mb 覆盖）
+UPLOAD_COVER_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+UPLOAD_INTRO_EXTS = {'.mp4', '.flv', '.mkv', '.ts', '.mov'}
+
+
+async def _save_upload_file(request, sub_dir, name_prefix, allowed_exts, max_mb):
+    """multipart 流式落盘到 {public}/{sub_dir}/，文件名服务端生成，不信任客户端。
+    返回 (绝对路径, /public 相对URL, 大小, 原始文件名)；校验失败抛 ValueError 并清理残件。"""
+    max_bytes = max_mb * 1024 * 1024
+    reader = await request.multipart()
+    field = await reader.next()
+    while field is not None and not getattr(field, 'filename', None):
+        field = await reader.next()
+    if field is None:
+        raise ValueError('未找到上传文件')
+
+    origin_filename = os.path.basename(field.filename)
+    ext = os.path.splitext(origin_filename)[1].lower()
+    if ext not in allowed_exts:
+        raise ValueError(f'不支持的文件类型: {ext or "(无扩展名)"}，允许: {",".join(sorted(allowed_exts))}')
+
+    dest_dir = os.path.join(get_public_dir(), sub_dir)
+    os.makedirs(dest_dir, exist_ok=True)
+    filename = f'{name_prefix}-{uuid.uuid4().hex[:8]}{ext}'
+    dest_path = os.path.join(dest_dir, filename)
+
+    size = 0
+    try:
+        with open(dest_path, 'wb') as f:
+            while True:
+                chunk = await field.read_chunk(256 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ValueError(f'文件超过大小限制 {max_mb}MB')
+                f.write(chunk)
+    except Exception:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise
+
+    rel_url = f'/public/{sub_dir}/{filename}'
+    return dest_path, rel_url, size, origin_filename
+
+
+@routes.post('/v1/Upload/cover')
+async def upload_cover(request):
+    """上传自定义封面图片（按直播间），落盘 {public}/cover/custom/。"""
+    try:
+        max_mb = int(config.get('upload_cover_max_mb', 10) or 10)
+        path, url, size, origin = await _save_upload_file(
+            request, os.path.join('cover', 'custom'), 'cover', UPLOAD_COVER_EXTS, max_mb
+        )
+        # PIL 校验确为可解码图片，防止伪装扩展名
+        from PIL import Image
+        try:
+            with Image.open(path) as img:
+                img.verify()
+        except Exception:
+            os.remove(path)
+            return error(1, '文件不是有效的图片')
+        return success({'path': path, 'url': url, 'size': size, 'filename': origin})
+    except ValueError as e:
+        return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/Upload/intro')
+async def upload_intro(request):
+    """上传片头视频（按B站账号），落盘 {public}/intro/。"""
+    try:
+        max_mb = int(config.get('upload_intro_max_mb', 200) or 200)
+        path, url, size, origin = await _save_upload_file(
+            request, 'intro', 'intro', UPLOAD_INTRO_EXTS, max_mb
+        )
+        return success({'path': path, 'url': url, 'size': size, 'filename': origin})
+    except ValueError as e:
+        return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
 
 
 @routes.get('/v1/RecordFile/stream/{file_id}')

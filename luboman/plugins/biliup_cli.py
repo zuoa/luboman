@@ -6,7 +6,7 @@ import subprocess
 from typing import Any, Dict, Iterable, List, Optional
 
 from luboman.core.decorators import PluginTool
-from luboman.core.upload import Uploader
+from luboman.core.upload import Uploader, resolve_bili_cover_path
 from luboman.core.utils import format_live_prop_text
 
 logger = logging.getLogger('luboman')
@@ -234,7 +234,8 @@ class BiliupCliUploader(Uploader):
         if dtime:
             _append_option(command, '--dtime', dtime)
 
-        cover_path = template_info.get('cover_path')
+        # 封面按直播间设置解析（custom/latest_live/none/跟随模板），none 或解析为 None 则不传封面
+        cover_path = resolve_bili_cover_path(self.room_data, template_info)
         if cover_path:
             if os.path.exists(cover_path):
                 _append_option(command, '--cover', cover_path)

@@ -715,6 +715,65 @@ def resolve_bili_uploader(room_data=None):
     return aliases.get(str(platform).strip(), str(platform).strip())
 
 
+def ensure_latest_live_cover(room_data):
+    """确保"最近的直播封面"本地文件可用：开播时已缓存到 {public}/cover/{platform}-{room_id}.jpg，
+    本地不存在时用 room_cover_frame_url / room_cover_url 兜底下载。返回本地路径或 None。"""
+    from luboman.core.utils import get_public_dir
+
+    room_data = room_data or {}
+    platform = room_data.get('room_platform')
+    room_id = room_data.get('room_id')
+    if not platform or not room_id:
+        return None
+    cover_path = os.path.join(get_public_dir(), 'cover', f'{platform}-{room_id}.jpg')
+    if os.path.isfile(cover_path) and os.path.getsize(cover_path) > 0:
+        return cover_path
+    url = room_data.get('room_cover_frame_url') or room_data.get('room_cover_url')
+    if not url:
+        return None
+    try:
+        resp = requests.get(url, headers={'Referer': 'https://www.bilibili.com/'}, timeout=15)
+        resp.raise_for_status()
+        os.makedirs(os.path.dirname(cover_path), exist_ok=True)
+        tmp_path = cover_path + '.tmp'
+        with open(tmp_path, 'wb') as f:
+            f.write(resp.content)
+        os.replace(tmp_path, cover_path)
+        return cover_path
+    except Exception:
+        logger.warning(f'下载直播封面失败: {url}', exc_info=True)
+        return None
+
+
+def resolve_bili_cover_path(room_data, template_info):
+    """按直播间封面设置解析投稿封面本地路径：
+    none -> None（完全不传封面，由B站自动截帧，忽略模板 cover_path）；
+    custom -> 自定义封面（文件缺失时告警并回退模板 cover_path）；
+    latest_live -> 最近直播封面（不可用时告警并回退模板 cover_path）；
+    未设置（None）-> 投稿模板 cover_path（现状行为）。
+    返回 None 表示不传封面。"""
+    room_data = room_data or {}
+    template_info = template_info or {}
+    cover_mode = room_data.get('cover_mode')
+    fallback_path = template_info.get('cover_path')
+
+    if cover_mode == 'none':
+        return None
+    if cover_mode == 'custom':
+        custom_path = room_data.get('custom_cover_path')
+        if custom_path and os.path.isfile(custom_path):
+            return custom_path
+        logger.warning(f'直播间自定义封面不存在: {custom_path}，回退模板封面')
+        return fallback_path
+    if cover_mode == 'latest_live':
+        live_cover = ensure_latest_live_cover(room_data)
+        if live_cover:
+            return live_cover
+        logger.warning('最近直播封面不可用，回退模板封面')
+        return fallback_path
+    return fallback_path
+
+
 def upload(uploader_platform, file_list, **kwargs):
     if not uploader_platform:
         return {

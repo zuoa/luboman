@@ -1,10 +1,12 @@
 import services from '@/services/luboman';
+import { REQUEST_HOST } from '@/constants';
 import {
   CheckCircleOutlined,
   PlusOutlined,
   QrcodeOutlined,
   ReloadOutlined,
   StopOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import {
   ActionType,
@@ -20,10 +22,12 @@ import {
   Badge,
   Button,
   Form,
+  Modal,
   Popconfirm,
   QRCode,
   Space,
   Tag,
+  Upload,
   message,
 } from 'antd';
 import React, { useEffect, useRef, useState } from 'react';
@@ -38,6 +42,7 @@ const {
   getBiliupLoginStatus,
   stopBiliupLogin,
 } = services.BiliAccount;
+const { uploadIntro } = services.Upload;
 
 const loginStatusText: Record<string, string> = {
   created: '已创建',
@@ -68,6 +73,17 @@ const BiliAccountList: React.FC = () => {
   >({});
   const [loginSession, setLoginSession] = useState<API.BiliupLoginSession>();
   const [biliupLoading, setBiliupLoading] = useState(false);
+  // 片头设置 Modal（独立小弹窗，与登录 Modal 状态机隔离）
+  const [introAccount, setIntroAccount] = useState<API.BiliAccountInfo>();
+  const [introUploading, setIntroUploading] = useState(false);
+
+  const handleRemoveIntro = async () => {
+    if (!introAccount?.id) return;
+    await updateBiliAccount({ id: introAccount.id, intro_video_path: '' });
+    message.success('片头已移除');
+    setIntroAccount(undefined);
+    actionRef.current?.reload();
+  };
 
   useEffect(() => {
     if (!loginSession?.session_id || loginSession.status !== 'waiting') {
@@ -265,6 +281,17 @@ const BiliAccountList: React.FC = () => {
             render: (_, r) => renderLoginCheck(r),
           },
           {
+            title: '片头',
+            dataIndex: 'intro_video_path',
+            width: 90,
+            render: (_, r) =>
+              r.intro_video_path ? (
+                <Tag color="blue">已设置</Tag>
+              ) : (
+                <Tag>未设置</Tag>
+              ),
+          },
+          {
             title: '状态',
             dataIndex: 'state_active',
             width: 90,
@@ -279,13 +306,14 @@ const BiliAccountList: React.FC = () => {
             title: '操作',
             dataIndex: 'option',
             valueType: 'option',
-            width: 200,
+            width: 260,
             render: (_, record) => (
               <Space>
                 <a onClick={() => record.id && handleCheckLogin(record.id)}>
                   {checkingKey === record.id ? '检测中' : '检测'}
                 </a>
                 <a onClick={() => openReloginModal(record)}>重新登录</a>
+                <a onClick={() => setIntroAccount(record)}>片头</a>
                 <Popconfirm
                   title="确认删除该账号？"
                   description="将停用该账号（state_active 置 0）"
@@ -443,6 +471,85 @@ const BiliAccountList: React.FC = () => {
           ]}
         />
       </ModalForm>
+
+      <Modal
+        title={`片头设置${introAccount?.account_name ? ` - ${introAccount.account_name}` : ''}`}
+        open={!!introAccount}
+        onCancel={() => setIntroAccount(undefined)}
+        footer={null}
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13 }}>
+            上传片头视频后，该账号所有 B 站投稿的每个视频文件前都会自动拼接片头；不设置则不处理。
+          </div>
+          <div>
+            当前片头：
+            {introAccount?.intro_video_path ? (
+              <Tag color="blue">
+                {introAccount.intro_video_path.split('/').pop()}
+              </Tag>
+            ) : (
+              <Tag>未设置</Tag>
+            )}
+          </div>
+          {introAccount?.intro_video_path ? (
+            <video
+              src={`${REQUEST_HOST}/public/intro/${introAccount.intro_video_path
+                .split('/')
+                .pop()}`}
+              controls
+              style={{ width: '100%', maxHeight: 240, borderRadius: 6 }}
+            />
+          ) : null}
+          <Space>
+            <Upload
+              accept=".mp4,.flv,.mkv,.ts,.mov"
+              showUploadList={false}
+              customRequest={async ({ file, onSuccess, onError }) => {
+                if (!introAccount?.id) return;
+                setIntroUploading(true);
+                try {
+                  const res = await uploadIntro(file as File);
+                  await updateBiliAccount({
+                    id: introAccount.id,
+                    intro_video_path: res.path,
+                  });
+                  onSuccess?.(res);
+                  message.success('片头已上传并生效');
+                  setIntroAccount({
+                    ...introAccount,
+                    intro_video_path: res.path,
+                  });
+                  actionRef.current?.reload();
+                } catch (e) {
+                  // 统一错误层已弹 toast
+                  onError?.(e as Error);
+                } finally {
+                  setIntroUploading(false);
+                }
+              }}
+            >
+              <Button
+                type="primary"
+                loading={introUploading}
+                icon={<UploadOutlined />}
+              >
+                {introAccount?.intro_video_path ? '更换片头' : '上传片头'}
+              </Button>
+            </Upload>
+            {introAccount?.intro_video_path ? (
+              <Popconfirm
+                title="确认移除片头？"
+                description="移除后该账号投稿不再拼接片头"
+                onConfirm={handleRemoveIntro}
+              >
+                <Button danger>移除片头</Button>
+              </Popconfirm>
+            ) : null}
+          </Space>
+        </Space>
+      </Modal>
     </>
   );
 };

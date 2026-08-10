@@ -3,7 +3,7 @@ import os
 
 from luboman.core.decorators import PluginTool
 from luboman.core.upload import BiliBili, Data
-from luboman.core.upload import Uploader
+from luboman.core.upload import Uploader, resolve_bili_cover_path
 from luboman.core.utils import format_live_prop_text
 
 logger = logging.getLogger('luboman')
@@ -70,8 +70,10 @@ class BiliWebUploader(Uploader):
                 video.append(video_part)  # 添加已经上传的视频
             if template_info.get('dtime'):
                 video.delay_time(template_info.get('dtime'))  # 设置延后发布（2小时~15天）
-            if template_info.get('cover_path') and os.path.exists(template_info.get('cover_path')):
-                video.cover = bili.cover_up(template_info.get('cover_path'))
+            # 封面按直播间设置解析（custom/latest_live/none/跟随模板），none 或解析为 None 则不传封面
+            cover_path = resolve_bili_cover_path(self.room_data, template_info)
+            if cover_path and os.path.exists(cover_path):
+                video.cover = bili.cover_up(cover_path)
             ret = bili.submit()  # 提交视频
             return ret
 

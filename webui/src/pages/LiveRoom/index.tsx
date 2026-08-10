@@ -1,7 +1,10 @@
 import services from '@/services/luboman';
+import { REQUEST_HOST } from '@/constants';
 import {
   ModalForm,
   ProFormDateTimePicker,
+  ProFormDependency,
+  ProFormRadio,
   ProFormSelect,
   ProFormSwitch,
   ProFormText,
@@ -14,6 +17,7 @@ import {
   ReloadOutlined,
   SearchOutlined,
   TableOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import {
   Avatar,
@@ -31,6 +35,7 @@ import {
   Table,
   Tag,
   Tooltip,
+  Upload,
   message,
 } from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -42,6 +47,7 @@ const { listLiveRoom, addLiveRoom, updateLiveRoom, deleteLiveRoom } =
 const { probeLiveRoom } = services.LiveRoom;
 const { listBiliUploadTemplate } = services.BiliUploadTemplate;
 const { listDouyinUploadTemplate } = services.DouyinUploadTemplate;
+const { uploadCover } = services.Upload;
 
 const VIEW_KEY = 'luboman_liveRoomView';
 type ViewMode = 'table' | 'card';
@@ -65,6 +71,14 @@ const STORAGE_LABELS: Record<string, string> = {
   alipan: '阿里云盘',
   quark: '夸克网盘',
 };
+
+// B 站投稿封面模式（空值 = 跟随投稿模板的 cover_path，保持旧行为）
+const COVER_MODE_OPTIONS = [
+  { label: '跟随模板', value: '' },
+  { label: '自定义上传', value: 'custom' },
+  { label: '最近直播封面', value: 'latest_live' },
+  { label: '不设置', value: 'none' },
+];
 
 // 直播平台 → Tag 配色（未命中走默认中性色）
 const PLATFORM_COLORS: Record<string, string> = {
@@ -159,10 +173,103 @@ const ProbeButton: React.FC = () => {
 };
 
 /**
+ * 自定义封面上传：成功后把服务器路径写入隐藏的 custom_cover_path 字段并预览。
+ * 编辑已有记录时按文件名推导预览地址（自定义封面固定落盘 {public}/cover/custom/）。
+ */
+const CoverUploadField: React.FC = () => {
+  const form = Form.useFormInstance();
+  const coverPath = Form.useWatch('custom_cover_path', form);
+  const [uploading, setUploading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string>();
+
+  const shownUrl =
+    previewUrl ||
+    (coverPath
+      ? `${REQUEST_HOST}/public/cover/custom/${coverPath.split('/').pop()}`
+      : '');
+
+  return (
+    <Form.Item label="封面图片" required>
+      <Space direction="vertical" size={8}>
+        <Space size={8}>
+          <Upload
+            accept=".jpg,.jpeg,.png,.webp"
+            showUploadList={false}
+            customRequest={async ({ file, onSuccess, onError }) => {
+              setUploading(true);
+              try {
+                const res = await uploadCover(file as File);
+                form.setFieldsValue({ custom_cover_path: res.path });
+                setPreviewUrl(`${REQUEST_HOST}${res.url}`);
+                onSuccess?.(res);
+                message.success('封面已上传');
+              } catch (e) {
+                // 统一错误层已弹 toast
+                onError?.(e as Error);
+              } finally {
+                setUploading(false);
+              }
+            }}
+          >
+            <Button loading={uploading} icon={<UploadOutlined />}>
+              {coverPath ? '重新上传' : '上传封面'}
+            </Button>
+          </Upload>
+          {coverPath ? (
+            <Button
+              size="small"
+              type="link"
+              onClick={() => {
+                form.setFieldsValue({ custom_cover_path: null });
+                setPreviewUrl(undefined);
+              }}
+            >
+              移除
+            </Button>
+          ) : null}
+        </Space>
+        {shownUrl ? (
+          <img
+            src={shownUrl}
+            alt="封面预览"
+            style={{ width: 240, borderRadius: 6, display: 'block' }}
+          />
+        ) : (
+          <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
+            未上传封面时将回退使用投稿模板的封面
+          </span>
+        )}
+      </Space>
+    </Form.Item>
+  );
+};
+
+/** 最近直播封面预览：开播时后端自动缓存，未开播过则提示 */
+const LiveCoverPreview: React.FC = () => {
+  const form = Form.useFormInstance();
+  const coverUrl = form.getFieldValue('room_cover_url');
+  return (
+    <Form.Item label="封面预览">
+      {coverUrl ? (
+        <img
+          src={proxyImg(coverUrl)}
+          alt="最近直播封面"
+          style={{ width: 240, borderRadius: 6, display: 'block' }}
+        />
+      ) : (
+        <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
+          暂无直播封面缓存，开播后自动获取；获取失败时回退使用投稿模板的封面
+        </span>
+      )}
+    </Form.Item>
+  );
+};
+
+/**
  * 后端 update_live_room 仅更新以下字段（白名单合并）：
  * room_name, room_url, custom_filename, bili_upload_template_id, bili_upload_template_ids,
  * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
- * auto_dance_clip。
+ * auto_dance_clip, cover_mode, custom_cover_path。
  * 故新建/编辑表单仅暴露这些可编辑字段；投稿模板为多选（一份录播可投多个账号）。
  */
 const RoomFormFields: React.FC = () => (
@@ -222,6 +329,28 @@ const RoomFormFields: React.FC = () => (
       options={VIDEO_FORMAT_OPTIONS}
       placeholder="flv"
     />
+    <ProFormRadio.Group
+      name="cover_mode"
+      label="投稿封面"
+      options={COVER_MODE_OPTIONS}
+      extra="仅作用于 B 站投稿：不设置 = 完全不传封面（B 站自动截帧）；跟随模板 = 使用投稿模板里配置的封面路径"
+    />
+    <ProFormDependency name={['cover_mode']}>
+      {({ cover_mode }) => {
+        if (cover_mode === 'custom') {
+          return (
+            <>
+              <Form.Item name="custom_cover_path" hidden />
+              <CoverUploadField />
+            </>
+          );
+        }
+        if (cover_mode === 'latest_live') {
+          return <LiveCoverPreview />;
+        }
+        return null;
+      }}
+    </ProFormDependency>
     <ProFormSwitch
       name="active_state"
       label="激活状态"
@@ -641,8 +770,12 @@ const LiveRoomList: React.FC = () => {
         open={createOpen}
         onOpenChange={setCreateOpen}
         modalProps={{ destroyOnClose: true }}
-        initialValues={{ active_state: true, auto_dance_clip: false }}
+        initialValues={{ active_state: true, auto_dance_clip: false, cover_mode: '' }}
         onFinish={async (values) => {
+          if (values.cover_mode === 'custom' && !values.custom_cover_path) {
+            message.warning('请选择「自定义上传」后上传封面图片，或改用其他封面模式');
+            return false;
+          }
           await addLiveRoom({
             ...values,
             active_state: values.active_state ? 1 : 0,
@@ -677,11 +810,17 @@ const LiveRoomList: React.FC = () => {
                     : undefined),
                 douyin_upload_template_ids:
                   editing.douyin_upload_template_ids ?? undefined,
+                // null 归一为 ''（跟随模板），对齐 Radio 选项值
+                cover_mode: editing.cover_mode ?? '',
               }
             : undefined
         }
         onFinish={async (values) => {
           if (!editing?.id) return false;
+          if (values.cover_mode === 'custom' && !values.custom_cover_path) {
+            message.warning('请选择「自定义上传」后上传封面图片，或改用其他封面模式');
+            return false;
+          }
           await updateLiveRoom({
             id: editing.id,
             ...values,

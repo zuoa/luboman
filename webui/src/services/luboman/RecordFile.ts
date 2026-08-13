@@ -52,6 +52,17 @@ export function getRecordFileStreamUrl(record: API.RecordFileInfo | number) {
 }
 
 /**
+ * 录像文件下载地址。固定走 stream 接口 + download=1（后端切 attachment），
+ * 不能复用 /video/ 静态路径——静态服务加 query 不会改变 Content-Disposition。
+ */
+export function getRecordFileDownloadUrl(record: API.RecordFileInfo | number) {
+  const id = typeof record === 'number' ? record : record.id;
+  return id != null
+    ? `${REQUEST_HOST}/v1/RecordFile/stream/${id}?download=1`
+    : undefined;
+}
+
+/**
  * 手动发布录像到 B 站（异步排队上传，每个模板创建一个任务，立即返回任务列表）。
  * body：bili_upload_template_ids(必填，可多选投多个账号) + (file_ids | videos 二选一) +
  *       可选 live_room_id、room_data(仅 room_name/title/url/owner/platform 生效)。

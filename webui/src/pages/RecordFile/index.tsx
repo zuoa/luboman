@@ -1,6 +1,7 @@
 import services from '@/services/luboman';
 import {
   CloudUploadOutlined,
+  DownloadOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   ScissorOutlined,
@@ -37,6 +38,7 @@ import FlvPlayer from './FlvPlayer';
 import styles from './index.less';
 
 const {
+  getRecordFileDownloadUrl,
   getRecordFileStreamUrl,
   listRecordFile,
   listRecordFileRoomSummary,
@@ -509,7 +511,7 @@ const RecordFileList: React.FC = () => {
     {
       title: '操作',
       valueType: 'option',
-      width: 120,
+      width: 170,
       search: false,
       render: (_, r) => {
         const canOperate = r.id != null && r.exists && isRecordCompleted(r);
@@ -519,6 +521,7 @@ const RecordFileList: React.FC = () => {
         return (
           <Space size={8}>
             <a onClick={() => openPlayer(r)}>播放</a>
+            <a href={getRecordFileDownloadUrl(r)}>下载</a>
             <a onClick={() => openPublish([r])}>发布</a>
             <a onClick={() => openPublishDouyin([r])}>投抖音</a>
           </Space>
@@ -653,6 +656,22 @@ const RecordFileList: React.FC = () => {
                 onClick={() => openPlayer(selectedRows[0])}
               >
                 播放
+              </Button>,
+              <Button
+                key="download"
+                icon={<DownloadOutlined />}
+                disabled={
+                  selectedRows.length !== 1 ||
+                  selectedRows[0]?.id == null ||
+                  !selectedRows[0]?.exists ||
+                  !isRecordCompleted(selectedRows[0])
+                }
+                onClick={() => {
+                  const url = getRecordFileDownloadUrl(selectedRows[0]);
+                  if (url) window.location.href = url;
+                }}
+              >
+                下载
               </Button>,
               <Button
                 key="detect"

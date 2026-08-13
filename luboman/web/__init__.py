@@ -1352,11 +1352,14 @@ async def stream_record_file(request):
     try:
         file_id = _as_int(request.match_info.get('file_id'))
         path = await run_db(_resolve_record_file_stream_path, file_id)
+        # download=1 时切为 attachment 触发浏览器下载，默认 inline 供在线播放
+        download = (request.query.get('download') or '').lower() in ('1', 'true')
+        disposition = 'attachment' if download else 'inline'
         return web.FileResponse(
             path,
             headers={
                 'Accept-Ranges': 'bytes',
-                'Content-Disposition': f"inline; filename*=UTF-8''{quote(os.path.basename(path))}",
+                'Content-Disposition': f"{disposition}; filename*=UTF-8''{quote(os.path.basename(path))}",
             },
         )
     except ValueError as e:

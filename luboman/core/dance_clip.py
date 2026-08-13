@@ -1030,9 +1030,24 @@ def run_clip_task(task_id: str) -> None:
 
 
 async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
-    """把切片逐个投稿到B站/抖音（复用房间投稿模板，多模板即多账号）。房间未开开关或未配模板时只入库不投稿。"""
-    from luboman.database.db import DB, resolve_room_bili_template_ids, resolve_room_douyin_template_ids
-    from luboman.core.async_upload import UploadPriority, schedule_bili_submission, schedule_douyin_submission
+    """把切片逐个投稿到 B 站/抖音/网盘。
+
+    B 站/抖音复用房间投稿模板（多模板即多账号）。网盘仅在「只投稿切片」开启且配置了
+    upload_storage_platform 时上传——整录网盘仍由 EVENT_UPLOAD 负责。
+    房间未开自动切片、或未配任何目的地时只入库不投稿。
+    """
+    from luboman.database.db import (
+        DB,
+        is_upload_clips_only,
+        resolve_room_bili_template_ids,
+        resolve_room_douyin_template_ids,
+    )
+    from luboman.core.async_upload import (
+        UploadPriority,
+        async_upload_scheduler,
+        schedule_bili_submission,
+        schedule_douyin_submission,
+    )
 
     if not clip_ids or not live_room_id:
         return
@@ -1045,10 +1060,13 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
         logger.info('房间 %s 已关闭自动舞蹈切片，产出切片不再投稿', live_room_id)
         return
 
+    storage_platform = (room_data.get('upload_storage_platform') or '').strip()
+    upload_clips_to_storage = bool(storage_platform) and is_upload_clips_only(room_data)
+
     bili_template_ids = resolve_room_bili_template_ids(room_data)
     douyin_template_ids = resolve_room_douyin_template_ids(room_data)
-    if not bili_template_ids and not douyin_template_ids:
-        logger.info('房间 %s 未配置投稿模板，舞蹈切片仅入库不投稿', live_room_id)
+    if not bili_template_ids and not douyin_template_ids and not upload_clips_to_storage:
+        logger.info('房间 %s 未配置投稿模板或网盘，舞蹈切片仅入库不投稿', live_room_id)
         return
     bili_templates = (
         await run_blocking(DB.get_bili_templates_with_accounts, bili_template_ids)
@@ -1058,7 +1076,7 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
         await run_blocking(DB.get_douyin_templates_with_accounts, douyin_template_ids)
         if douyin_template_ids else []
     )
-    if not bili_templates and not douyin_templates:
+    if not bili_templates and not douyin_templates and not upload_clips_to_storage:
         logger.warning('房间 %s 配置的投稿模板均不可用，舞蹈切片仅入库不投稿', live_room_id)
         return
 
@@ -1128,6 +1146,31 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
                 logger.info('舞蹈切片抖音投稿任务已创建: 模板=%s, %s', template_info.get('template_name'), result)
             except Exception:
                 logger.exception('舞蹈切片 %s 抖音投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
+
+        if upload_clips_to_storage:
+            try:
+                result = await async_upload_scheduler.schedule_upload_simple(
+                    platform=storage_platform,
+                    file_list=[{'id': record_id, 'video': video}],
+                    room_data=room_data,
+                    priority=UploadPriority.HIGH,
+                    metadata={'created_from': 'auto_dance_clip'},
+                )
+                if result:
+                    logger.info(
+                        '舞蹈切片网盘上传任务已创建: 平台=%s, 切片=%s, %s',
+                        storage_platform, record_id, result,
+                    )
+                else:
+                    logger.warning(
+                        '舞蹈切片网盘上传未入队: 平台=%s, 切片=%s',
+                        storage_platform, record_id,
+                    )
+            except Exception:
+                logger.exception(
+                    '舞蹈切片 %s 网盘上传任务创建失败: 平台=%s',
+                    record_id, storage_platform,
+                )
 
 
 async def _submit_daily_bili_batch(

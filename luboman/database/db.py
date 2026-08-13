@@ -86,16 +86,27 @@ def resolve_room_douyin_template_ids(room_data):
     return resolve_room_template_ids(room_data, 'douyin_upload_template_ids')
 
 
-def should_auto_upload_full_bili(room_data) -> bool:
-    """录制结束后是否自动投稿整场录像到 B 站。
+def is_upload_clips_only(room_data) -> bool:
+    """只投稿切片开关（B 站与网盘共用）。
 
-    bili_upload_clips_only=1 时跳过整录，舞蹈切片仍走 auto_submit_clip_records。
-    缺字段 / 0 / 非法值一律视为关，保持旧行为。
+    字段名 bili_upload_clips_only 是历史列名；缺字段 / 0 / 非法值一律视为关。
     """
     try:
-        return int((room_data or {}).get('bili_upload_clips_only') or 0) != 1
+        return int((room_data or {}).get('bili_upload_clips_only') or 0) == 1
     except (TypeError, ValueError):
-        return True
+        return False
+
+
+def should_auto_upload_full(room_data) -> bool:
+    """录制结束后是否自动投稿/上传整场录像（B 站 + 网盘）。
+
+    只投稿切片时跳过整录，舞蹈切片仍走 auto_submit_clip_records。
+    """
+    return not is_upload_clips_only(room_data)
+
+
+# 旧名兼容：早期只拦 B 站整录
+should_auto_upload_full_bili = should_auto_upload_full
 
 
 class DB:
@@ -150,7 +161,7 @@ class DB:
 
     @classmethod
     def _ensure_live_room_schema(cls):
-        """兼容旧库：补齐 LiveRoom 自动舞蹈切片 / 只投稿切片开关列。"""
+        """兼容旧库：补齐 LiveRoom 自动舞蹈切片 / 只投稿切片（B站+网盘共用）开关列。"""
         table = LiveRoom._meta.table_name
         try:
             with db.atomic():

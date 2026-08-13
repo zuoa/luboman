@@ -23,7 +23,7 @@ from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
 from luboman.core.upload import resolve_bili_uploader, upload
 from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename, get_public_dir, download_file
-from luboman.database.db import DB, resolve_room_bili_template_ids, should_auto_upload_full_bili
+from luboman.database.db import DB, resolve_room_bili_template_ids, should_auto_upload_full
 from luboman.database.models import BiliUploadTemplate, BiliAccount
 
 logger = logging.getLogger('luboman')
@@ -318,7 +318,11 @@ class LiveBase(object):
                 except Exception as e:
                     logger.exception(f'{self.log_prefix} :  | Uncaught exception:{e}')
 
-                self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
+                # 网盘按分段上传整录；只投稿切片时改由 auto_submit_clip_records 投切片
+                if should_auto_upload_full(self.room_data):
+                    self.send_event(Event(EventType.EVENT_UPLOAD, ([recording_context],)))
+                elif self.room_data.get('upload_storage_platform'):
+                    logger.info(f'{self.log_prefix} 已开启只投稿切片，跳过分段录像的网盘自动上传')
                 # 单分段录制完成事件：供自动舞蹈切片等按分段触发的逻辑使用
                 self.send_event(Event(EventType.EVENT_RECORD_SEGMENT, ([recording_context],)))
 
@@ -688,7 +692,10 @@ class LiveBase(object):
 
                                     file_list = [{'video': output_file}]
 
-                                    self.send_event(Event(EventType.EVENT_UPLOAD, (file_list,)))
+                                    if should_auto_upload_full(self.room_data):
+                                        self.send_event(Event(EventType.EVENT_UPLOAD, (file_list,)))
+                                    elif self.room_data.get('upload_storage_platform'):
+                                        logger.info(f'{self.log_prefix} 已开启只投稿切片，跳过合并录像的网盘自动上传')
                         finally:
                             # 清理临时文件
                             if os.path.exists(temp_file_path):
@@ -697,7 +704,7 @@ class LiveBase(object):
                     except Exception as e:
                         logger.error(f'{self.log_prefix} :  合并录制文件失败: {e}')
 
-            if file_list and should_auto_upload_full_bili(self.room_data):
+            if file_list and should_auto_upload_full(self.room_data):
                 self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
             elif file_list and resolve_room_bili_template_ids(self.room_data):
                 logger.info(f'{self.log_prefix} 已开启只投稿切片，跳过整场录像的 B 站自动投稿')

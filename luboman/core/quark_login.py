@@ -1,13 +1,18 @@
 """夸克网盘扫码登录会话管理（纯 requests 轮询，无子进程/浏览器）。
 
 流程逆向自 pan.quark.cn 官网前端（quark-cloud-drive-static-page JS）：
-1. GET uop.quark.cn/cas/ajax/getTokenForQrcodeLogin -> data.members.token
+1. GET uop.quark.cn/cas/ajax/getTokenForQrcodeLogin
+      ?client_id=532&v=1.2&request_id=<uuid> -> data.members.token
 2. 二维码内容 = https://su.quark.cn/4_eMHBJ?token=...&client_id=532&ssb=weblogin&...
    前端渲染成二维码,用户用夸克 App 扫码并确认
-3. 每 2s 轮询 getServiceTicketByQrcodeToken?token=...;
+3. 每 2s 轮询 getServiceTicketByQrcodeToken
+      ?client_id=532&v=1.2&token=...&request_id=<同一 uuid>;
    status==2000000 时拿到 data.members.service_ticket（未扫码为 50004001）
-4. GET pan.quark.cn/account/info?st={service_ticket},响应 Set-Cookie 下发
+4. GET pan.quark.cn/account/info?st={service_ticket}&lw=scan,响应 Set-Cookie 下发
    登录态（__puus/__pus 等）,拼成 cookie 串校验后写回全局配置 quark_cookie
+
+token 与 request_id 成对绑定：取码和轮询缺 client_id / request_id 时，
+App 扫码后会显示「二维码过期」。
 
 与 biliup/douyin 扫码不同,夸克不需要 PTY 子进程或 Playwright,直接 HTTP 即可。
 """
@@ -37,7 +42,11 @@ _POLL_URL = 'https://uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken'
 _EXCHANGE_URL = 'https://pan.quark.cn/account/info'
 # 官网前端的扫码落地页,二维码内容即此 URL 拼参数
 _SCAN_PAGE = 'https://su.quark.cn/4_eMHBJ'
+_CLIENT_ID = '532'
+_API_VERSION = '1.2'
 _STATUS_OK = 2000000
+# 50004001=未扫码, 50004002=已扫待确认
+_STATUS_PENDING = {50004001, 50004002}
 
 
 class QuarkLoginSession:
@@ -85,16 +94,20 @@ class QuarkLoginSession:
 
     def _run(self):
         http = requests.Session()
-        http.headers.update({'User-Agent': _UA, 'Referer': 'https://pan.quark.cn/'})
+        http.headers.update({
+            'User-Agent': _UA,
+            'Referer': 'https://pan.quark.cn/',
+            'Origin': 'https://pan.quark.cn',
+        })
         try:
-            token = self._fetch_token(http)
+            token, request_id = self._fetch_token(http)
             qr_url = self._build_qr_url(token)
             with self._lock:
                 self.qrcode_url = qr_url
                 self.status = 'waiting'
                 self.updated_at = time.time()
 
-            service_ticket = self._poll(http, token)
+            service_ticket = self._poll(http, token, request_id)
             if service_ticket is None:
                 return  # stopped / expired
 
@@ -104,53 +117,83 @@ class QuarkLoginSession:
             logger.exception('夸克扫码登录异常')
             self._fail_if_active(f'扫码登录异常: {exc}')
 
-    def _fetch_token(self, http: requests.Session) -> str:
-        resp = http.get(_TOKEN_URL, timeout=(10, 30))
+    @staticmethod
+    def _cas_params(request_id: str, token: Optional[str] = None) -> dict:
+        """CAS 扫码接口的公共查询参数。token 与 request_id 必须成对出现。"""
+        params = {
+            'client_id': _CLIENT_ID,
+            'v': _API_VERSION,
+            'request_id': request_id,
+        }
+        if token:
+            params['token'] = token
+        return params
+
+    def _fetch_token(self, http: requests.Session) -> tuple:
+        request_id = uuid.uuid4().hex
+        resp = http.get(
+            _TOKEN_URL,
+            params=self._cas_params(request_id),
+            timeout=(10, 30),
+        )
         data = resp.json()
         token = ((data.get('data') or {}).get('members') or {}).get('token')
         if resp.status_code != 200 or data.get('status') != _STATUS_OK or not token:
             raise QuarkApiError(f'获取扫码 token 失败: {data.get("message") or resp.status_code}')
-        return token
+        return token, request_id
 
     @staticmethod
     def _build_qr_url(token: str) -> str:
         # 参数与官网前端逐字一致（client_id=532 是夸克网盘 web 端固定值）
         query = {
             'token': token,
-            'client_id': '532',
+            'client_id': _CLIENT_ID,
             'ssb': 'weblogin',
             'uc_param_str': '',
             'uc_biz_str': 'S:custom|OPT:SAREA@0|OPT:IMMERSIVE@1|OPT:BACK_BTN_STYLE@0',
         }
         return f'{_SCAN_PAGE}?{requests.compat.urlencode(query)}'
 
-    def _poll(self, http: requests.Session, token: str) -> Optional[str]:
+    def _poll(self, http: requests.Session, token: str, request_id: str) -> Optional[str]:
         """轮询扫码状态,确认后返回 service_ticket;被停止/超时返回 None。"""
         deadline = time.time() + _SESSION_MAX_AGE
         while time.time() < deadline:
             if self._stop_flag:
                 return None
             try:
-                resp = http.get(_POLL_URL, params={'token': token}, timeout=(10, 30))
+                resp = http.get(
+                    _POLL_URL,
+                    params=self._cas_params(request_id, token=token),
+                    timeout=(10, 30),
+                )
                 data = resp.json()
             except (requests.RequestException, ValueError) as e:
                 logger.warning('夸克扫码状态轮询失败（%s）,%ss 后重试', e, _POLL_INTERVAL)
                 time.sleep(_POLL_INTERVAL)
                 continue
-            if data.get('status') == _STATUS_OK:
+            status = data.get('status')
+            if status == _STATUS_OK:
                 ticket = ((data.get('data') or {}).get('members') or {}).get('service_ticket')
                 if ticket:
                     return ticket
                 self._fail_if_active('扫码成功但未返回 service_ticket')
                 return None
-            # 50004001=未扫码,其余未知状态一律继续轮询直到超时
+            if status not in _STATUS_PENDING:
+                logger.info(
+                    '夸克扫码轮询状态 %s: %s',
+                    status, data.get('message') or data.get('msg'),
+                )
             time.sleep(_POLL_INTERVAL)
         self._fail_if_active('扫码登录超时（二维码可能已过期）')
         return None
 
     def _exchange(self, http: requests.Session, service_ticket: str) -> str:
         """service_ticket 换登录态:account/info 响应 Set-Cookie,拼成 cookie 串。"""
-        resp = http.get(_EXCHANGE_URL, params={'st': service_ticket}, timeout=(10, 30))
+        resp = http.get(
+            _EXCHANGE_URL,
+            params={'st': service_ticket, 'lw': 'scan'},
+            timeout=(10, 30),
+        )
         try:
             data = resp.json()
         except ValueError:

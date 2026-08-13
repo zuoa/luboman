@@ -59,7 +59,7 @@ declare namespace API {
     active_state?: 0 | 1;
     /** 0 关闭 / 1 开启：录制分段完成后自动探测舞蹈切片并单独投稿 */
     auto_dance_clip?: 0 | 1;
-    /** 0 关闭 / 1 开启：只自动投稿舞蹈切片，不自动投稿整场录像 */
+    /** 0 关闭 / 1 开启：只自动投稿舞蹈切片，不自动投稿整场录像（B 站 + 网盘共用） */
     bili_upload_clips_only?: 0 | 1;
     /** ffmpeg 额外参数（JSON 对象） */
     ffmpeg_options?: Record<string, any>;

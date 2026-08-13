@@ -161,7 +161,7 @@ class LiveRoom(BaseModel):
     active_end = DateTimeField(null=True)  # 活跃结束时间
     active_state = IntegerField(default=1)  # 活跃状态, 0为未活跃, 1为活跃
     auto_dance_clip = IntegerField(default=0)  # 自动舞蹈切片, 0关 1开
-    bili_upload_clips_only = IntegerField(default=0)  # 只投稿切片不投整录, 0关 1开
+    bili_upload_clips_only = IntegerField(default=0)  # 只投稿切片不投整录（B站+网盘共用）, 0关 1开
     ffmpeg_options = JSONField(null=True)  # ffmpeg参数
     patron = CharField(null=True)  # 赞助人
     patron_link = CharField(null=True)

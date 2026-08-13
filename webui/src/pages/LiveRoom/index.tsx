@@ -270,6 +270,7 @@ const LiveCoverPreview: React.FC = () => {
  * room_name, room_url, custom_filename, bili_upload_template_id, bili_upload_template_ids,
  * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
  * auto_dance_clip, bili_upload_clips_only, cover_mode, custom_cover_path。
+ * bili_upload_clips_only 同时作用于 B 站与网盘整录。
  * 故新建/编辑表单仅暴露这些可编辑字段；投稿模板为多选（一份录播可投多个账号）。
  */
 const RoomFormFields: React.FC = () => (
@@ -368,7 +369,7 @@ const RoomFormFields: React.FC = () => (
           disabled={!auto_dance_clip}
           extra={
             auto_dance_clip
-              ? '开启后，录制结束不再自动投稿整场录像到 B 站；舞蹈切片仍按绑定模板逐条投稿。录像文件页的手动投稿、网盘上传不受影响。'
+              ? '开启后，录制结束不再自动投稿整场录像到 B 站和网盘；舞蹈切片仍按绑定模板逐条投稿，并上传到已选网盘。录像文件页的手动投稿不受影响。'
               : '请先打开自动舞蹈切片，否则不会自动投稿'
           }
         />

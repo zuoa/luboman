@@ -285,17 +285,19 @@ class AsyncLiveBase:
             self.is_living = False
             self._sync_state_to_plugin()
             
-            # 如果开启了自动上传
-            if self.room_data.get('auto_upload', False):
+            # 如果开启了自动上传（只投稿切片时跳过整录，切片由 auto_submit_clip_records 投）
+            from luboman.database.db import resolve_room_bili_template_ids, should_auto_upload_full
+            if self.room_data.get('auto_upload', False) and should_auto_upload_full(self.room_data):
                 await self.async_send_event(AsyncEvent(
                     AsyncEventType.EVENT_UPLOAD,
                     args=(file_list,),
                     priority=4
                 ))
+            elif self.room_data.get('auto_upload', False):
+                logger.info(f'{self.log_prefix} 已开启只投稿切片，跳过整场录像的网盘自动上传')
             
             # 如果开启了B站上传（只投稿切片时跳过整录，切片由 auto_submit_clip_records 投）
-            from luboman.database.db import resolve_room_bili_template_ids, should_auto_upload_full_bili
-            if resolve_room_bili_template_ids(self.room_data) and should_auto_upload_full_bili(self.room_data):
+            if resolve_room_bili_template_ids(self.room_data) and should_auto_upload_full(self.room_data):
                 await self.async_send_event(AsyncEvent(
                     AsyncEventType.EVENT_UPLOAD_BILI,
                     args=(file_list,),

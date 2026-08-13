@@ -898,18 +898,31 @@ class RecordFilePublishBiliTest(unittest.IsolatedAsyncioTestCase):
 
 
 class BiliUploadClipsOnlyTest(unittest.IsolatedAsyncioTestCase):
-    """只投稿切片开关：读取点、整录投稿门闩、切片自动投稿仍走原链路。"""
+    """只投稿切片开关：读取点、整录投稿门闩（B站+网盘）、切片自动投稿仍走原链路。"""
 
-    def test_should_auto_upload_full_bili(self):
-        from luboman.database.db import should_auto_upload_full_bili
+    def test_should_auto_upload_full(self):
+        from luboman.database.db import (
+            is_upload_clips_only,
+            should_auto_upload_full,
+            should_auto_upload_full_bili,
+        )
 
-        self.assertTrue(should_auto_upload_full_bili(None))
-        self.assertTrue(should_auto_upload_full_bili({}))
-        self.assertTrue(should_auto_upload_full_bili({'bili_upload_clips_only': 0}))
-        self.assertTrue(should_auto_upload_full_bili({'bili_upload_clips_only': None}))
-        self.assertTrue(should_auto_upload_full_bili({'bili_upload_clips_only': 'nope'}))
-        self.assertFalse(should_auto_upload_full_bili({'bili_upload_clips_only': 1}))
-        self.assertFalse(should_auto_upload_full_bili({'bili_upload_clips_only': '1'}))
+        self.assertFalse(is_upload_clips_only(None))
+        self.assertFalse(is_upload_clips_only({}))
+        self.assertFalse(is_upload_clips_only({'bili_upload_clips_only': 0}))
+        self.assertFalse(is_upload_clips_only({'bili_upload_clips_only': None}))
+        self.assertFalse(is_upload_clips_only({'bili_upload_clips_only': 'nope'}))
+        self.assertTrue(is_upload_clips_only({'bili_upload_clips_only': 1}))
+        self.assertTrue(is_upload_clips_only({'bili_upload_clips_only': '1'}))
+
+        self.assertTrue(should_auto_upload_full(None))
+        self.assertTrue(should_auto_upload_full({}))
+        self.assertTrue(should_auto_upload_full({'bili_upload_clips_only': 0}))
+        self.assertTrue(should_auto_upload_full({'bili_upload_clips_only': None}))
+        self.assertTrue(should_auto_upload_full({'bili_upload_clips_only': 'nope'}))
+        self.assertFalse(should_auto_upload_full({'bili_upload_clips_only': 1}))
+        self.assertFalse(should_auto_upload_full({'bili_upload_clips_only': '1'}))
+        self.assertIs(should_auto_upload_full_bili, should_auto_upload_full)
 
     def test_update_live_room_persists_clips_only_and_drops_junk(self):
         from peewee import SqliteDatabase
@@ -1005,6 +1018,33 @@ class BiliUploadClipsOnlyTest(unittest.IsolatedAsyncioTestCase):
         })
         self.assertNotIn(AsyncEventType.EVENT_UPLOAD_BILI, sent)
 
+    async def test_record_completed_skips_full_storage_when_clips_only(self):
+        from luboman.core.async_event import AsyncEventType
+
+        sent = await self._emit_record_completed({
+            'id': 7,
+            'room_name': 'r',
+            'auto_upload': True,
+            'upload_storage_platform': 'quark',
+            'bili_upload_clips_only': 1,
+            'auto_dance_clip': 0,
+        })
+        self.assertNotIn(AsyncEventType.EVENT_UPLOAD, sent)
+        self.assertNotIn(AsyncEventType.EVENT_UPLOAD_BILI, sent)
+
+    async def test_record_completed_uploads_full_storage_by_default(self):
+        from luboman.core.async_event import AsyncEventType
+
+        sent = await self._emit_record_completed({
+            'id': 7,
+            'room_name': 'r',
+            'auto_upload': True,
+            'upload_storage_platform': 'quark',
+            'bili_upload_clips_only': 0,
+            'auto_dance_clip': 0,
+        })
+        self.assertIn(AsyncEventType.EVENT_UPLOAD, sent)
+
     async def test_record_completed_uploads_full_bili_by_default(self):
         from luboman.core.async_event import AsyncEventType
 
@@ -1051,6 +1091,85 @@ class BiliUploadClipsOnlyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(scheduled), 1)
         self.assertEqual(scheduled[0]['file_list'], [{'id': 11, 'video': '/tmp/clip.mp4'}])
         self.assertEqual(scheduled[0]['metadata'], {'created_from': 'auto_dance_clip'})
+
+    async def test_auto_submit_clip_records_uploads_storage_when_clips_only(self):
+        from luboman.core.dance_clip import auto_submit_clip_records
+
+        room = {
+            'id': 7,
+            'room_name': 'r',
+            'auto_dance_clip': 1,
+            'bili_upload_clips_only': 1,
+            'upload_storage_platform': 'quark',
+        }
+        record = {'id': 11, 'video': '/tmp/clip.mp4', 'begin_time': None}
+        scheduled = []
+
+        async def fake_run_blocking(fn, *a, **k):
+            return fn(*a, **k)
+
+        async def fake_schedule(**kwargs):
+            scheduled.append(kwargs)
+            return 'storage-1'
+
+        with patch('luboman.core.dance_clip.is_daily_bili_merge_enabled', return_value=False), \
+             patch('luboman.core.dance_clip.run_blocking', side_effect=fake_run_blocking), \
+             patch('luboman.database.db.DB.get_live_room_data', return_value=room), \
+             patch('luboman.database.db.DB.get_record_file', return_value=record), \
+             patch('luboman.database.db.DB.get_bili_templates_with_accounts', return_value=[]), \
+             patch('luboman.database.db.DB.get_douyin_templates_with_accounts', return_value=[]), \
+             patch(
+                 'luboman.core.async_upload.async_upload_scheduler.schedule_upload_simple',
+                 side_effect=fake_schedule,
+             ), \
+             patch('luboman.core.dance_clip.os.path.isfile', return_value=True):
+            await auto_submit_clip_records([11], 7)
+
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(scheduled[0]['platform'], 'quark')
+        self.assertEqual(scheduled[0]['file_list'], [{'id': 11, 'video': '/tmp/clip.mp4'}])
+        self.assertEqual(scheduled[0]['metadata'], {'created_from': 'auto_dance_clip'})
+
+    async def test_auto_submit_skips_storage_when_clips_only_off(self):
+        from luboman.core.dance_clip import auto_submit_clip_records
+
+        room = {
+            'id': 7,
+            'room_name': 'r',
+            'auto_dance_clip': 1,
+            'bili_upload_clips_only': 0,
+            'upload_storage_platform': 'quark',
+            'bili_upload_template_ids': [9],
+        }
+        record = {'id': 11, 'video': '/tmp/clip.mp4', 'begin_time': None}
+        template = {'id': 9, 'template_name': 'tpl', 'bili_account_id': 1}
+        storage_scheduled = []
+
+        async def fake_run_blocking(fn, *a, **k):
+            return fn(*a, **k)
+
+        async def fake_bili(**kwargs):
+            return {'task_id': 'clip-1'}
+
+        async def fake_storage(**kwargs):
+            storage_scheduled.append(kwargs)
+            return 'storage-1'
+
+        with patch('luboman.core.dance_clip.is_daily_bili_merge_enabled', return_value=False), \
+             patch('luboman.core.dance_clip.run_blocking', side_effect=fake_run_blocking), \
+             patch('luboman.database.db.DB.get_live_room_data', return_value=room), \
+             patch('luboman.database.db.DB.get_record_file', return_value=record), \
+             patch('luboman.database.db.DB.get_bili_templates_with_accounts', return_value=[template]), \
+             patch('luboman.database.db.DB.get_douyin_templates_with_accounts', return_value=[]), \
+             patch('luboman.core.async_upload.schedule_bili_submission', side_effect=fake_bili), \
+             patch(
+                 'luboman.core.async_upload.async_upload_scheduler.schedule_upload_simple',
+                 side_effect=fake_storage,
+             ), \
+             patch('luboman.core.dance_clip.os.path.isfile', return_value=True):
+            await auto_submit_clip_records([11], 7)
+
+        self.assertEqual(storage_scheduled, [])
 
     async def test_auto_submit_skips_instant_bili_when_daily_merge_on(self):
         from luboman.core.dance_clip import auto_submit_clip_records

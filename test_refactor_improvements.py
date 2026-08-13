@@ -1038,7 +1038,8 @@ class BiliUploadClipsOnlyTest(unittest.IsolatedAsyncioTestCase):
             scheduled.append(kwargs)
             return {'task_id': 'clip-1'}
 
-        with patch('luboman.core.dance_clip.run_blocking', side_effect=fake_run_blocking), \
+        with patch('luboman.core.dance_clip.is_daily_bili_merge_enabled', return_value=False), \
+             patch('luboman.core.dance_clip.run_blocking', side_effect=fake_run_blocking), \
              patch('luboman.database.db.DB.get_live_room_data', return_value=room), \
              patch('luboman.database.db.DB.get_record_file', return_value=record), \
              patch('luboman.database.db.DB.get_bili_templates_with_accounts', return_value=[template]), \
@@ -1050,6 +1051,163 @@ class BiliUploadClipsOnlyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(scheduled), 1)
         self.assertEqual(scheduled[0]['file_list'], [{'id': 11, 'video': '/tmp/clip.mp4'}])
         self.assertEqual(scheduled[0]['metadata'], {'created_from': 'auto_dance_clip'})
+
+    async def test_auto_submit_skips_instant_bili_when_daily_merge_on(self):
+        from luboman.core.dance_clip import auto_submit_clip_records
+
+        room = {
+            'id': 7,
+            'room_name': 'r',
+            'auto_dance_clip': 1,
+            'bili_upload_template_ids': [9],
+        }
+        record = {'id': 11, 'video': '/tmp/clip.mp4', 'begin_time': None}
+        template = {'id': 9, 'template_name': 'tpl', 'bili_account_id': 1}
+        scheduled = []
+
+        async def fake_run_blocking(fn, *a, **k):
+            return fn(*a, **k)
+
+        async def fake_schedule(**kwargs):
+            scheduled.append(kwargs)
+            return {'task_id': 'clip-1'}
+
+        with patch('luboman.core.dance_clip.is_daily_bili_merge_enabled', return_value=True), \
+             patch('luboman.core.dance_clip.run_blocking', side_effect=fake_run_blocking), \
+             patch('luboman.database.db.DB.get_live_room_data', return_value=room), \
+             patch('luboman.database.db.DB.get_record_file', return_value=record), \
+             patch('luboman.database.db.DB.get_bili_templates_with_accounts', return_value=[template]), \
+             patch('luboman.database.db.DB.get_douyin_templates_with_accounts', return_value=[]), \
+             patch('luboman.core.async_upload.schedule_bili_submission', side_effect=fake_schedule), \
+             patch('luboman.core.dance_clip.os.path.isfile', return_value=True):
+            await auto_submit_clip_records([11], 7)
+
+        self.assertEqual(scheduled, [])
+
+
+class DailyBiliClipMergeTest(unittest.IsolatedAsyncioTestCase):
+    def test_clip_date_and_flush_decision(self):
+        from luboman.core.dance_clip import _clip_date, _should_flush_date, _chunk_clips
+
+        today = datetime.date(2026, 8, 13)
+        self.assertEqual(
+            _clip_date({'begin_time': datetime.datetime(2026, 8, 12, 23, 50)}),
+            datetime.date(2026, 8, 12),
+        )
+        self.assertEqual(_clip_date({'begin_time': '2026-08-13 01:02:03'}), today)
+        self.assertTrue(_should_flush_date(datetime.date(2026, 8, 12), today, True))
+        self.assertFalse(_should_flush_date(today, today, True))
+        self.assertTrue(_should_flush_date(today, today, False))
+        self.assertEqual(len(_chunk_clips([{'id': i} for i in range(101)])), 2)
+        self.assertEqual(len(_chunk_clips([{'id': i} for i in range(101)])[0]), 100)
+
+    def test_room_is_live_prefers_memory_instance(self):
+        from luboman.core.async_live import async_live_room_manager
+        from luboman.core.dance_clip import _room_is_live
+
+        class _FakeLive:
+            is_living = False
+
+        room = {'id': 7, 'live_state': 1}
+        orig = dict(async_live_room_manager.live_rooms)
+        async_live_room_manager.live_rooms['7'] = _FakeLive()
+        try:
+            self.assertFalse(_room_is_live(room))
+        finally:
+            async_live_room_manager.live_rooms.clear()
+            async_live_room_manager.live_rooms.update(orig)
+        self.assertTrue(_room_is_live(room))
+
+    async def _flush(self, clips, room, today=None):
+        from luboman.core.dance_clip import flush_daily_bili_clip_batches
+
+        scheduled = []
+
+        async def fake_run_blocking(fn, *a, **k):
+            return fn(*a, **k)
+
+        async def fake_schedule(**kwargs):
+            scheduled.append(kwargs)
+            return {'task_id': f't-{len(scheduled)}'}
+
+        template = {'id': 9, 'template_name': 'tpl'}
+        with patch('luboman.core.dance_clip.is_daily_bili_merge_enabled', return_value=True), \
+             patch('luboman.core.dance_clip._today', return_value=today or datetime.date(2026, 8, 13)), \
+             patch('luboman.core.dance_clip._ensure_part_title_path', side_effect=lambda src, title, cid: src), \
+             patch('luboman.core.dance_clip.run_blocking', side_effect=fake_run_blocking), \
+             patch('luboman.database.db.DB.list_pending_daily_bili_clips', return_value=clips), \
+             patch('luboman.database.db.DB.get_live_room_data', return_value=room), \
+             patch('luboman.database.db.DB.get_bili_templates_with_accounts', return_value=[template]), \
+             patch('luboman.database.db.resolve_room_bili_template_ids', return_value=[9]), \
+             patch('luboman.core.async_upload.schedule_bili_submission', side_effect=fake_schedule):
+            results = await flush_daily_bili_clip_batches(7)
+        return results, scheduled
+
+    def _room(self, **overrides):
+        room = {
+            'id': 7,
+            'room_name': '主播A',
+            'auto_dance_clip': 1,
+            'live_state': 0,
+            'bili_upload_template_ids': [9],
+        }
+        room.update(overrides)
+        return room
+
+    def _clip(self, rid, when):
+        return {
+            'id': rid,
+            'live_room_id': 7,
+            'video': f'/tmp/c{rid}.mp4',
+            'begin_time': when,
+        }
+
+    async def test_offline_same_day_packs_one_submission(self):
+        clips = [
+            self._clip(1, datetime.datetime(2026, 8, 13, 20, 0)),
+            self._clip(2, datetime.datetime(2026, 8, 13, 21, 0)),
+        ]
+        results, scheduled = await self._flush(clips, self._room(live_state=0))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual([item['id'] for item in scheduled[0]['file_list']], [1, 2])
+        self.assertEqual(scheduled[0]['metadata']['created_from'], 'auto_dance_clip_daily')
+        self.assertEqual(scheduled[0]['metadata']['daily_date'], '2026-08-13')
+        self.assertIn('舞蹈切片', scheduled[0]['room_data']['room_title'])
+
+    async def test_live_same_day_waits(self):
+        clips = [self._clip(1, datetime.datetime(2026, 8, 13, 20, 0))]
+        results, scheduled = await self._flush(clips, self._room(live_state=1))
+        self.assertEqual(results, [])
+        self.assertEqual(scheduled, [])
+
+    async def test_live_flushes_yesterday(self):
+        clips = [
+            self._clip(1, datetime.datetime(2026, 8, 12, 23, 0)),
+            self._clip(2, datetime.datetime(2026, 8, 13, 1, 0)),
+        ]
+        results, scheduled = await self._flush(clips, self._room(live_state=1))
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual([item['id'] for item in scheduled[0]['file_list']], [1])
+        self.assertEqual(scheduled[0]['metadata']['daily_date'], '2026-08-12')
+        self.assertEqual(len(results), 1)
+
+    async def test_splits_over_100_parts(self):
+        clips = [
+            self._clip(i, datetime.datetime(2026, 8, 13, 10, 0) + datetime.timedelta(minutes=i))
+            for i in range(1, 102)
+        ]
+        _, scheduled = await self._flush(clips, self._room(live_state=0))
+        self.assertEqual(len(scheduled), 2)
+        self.assertEqual(len(scheduled[0]['file_list']), 100)
+        self.assertEqual(len(scheduled[1]['file_list']), 1)
+        self.assertIn('(2)', scheduled[1]['room_data']['room_title'])
+
+    async def test_disabled_merge_does_not_flush(self):
+        from luboman.core.dance_clip import flush_daily_bili_clip_batches
+
+        with patch('luboman.core.dance_clip.is_daily_bili_merge_enabled', return_value=False):
+            self.assertEqual(await flush_daily_bili_clip_batches(7), [])
 
 
 if __name__ == "__main__":

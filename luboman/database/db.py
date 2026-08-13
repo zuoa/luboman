@@ -31,6 +31,18 @@ CLIP_TASK_STATUS_RUNNING = 'RUNNING'
 CLIP_TASK_STATUS_SUCCESS = 'SUCCESS'
 CLIP_TASK_STATUS_FAILED = 'FAILED'
 
+CLIP_RECORD_SERIES_PREFIX = 'CLIP:'
+
+BILI_SUBMISSION_PLATFORMS = (
+    'biliup-rs', 'biliup', 'biliup_cli', 'biliweb', 'bili_web', 'bili-web',
+)
+BILI_CLAIM_STATUSES = (
+    SUBMISSION_TASK_STATUS_PENDING,
+    SUBMISSION_TASK_STATUS_RUNNING,
+    SUBMISSION_TASK_STATUS_RETRYING,
+    SUBMISSION_TASK_STATUS_SUCCESS,
+)
+
 
 def struct_time_to_datetime(date: time.struct_time):
     return datetime.fromtimestamp(time.mktime(date))
@@ -836,6 +848,52 @@ class DB:
             return 0
         with db.connection_context():
             return RecordFile.delete().where(RecordFile.video.startswith(path_prefix)).execute()
+
+    @classmethod
+    def list_claimed_bili_record_file_ids(cls):
+        """已被活跃或成功的 B 站投稿任务占用的 RecordFile id。
+
+        不能看 RecordFile.upload_info：抖音即投会整份覆盖该字段。
+        """
+        claimed = set()
+        with db.connection_context():
+            query = (
+                SubmissionTask
+                .select(SubmissionTask.record_file_ids)
+                .where(
+                    SubmissionTask.platform.in_(list(BILI_SUBMISSION_PLATFORMS)),
+                    SubmissionTask.status.in_(list(BILI_CLAIM_STATUSES)),
+                    SubmissionTask.record_file_ids.is_null(False),
+                )
+            )
+            for task in query:
+                for item in task.record_file_ids or []:
+                    try:
+                        claimed.add(int(item))
+                    except (TypeError, ValueError):
+                        continue
+        return claimed
+
+    @classmethod
+    def list_pending_daily_bili_clips(cls, live_room_id=None):
+        """尚未进入 B 站稿件的舞蹈切片（文件仍在磁盘上），按开始时间排序。"""
+        claimed = cls.list_claimed_bili_record_file_ids()
+        with db.connection_context():
+            query = RecordFile.select().where(
+                RecordFile.series_code.startswith(CLIP_RECORD_SERIES_PREFIX),
+            )
+            if live_room_id is not None:
+                query = query.where(RecordFile.live_room_id == live_room_id)
+            query = query.order_by(RecordFile.begin_time.asc(), RecordFile.id.asc())
+            rows = []
+            for record in query:
+                if record.id in claimed:
+                    continue
+                video = record.video
+                if not video or not os.path.isfile(video):
+                    continue
+                rows.append(model_to_dict(record))
+            return rows
 
     @classmethod
     def create_submission_task(cls, data):

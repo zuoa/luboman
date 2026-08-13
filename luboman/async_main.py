@@ -285,6 +285,12 @@ class AsyncLubomanApplication:
         )
         self.timer_tasks.append(room_expiry_task)
 
+        daily_clip_flush_task = asyncio.create_task(
+            self._periodic_daily_clip_flush(),
+            name="periodic-daily-clip-flush"
+        )
+        self.timer_tasks.append(daily_clip_flush_task)
+
         logger.info("定时任务启动完成")
     
     async def _periodic_cleanup(self):
@@ -308,6 +314,22 @@ class AsyncLubomanApplication:
                 logger.error(f"定期清理失败: {e}")
 
             await asyncio.sleep(1800)  # 30分钟执行一次
+
+    async def _periodic_daily_clip_flush(self):
+        """启动后补扫一次，之后每 10 分钟冲刷跨天/已下播的舞蹈切片日结包。"""
+        from luboman.core.dance_clip import flush_daily_bili_clip_batches
+
+        await asyncio.sleep(60)
+        while self.running:
+            try:
+                if not self.running:
+                    break
+                await flush_daily_bili_clip_batches()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("舞蹈切片日结冲刷失败")
+            await asyncio.sleep(600)
 
     def _account_check_interval(self):
         """账号登录态巡检间隔（秒），可通过配置 bili_account_check_interval 覆盖，默认 6 小时。"""

@@ -65,6 +65,9 @@ const ConfigPage: React.FC = () => {
     dance_clip_boundary_gap_seconds: 10,
     dance_clip_title_template:
       '【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}',
+    dance_clip_daily_title_template:
+      '【{room_name}】%Y年%m月%d日 舞蹈切片',
+    dance_clip_bili_daily_merge: 'true',
     dance_clip_douyin_title_template: '【{room_name}】舞蹈片段{seq}',
     douyin_cookies: '',
     afreecatv_username: '',
@@ -214,6 +217,15 @@ const ConfigPage: React.FC = () => {
                 if (!Number.isNaN(n)) merged[k] = n;
               }
             });
+            ['dance_clip_accurate_cut', 'dance_clip_bili_daily_merge'].forEach(
+              (k) => {
+                if (merged[k] == null || merged[k] === '') return;
+                const on = ['1', 'true', 'yes', 'on'].includes(
+                  String(merged[k]).toLowerCase(),
+                );
+                merged[k] = on ? 'true' : 'false';
+              },
+            );
             return merged;
           } catch {
             return initialConfigValues;
@@ -402,11 +414,26 @@ const ConfigPage: React.FC = () => {
               max={4}
               extra="同时执行的切片任务数，探测吃 CPU，不宜过大；重启后生效"
             />
+            <ProFormSelect
+              name="dance_clip_bili_daily_merge"
+              label="B站日结多P"
+              options={[
+                { label: '开启（同一主播同一天合成一条动态）', value: 'true' },
+                { label: '关闭（切一条投一条）', value: 'false' },
+              ]}
+              extra="开启后自动切片先入库，下播或跨天才打包成一条多 P 稿件。抖音不受影响，仍即时逐条发"
+            />
+            <ProFormText
+              name="dance_clip_daily_title_template"
+              label="B站日结稿标题"
+              placeholder="【{room_name}】%Y年%m月%d日 舞蹈切片"
+              extra="日结多P 的稿件标题。占位符同上，时间取切片所属自然日"
+            />
             <ProFormText
               name="dance_clip_title_template"
-              label="投稿标题模板"
+              label="分P / 单条标题模板"
               placeholder="【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}"
-              extra="支持 {room_name} 主播名称、{room_title} 直播标题、{seq} 切片序号，以及 %Y年%m月%d日 %H时 等时间格式（取切片开始时间）"
+              extra="日结开启时作为分 P 标题；关闭时作为单条 B 站稿标题。支持 {room_name}、{room_title}、{seq}，以及 %Y年%m月%d日 %H时 等时间格式（取切片开始时间）"
             />
             <ProFormText
               name="dance_clip_douyin_title_template"

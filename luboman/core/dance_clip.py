@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 import uuid
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from luboman.config import config
@@ -90,11 +90,16 @@ def clear_clip_task_abort(task_id: str) -> None:
 
 # 舞蹈切片投稿标题模板：支持 {room_name} {room_title} {seq} 占位符和
 # strftime 时间格式（取切片开始时间）。全局配置项 dance_clip_title_template。
+# 日结多 P 开启时作为分 P 标题；关闭时作为单条 B 站稿标题（塞进模板 {room_title}）。
 DEFAULT_CLIP_TITLE_TEMPLATE = '【{room_name}】%Y年%m月%d日 %H时 舞蹈片段{seq}'
 
 # 抖音切片标题模板（全局配置项 dance_clip_douyin_title_template）。
 # 抖音标题上限 30 字（插件内截断），默认模板比B站的短。
 DEFAULT_DOUYIN_CLIP_TITLE_TEMPLATE = '【{room_name}】舞蹈片段{seq}'
+
+# B 站日结多 P 稿件标题。strftime 取切片所属自然日。
+DEFAULT_DAILY_TITLE_TEMPLATE = '【{room_name}】%Y年%m月%d日 舞蹈切片'
+DAILY_MERGE_MAX_PARTS = 100
 
 
 class _MissingKeyDict(dict):
@@ -109,8 +114,6 @@ def format_clip_title(template, room_data, seq, begin_time=None) -> str:
 
     占位符在切片开始时间上展开 strftime；模板非法时回退默认模板。
     """
-    from datetime import datetime
-
     def render(tpl):
         values = _MissingKeyDict(room_data or {})
         values['seq'] = seq
@@ -132,6 +135,125 @@ def _to_bool(value, default=False):
     if value is None:
         return default
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def is_daily_bili_merge_enabled() -> bool:
+    """AUTO 舞蹈切片是否攒到下播/跨天再打成一条多 P。缺省开启。"""
+    value = config.get('dance_clip_bili_daily_merge')
+    if value is None or value == '':
+        return True
+    return _to_bool(value, default=True)
+
+
+def _today() -> date:
+    return datetime.now().date()
+
+
+def _clip_date(clip: Dict[str, Any]) -> date:
+    begin_time = clip.get('begin_time')
+    if isinstance(begin_time, datetime):
+        return begin_time.date()
+    if isinstance(begin_time, date):
+        return begin_time
+    if isinstance(begin_time, str):
+        text = begin_time.strip()
+        for candidate in (text, text.replace('Z', '+00:00')):
+            try:
+                return datetime.fromisoformat(candidate).date()
+            except ValueError:
+                continue
+        try:
+            return datetime.strptime(text[:10], '%Y-%m-%d').date()
+        except ValueError:
+            pass
+    return _today()
+
+
+def _room_is_live(room_data: Optional[Dict[str, Any]]) -> bool:
+    """优先看内存里的直播实例；下播时 is_living 会先于 DB live_state 变 0。"""
+    room_id = (room_data or {}).get('id')
+    if room_id is not None:
+        try:
+            from luboman.core.async_live import async_live_room_manager
+            live = async_live_room_manager.live_rooms.get(str(room_id))
+            if live is not None:
+                return bool(getattr(live, 'is_living', False))
+        except Exception:
+            pass
+    return int((room_data or {}).get('live_state') or 0) == 1
+
+
+def _should_flush_date(day: date, today: date, room_is_live: bool) -> bool:
+    if day < today:
+        return True
+    return day == today and not room_is_live
+
+
+def _chunk_clips(clips: List[Dict[str, Any]], max_parts: int = DAILY_MERGE_MAX_PARTS) -> List[List[Dict[str, Any]]]:
+    size = max(1, int(max_parts or DAILY_MERGE_MAX_PARTS))
+    return [clips[index:index + size] for index in range(0, len(clips), size)]
+
+
+def _sanitize_filename(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '_', (name or '').strip())
+    name = name.strip(' .')
+    return (name[:80] or 'clip')
+
+
+def _ensure_part_title_path(src: str, title: str, clip_id) -> str:
+    """在切片旁建标题软链，供 biliup 用文件名当分 P 名。失败则回退原路径。"""
+    if not src or not os.path.isfile(src):
+        return src
+    dest_dir = os.path.join(os.path.dirname(os.path.abspath(src)), '.daily_parts')
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except OSError:
+        logger.warning('无法创建分P标题目录 %s，回退原文件名', dest_dir, exc_info=True)
+        return src
+
+    ext = os.path.splitext(src)[1] or '.mp4'
+    abs_src = os.path.abspath(src)
+    candidates = [
+        os.path.join(dest_dir, f'{_sanitize_filename(title)}{ext}'),
+        os.path.join(dest_dir, f'{_sanitize_filename(title)}_{clip_id}{ext}'),
+    ]
+    for dest in candidates:
+        if os.path.lexists(dest):
+            try:
+                if os.path.samefile(dest, abs_src):
+                    return dest
+            except OSError:
+                continue
+            continue
+        try:
+            os.symlink(abs_src, dest)
+            return dest
+        except OSError:
+            logger.warning('创建分P标题软链失败 %s -> %s', dest, abs_src, exc_info=True)
+            continue
+    return src
+
+
+def _titled_file_list(clips: List[Dict[str, Any]], room_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    title_template = config.get('dance_clip_title_template')
+    file_list = []
+    for seq, clip in enumerate(clips, start=1):
+        part_title = format_clip_title(title_template, room_data, seq, clip.get('begin_time'))
+        file_list.append({
+            'id': clip['id'],
+            'video': _ensure_part_title_path(clip.get('video'), part_title, clip['id']),
+        })
+    return file_list
+
+
+_flush_lock: Optional[asyncio.Lock] = None
+
+
+def _get_flush_lock() -> asyncio.Lock:
+    global _flush_lock
+    if _flush_lock is None:
+        _flush_lock = asyncio.Lock()
+    return _flush_lock
 
 
 def load_detect_params(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -942,6 +1064,9 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
 
     bili_title_template = config.get('dance_clip_title_template')
     douyin_title_template = config.get('dance_clip_douyin_title_template')
+    daily_merge = is_daily_bili_merge_enabled()
+    if daily_merge and bili_templates:
+        logger.info('房间 %s 已开启 B 站日结多P，%d 条切片先入库，等下播或跨天再打包', live_room_id, len(clip_ids))
     for seq, record_id in enumerate(clip_ids, start=1):
         try:
             record = await run_blocking(DB.get_record_file, record_id)
@@ -951,25 +1076,26 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
         video = record.get('video')
         if not video or not os.path.isfile(video):
             continue
-        for template_info in bili_templates:
-            clip_room_data = {
-                **room_data,
-                # 每个切片单独投稿，标题按全局模板渲染（含序号避免多稿同名）
-                'room_title': format_clip_title(bili_title_template, room_data, seq, record.get('begin_time')),
-                'bili_upload_template': template_info,
-                'bili_upload_template_id': template_info['id'],
-            }
-            try:
-                result = await schedule_bili_submission(
-                    file_list=[{'id': record_id, 'video': video}],
-                    room_data=clip_room_data,
-                    source='AUTO',
-                    priority=UploadPriority.HIGH,
-                    metadata={'created_from': 'auto_dance_clip'},
-                )
-                logger.info('舞蹈切片投稿任务已创建: 模板=%s, %s', template_info.get('template_name'), result)
-            except Exception:
-                logger.exception('舞蹈切片 %s 投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
+        if not daily_merge:
+            for template_info in bili_templates:
+                clip_room_data = {
+                    **room_data,
+                    # 每个切片单独投稿，标题按全局模板渲染（含序号避免多稿同名）
+                    'room_title': format_clip_title(bili_title_template, room_data, seq, record.get('begin_time')),
+                    'bili_upload_template': template_info,
+                    'bili_upload_template_id': template_info['id'],
+                }
+                try:
+                    result = await schedule_bili_submission(
+                        file_list=[{'id': record_id, 'video': video}],
+                        room_data=clip_room_data,
+                        source='AUTO',
+                        priority=UploadPriority.HIGH,
+                        metadata={'created_from': 'auto_dance_clip'},
+                    )
+                    logger.info('舞蹈切片投稿任务已创建: 模板=%s, %s', template_info.get('template_name'), result)
+                except Exception:
+                    logger.exception('舞蹈切片 %s 投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
 
         for template_info in douyin_templates:
             vertical = _to_bool(template_info.get('vertical_crop'), default=True)
@@ -1004,6 +1130,118 @@ async def auto_submit_clip_records(clip_ids: List[int], live_room_id) -> None:
                 logger.exception('舞蹈切片 %s 抖音投稿任务创建失败: 模板=%s', record_id, template_info.get('template_name'))
 
 
+async def _submit_daily_bili_batch(
+    room_data: Dict[str, Any],
+    day: date,
+    clips: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    from luboman.database.db import DB, resolve_room_bili_template_ids
+    from luboman.core.async_upload import UploadPriority, schedule_bili_submission
+
+    template_ids = resolve_room_bili_template_ids(room_data)
+    templates = (
+        await run_blocking(DB.get_bili_templates_with_accounts, template_ids)
+        if template_ids else []
+    )
+    if not templates:
+        logger.info('房间 %s 未配置可用 B 站模板，跳过 %s 日结打包', room_data.get('id'), day)
+        return []
+
+    clips = sorted(
+        clips,
+        key=lambda item: (item.get('begin_time') or datetime.min, item.get('id') or 0),
+    )
+    chunks = _chunk_clips(clips)
+    day_begin = datetime.combine(day, datetime.min.time())
+    daily_template = config.get('dance_clip_daily_title_template') or DEFAULT_DAILY_TITLE_TEMPLATE
+    scheduled = []
+    for index, chunk in enumerate(chunks, start=1):
+        title = format_clip_title(daily_template, room_data, index, day_begin)
+        if len(chunks) > 1 and index > 1:
+            title = f'{title}({index})'
+        file_list = _titled_file_list(chunk, room_data)
+        for template_info in templates:
+            upload_template = {**template_info, 'title': '{room_title}'}
+            clip_room_data = {
+                **room_data,
+                'room_title': title,
+                'bili_upload_template': upload_template,
+                'bili_upload_template_id': template_info['id'],
+            }
+            try:
+                result = await schedule_bili_submission(
+                    file_list=file_list,
+                    room_data=clip_room_data,
+                    source='AUTO',
+                    priority=UploadPriority.HIGH,
+                    metadata={
+                        'created_from': 'auto_dance_clip_daily',
+                        'daily_date': day.isoformat(),
+                        'part_index': index,
+                    },
+                )
+                logger.info(
+                    '舞蹈切片日结投稿已创建: 房间=%s 日期=%s 模板=%s 分P=%d %s',
+                    room_data.get('id'), day, template_info.get('template_name'),
+                    len(file_list), result,
+                )
+                scheduled.append(result)
+            except Exception:
+                logger.exception(
+                    '舞蹈切片日结投稿失败: 房间=%s 日期=%s 模板=%s',
+                    room_data.get('id'), day, template_info.get('template_name'),
+                )
+    return scheduled
+
+
+async def flush_daily_bili_clip_batches(live_room_id=None) -> List[Dict[str, Any]]:
+    """把未投 B 站的舞蹈切片按主播+自然日打包成多 P。
+
+    昨天及更早的批次一律冲刷（跨午夜仍在播也发昨天的）。
+    当天批次仅在房间已下播时冲刷。
+    """
+    if not is_daily_bili_merge_enabled():
+        return []
+
+    from luboman.database.db import DB
+
+    async with _get_flush_lock():
+        try:
+            clips = await run_blocking(DB.list_pending_daily_bili_clips, live_room_id)
+        except Exception:
+            logger.exception('查询待日结舞蹈切片失败')
+            return []
+        if not clips:
+            return []
+
+        by_room: Dict[Any, List[Dict[str, Any]]] = {}
+        for clip in clips:
+            by_room.setdefault(clip.get('live_room_id'), []).append(clip)
+
+        today = _today()
+        scheduled: List[Dict[str, Any]] = []
+        for room_id, room_clips in by_room.items():
+            if not room_id:
+                continue
+            try:
+                room_data = await run_blocking(DB.get_live_room_data, room_id)
+            except Exception:
+                logger.warning('日结打包：房间 %s 不存在', room_id)
+                continue
+            if int(room_data.get('auto_dance_clip') or 0) != 1:
+                logger.info('房间 %s 已关闭自动舞蹈切片，跳过日结打包', room_id)
+                continue
+            room_is_live = _room_is_live(room_data)
+            by_day: Dict[date, List[Dict[str, Any]]] = {}
+            for clip in room_clips:
+                by_day.setdefault(_clip_date(clip), []).append(clip)
+            for day, day_clips in sorted(by_day.items()):
+                if not _should_flush_date(day, today, room_is_live):
+                    continue
+                scheduled.extend(await _submit_daily_bili_batch(room_data, day, day_clips))
+        return scheduled
+
+
 async def _auto_submit_task_clips(task_id: str) -> None:
     """AUTO 切片任务成功后，把产出的切片逐个投稿。"""
     from luboman.database.db import DB
@@ -1015,7 +1253,10 @@ async def _auto_submit_task_clips(task_id: str) -> None:
         return
     if (task.get('source') or 'MANUAL') != 'AUTO' or task.get('status') != 'SUCCESS':
         return
-    await auto_submit_clip_records(task.get('clip_record_file_ids') or [], task.get('live_room_id'))
+    live_room_id = task.get('live_room_id')
+    await auto_submit_clip_records(task.get('clip_record_file_ids') or [], live_room_id)
+    if is_daily_bili_merge_enabled() and live_room_id:
+        await flush_daily_bili_clip_batches(live_room_id)
 
 
 class AsyncClipScheduler:
@@ -1184,6 +1425,8 @@ class AsyncClipScheduler:
         clip_id = await run_blocking(drain_pending_tail, live_room_id, executor=self.executor)
         if clip_id:
             await auto_submit_clip_records([clip_id], live_room_id)
+        if is_daily_bili_merge_enabled():
+            await flush_daily_bili_clip_batches(live_room_id)
 
 
 # 全局切片任务调度器实例

@@ -1,6 +1,7 @@
 import services from '@/services/luboman';
 import {
   InfoCircleOutlined,
+  QrcodeOutlined,
   ReloadOutlined,
   SaveOutlined,
 } from '@ant-design/icons';
@@ -12,13 +13,38 @@ import {
   ProFormSelect,
   ProFormText,
 } from '@ant-design/pro-components';
-import { Button, Space, Tabs, message } from 'antd';
-import { useState } from 'react';
+import { Button, Form, Modal, QRCode, Space, Tabs, Tag, message } from 'antd';
+import { useEffect, useState } from 'react';
 import styles from './index.less';
+
+const loginStatusText: Record<string, string> = {
+  created: '已创建',
+  waiting: '等待扫码',
+  success: '已完成',
+  failed: '失败',
+  stopped: '已停止',
+  expired: '已超时',
+};
+
+const loginStatusColor: Record<string, string> = {
+  created: 'default',
+  waiting: 'processing',
+  success: 'success',
+  failed: 'error',
+  stopped: 'default',
+  expired: 'warning',
+};
 
 const ConfigPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const { getConfig, setConfig } = services.Config;
+  const { startQuarkLogin, getQuarkLoginStatus, stopQuarkLogin } =
+    services.QuarkAccount;
+  const [form] = Form.useForm();
+  // 夸克扫码登录 Modal 状态机（status: created → waiting → success/failed/expired）
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginSession, setLoginSession] = useState<API.QuarkLoginSession>();
 
   const initialConfigValues = {
     custom_filename: '{room_name}.%Y_%m_%d_%H_%M_%S.{title}',
@@ -75,6 +101,65 @@ const ConfigPage: React.FC = () => {
     }
   };
 
+  // 等待扫码时轮询会话状态（与 B 站/抖音登录一致：1.2s 间隔，静默失败）
+  useEffect(() => {
+    if (!loginSession?.session_id || loginSession.status !== 'waiting') {
+      return undefined;
+    }
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await getQuarkLoginStatus(
+          { session_id: loginSession.session_id },
+          { skipErrorHandler: true },
+        );
+        setLoginSession(next);
+      } catch {
+        // 轮询失败时保留当前二维码，统一错误提示会干扰扫码登录流程。
+      }
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [loginSession?.session_id, loginSession?.status]);
+
+  // 扫码成功后服务端已写回 quark_cookie，重新拉取回填到表单
+  useEffect(() => {
+    if (loginSession?.status !== 'success') return;
+    message.success('扫码登录成功，Cookie 已写入配置');
+    getConfig()
+      .then((data) => {
+        if (data?.quark_cookie) {
+          form.setFieldValue('quark_cookie', data.quark_cookie);
+        }
+      })
+      .catch(() => {});
+  }, [loginSession?.status]);
+
+  const handleStartQuarkLogin = async () => {
+    setLoginLoading(true);
+    try {
+      const session = await startQuarkLogin();
+      setLoginSession(session);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const openQuarkLoginModal = () => {
+    setLoginSession(undefined);
+    setLoginOpen(true);
+    handleStartQuarkLogin();
+  };
+
+  const closeQuarkLoginModal = () => {
+    if (loginSession?.status === 'waiting') {
+      stopQuarkLogin(
+        { session_id: loginSession.session_id },
+        { skipErrorHandler: true },
+      ).catch(() => {});
+    }
+    setLoginSession(undefined);
+    setLoginOpen(false);
+  };
+
   // 分区标题：主色左边框 + 名称 + 灰色描述，令牌驱动
   const sectionTitle = (name: string, desc?: string) => (
     <div className={styles.sectionTitle}>
@@ -92,6 +177,7 @@ const ConfigPage: React.FC = () => {
       }}
     >
       <ProForm
+        form={form}
         submitter={{
           render: (props) => (
             <div className={styles.formActions}>
@@ -388,7 +474,7 @@ const ConfigPage: React.FC = () => {
                       name="quark_cookie"
                       label="夸克网盘Cookie"
                       placeholder="从浏览器 pan.quark.cn 复制完整 Cookie 字符串"
-                      extra="用于录像上传夸克网盘；Cookie 会自动续期，失效后需重新填写"
+                      extra="用于录像上传夸克网盘；Cookie 会自动续期，失效后需重新填写或扫码登录"
                     />
                     <ProFormText
                       name="quark_root_dir"
@@ -396,6 +482,12 @@ const ConfigPage: React.FC = () => {
                       placeholder="留空则上传到网盘根目录下"
                       extra="可选：文件保存到 根目录/video/平台/房间/日期/ 下"
                     />
+                    <Button
+                      icon={<QrcodeOutlined />}
+                      onClick={openQuarkLoginModal}
+                    >
+                      扫码登录
+                    </Button>
                   </div>
                 ),
               },
@@ -403,6 +495,63 @@ const ConfigPage: React.FC = () => {
           />
         </ProCard>
       </ProForm>
+      <Modal
+        title="夸克网盘扫码登录"
+        open={loginOpen}
+        footer={null}
+        onCancel={closeQuarkLoginModal}
+        destroyOnClose
+        width={340}
+      >
+        <div style={{ textAlign: 'center', padding: '8px 0' }}>
+          {loginSession?.qrcode_url ? (
+            <QRCode
+              value={loginSession.qrcode_url}
+              size={200}
+              status={
+                loginSession.status === 'expired' ||
+                loginSession.status === 'failed'
+                  ? 'expired'
+                  : 'active'
+              }
+              onRefresh={handleStartQuarkLogin}
+            />
+          ) : (
+            <div
+              style={{
+                height: 200,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'rgba(0,0,0,0.45)',
+                fontSize: 13,
+              }}
+            >
+              {loginLoading
+                ? '正在获取二维码…'
+                : loginSession?.error_message || '正在获取二维码…'}
+            </div>
+          )}
+          <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(0,0,0,0.65)' }}>
+            请使用夸克 App 扫码登录
+          </div>
+          {loginSession ? (
+            <div style={{ marginTop: 8 }}>
+              <Tag color={loginStatusColor[loginSession.status] || 'default'}>
+                {loginStatusText[loginSession.status] || loginSession.status}
+              </Tag>
+              {loginSession.status === 'failed' &&
+              loginSession.error_message ? (
+                <div
+                  style={{ marginTop: 8, fontSize: 12, color: 'rgba(0,0,0,0.45)' }}
+                >
+                  {loginSession.error_message}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Modal>
     </PageContainer>
   );
 };

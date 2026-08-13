@@ -269,7 +269,7 @@ const LiveCoverPreview: React.FC = () => {
  * 后端 update_live_room 仅更新以下字段（白名单合并）：
  * room_name, room_url, custom_filename, bili_upload_template_id, bili_upload_template_ids,
  * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
- * auto_dance_clip, cover_mode, custom_cover_path。
+ * auto_dance_clip, bili_upload_clips_only, cover_mode, custom_cover_path。
  * 故新建/编辑表单仅暴露这些可编辑字段；投稿模板为多选（一份录播可投多个账号）。
  */
 const RoomFormFields: React.FC = () => (
@@ -360,6 +360,20 @@ const RoomFormFields: React.FC = () => (
       label="自动舞蹈切片"
       tooltip="每个录制分段完成后自动探测三分屏舞蹈片段并切片；跨分段的舞蹈会自动拼接；配置投稿模板后切片会逐个单独投稿到 B 站"
     />
+    <ProFormDependency name={['auto_dance_clip']}>
+      {({ auto_dance_clip }) => (
+        <ProFormSwitch
+          name="bili_upload_clips_only"
+          label="只投稿切片，不投完整录像"
+          disabled={!auto_dance_clip}
+          extra={
+            auto_dance_clip
+              ? '开启后，录制结束不再自动投稿整场录像到 B 站；舞蹈切片仍按绑定模板逐条投稿。录像文件页的手动投稿、网盘上传不受影响。'
+              : '请先打开自动舞蹈切片，否则不会自动投稿'
+          }
+        />
+      )}
+    </ProFormDependency>
     <ProFormDateTimePicker name="active_begin" label="激活起始时间" />
     <ProFormDateTimePicker name="active_end" label="激活截止时间" />
   </>
@@ -770,7 +784,7 @@ const LiveRoomList: React.FC = () => {
         open={createOpen}
         onOpenChange={setCreateOpen}
         modalProps={{ destroyOnClose: true }}
-        initialValues={{ active_state: true, auto_dance_clip: false, cover_mode: '' }}
+        initialValues={{ active_state: true, auto_dance_clip: false, bili_upload_clips_only: false, cover_mode: '' }}
         onFinish={async (values) => {
           if (values.cover_mode === 'custom' && !values.custom_cover_path) {
             message.warning('请选择「自定义上传」后上传封面图片，或改用其他封面模式');
@@ -780,6 +794,7 @@ const LiveRoomList: React.FC = () => {
             ...values,
             active_state: values.active_state ? 1 : 0,
             auto_dance_clip: values.auto_dance_clip ? 1 : 0,
+            bili_upload_clips_only: values.bili_upload_clips_only ? 1 : 0,
           });
           fetchData();
           return true;
@@ -802,6 +817,7 @@ const LiveRoomList: React.FC = () => {
                 ...editing,
                 active_state: editing.active_state === 1,
                 auto_dance_clip: editing.auto_dance_clip === 1,
+                bili_upload_clips_only: editing.bili_upload_clips_only === 1,
                 // 多选字段：null 归一为 undefined；兼容只有旧单模板字段的历史数据
                 bili_upload_template_ids:
                   editing.bili_upload_template_ids ??
@@ -826,6 +842,7 @@ const LiveRoomList: React.FC = () => {
             ...values,
             active_state: values.active_state ? 1 : 0,
             auto_dance_clip: values.auto_dance_clip ? 1 : 0,
+            bili_upload_clips_only: values.bili_upload_clips_only ? 1 : 0,
           });
           fetchData();
           return true;

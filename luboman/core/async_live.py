@@ -293,14 +293,16 @@ class AsyncLiveBase:
                     priority=4
                 ))
             
-            # 如果开启了B站上传
-            from luboman.database.db import resolve_room_bili_template_ids
-            if resolve_room_bili_template_ids(self.room_data):
+            # 如果开启了B站上传（只投稿切片时跳过整录，切片由 auto_submit_clip_records 投）
+            from luboman.database.db import resolve_room_bili_template_ids, should_auto_upload_full_bili
+            if resolve_room_bili_template_ids(self.room_data) and should_auto_upload_full_bili(self.room_data):
                 await self.async_send_event(AsyncEvent(
                     AsyncEventType.EVENT_UPLOAD_BILI,
                     args=(file_list,),
                     priority=4
                 ))
+            elif resolve_room_bili_template_ids(self.room_data):
+                logger.info(f'{self.log_prefix} 已开启只投稿切片，跳过整场录像的 B 站自动投稿')
 
             # 直播结束：冲刷自动舞蹈切片挂起的跨分段边界片段
             if int(self.room_data.get('auto_dance_clip') or 0) == 1:

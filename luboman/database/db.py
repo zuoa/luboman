@@ -74,6 +74,18 @@ def resolve_room_douyin_template_ids(room_data):
     return resolve_room_template_ids(room_data, 'douyin_upload_template_ids')
 
 
+def should_auto_upload_full_bili(room_data) -> bool:
+    """录制结束后是否自动投稿整场录像到 B 站。
+
+    bili_upload_clips_only=1 时跳过整录，舞蹈切片仍走 auto_submit_clip_records。
+    缺字段 / 0 / 非法值一律视为关，保持旧行为。
+    """
+    try:
+        return int((room_data or {}).get('bili_upload_clips_only') or 0) != 1
+    except (TypeError, ValueError):
+        return True
+
+
 class DB:
     """数据库交互类"""
 
@@ -126,13 +138,17 @@ class DB:
 
     @classmethod
     def _ensure_live_room_schema(cls):
-        """兼容旧库：补齐 LiveRoom 自动舞蹈切片开关列。"""
+        """兼容旧库：补齐 LiveRoom 自动舞蹈切片 / 只投稿切片开关列。"""
         table = LiveRoom._meta.table_name
         try:
             with db.atomic():
                 db.execute_sql(
                     f'ALTER TABLE "{table}" '
                     'ADD COLUMN IF NOT EXISTS auto_dance_clip INTEGER NOT NULL DEFAULT 0'
+                )
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS bili_upload_clips_only INTEGER NOT NULL DEFAULT 0'
                 )
             logger.info('LiveRoom 自动舞蹈切片字段就绪')
         except Exception:
@@ -432,7 +448,7 @@ class DB:
                               "upload_storage_platform",
                               "stream_video_format", "active_state", "active_begin", "active_end", "ffmpeg_options",
                               "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id",
-                              "auto_dance_clip", "cover_mode", "custom_cover_path"]
+                              "auto_dance_clip", "bili_upload_clips_only", "cover_mode", "custom_cover_path"]
             update_data = cls.filter_model_data(LiveRoom, data, update_columns)
 
             # 封面模式规范化：非法值/空串归一为 None（跟随投稿模板 cover_path）

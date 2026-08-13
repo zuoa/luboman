@@ -59,6 +59,8 @@ declare namespace API {
     active_state?: 0 | 1;
     /** 0 关闭 / 1 开启：录制分段完成后自动探测舞蹈切片并单独投稿 */
     auto_dance_clip?: 0 | 1;
+    /** 0 关闭 / 1 开启：只自动投稿舞蹈切片，不自动投稿整场录像 */
+    bili_upload_clips_only?: 0 | 1;
     /** ffmpeg 额外参数（JSON 对象） */
     ffmpeg_options?: Record<string, any>;
     patron?: string;
@@ -211,6 +213,17 @@ declare namespace API {
     cookie_path: string;
     status: BiliupLoginStatus | string;
     qrcode_img?: string | null;
+    error_message?: string | null;
+    created_at: number;
+    updated_at: number;
+  }
+
+  /** 夸克扫码登录会话（二维码是 URL，前端用 QRCode 渲染） */
+  interface QuarkLoginSession {
+    session_id: string;
+    status: BiliupLoginStatus | string;
+    /** 扫码落地页 URL，status=waiting 时有值 */
+    qrcode_url?: string | null;
     error_message?: string | null;
     created_at: number;
     updated_at: number;

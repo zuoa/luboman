@@ -6,6 +6,7 @@ import * as Config from './Config';
 import * as DouyinAccount from './DouyinAccount';
 import * as DouyinUploadTemplate from './DouyinUploadTemplate';
 import * as LiveRoom from './LiveRoom';
+import * as QuarkAccount from './QuarkAccount';
 import * as RecordFile from './RecordFile';
 import * as SubmissionTask from './SubmissionTask';
 import * as System from './System';
@@ -22,6 +23,7 @@ export default {
   SubmissionTask,
   ClipTask,
   Config,
+  QuarkAccount,
   System,
   Upload,
 };

@@ -18,6 +18,7 @@ from luboman.core.async_upload import UploadPriority, schedule_bili_submission, 
 from luboman.core.dance_clip import clip_scheduler, ensure_douyin_clip, CLIP_SERIES_CODE_PREFIX
 from luboman.core.biliup_login import biliup_login_manager
 from luboman.core.douyin_login import douyin_login_manager
+from luboman.core.quark_login import quark_login_manager
 from luboman.core.runtime import (
     collect_runtime_stats,
     reconcile_room_runtime,
@@ -1068,6 +1069,40 @@ async def del_bili_upload_template(request):
 async def list_douyin_account(request):
     res = await run_db(DB.list_douyin_account)
     return success(res)
+
+
+@routes.post("/v1/QuarkAccount/login/start")
+async def start_quark_login(request):
+    try:
+        # start_session 内同步等二维码就绪（阻塞网络请求），必须放线程池
+        snapshot = await run_db(quark_login_manager.start_session)
+        return success(snapshot)
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/QuarkAccount/login/status")
+async def get_quark_login_status(request):
+    data = await request.json()
+    try:
+        return success(quark_login_manager.snapshot(
+            data.get('session_id'),
+            since=_as_int(data.get('since')),
+        ))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post("/v1/QuarkAccount/login/stop")
+async def stop_quark_login(request):
+    data = await request.json()
+    try:
+        return success(quark_login_manager.stop_session(data.get('session_id')))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
 
 
 @routes.post("/v1/DouyinAccount/login/start")

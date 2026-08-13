@@ -23,7 +23,7 @@ from luboman.core.decorators import PluginTool
 from luboman.core.event import EventManager, Event, EventType
 from luboman.core.upload import resolve_bili_uploader, upload
 from luboman.core.utils import random_user_agent, get_valid_filename, get_video_dir, rename, get_public_dir, download_file
-from luboman.database.db import DB, resolve_room_bili_template_ids
+from luboman.database.db import DB, resolve_room_bili_template_ids, should_auto_upload_full_bili
 from luboman.database.models import BiliUploadTemplate, BiliAccount
 
 logger = logging.getLogger('luboman')
@@ -697,8 +697,10 @@ class LiveBase(object):
                     except Exception as e:
                         logger.error(f'{self.log_prefix} :  合并录制文件失败: {e}')
 
-            if file_list:
+            if file_list and should_auto_upload_full_bili(self.room_data):
                 self.send_event(Event(EventType.EVENT_UPLOAD_BILI, (file_list,)))
+            elif file_list and resolve_room_bili_template_ids(self.room_data):
+                logger.info(f'{self.log_prefix} 已开启只投稿切片，跳过整场录像的 B 站自动投稿')
 
         @event_manager.register(EventType.EVENT_NOTIFY)
         def process_notify(title, content):

@@ -14,7 +14,12 @@ from playhouse.shortcuts import model_to_dict
 from luboman.config import config
 from luboman.core import bili_account_health
 from luboman.core.async_utils import run_blocking
-from luboman.core.async_upload import UploadPriority, schedule_bili_submission, schedule_douyin_submission
+from luboman.core.async_upload import (
+    UploadPriority,
+    schedule_bili_submission,
+    schedule_douyin_submission,
+    schedule_storage_upload,
+)
 from luboman.core.dance_clip import clip_scheduler, ensure_douyin_clip, CLIP_SERIES_CODE_PREFIX
 from luboman.core.biliup_login import biliup_login_manager
 from luboman.core.douyin_login import douyin_login_manager
@@ -403,6 +408,7 @@ def _douyin_publish_file_list(file_list, template_info, room_data):
 
 # 手动发布时允许通过 room_data 覆盖的标题模板相关字段
 BILI_PUBLISH_ROOM_DATA_FIELDS = ('room_name', 'room_title', 'room_url', 'room_owner', 'room_platform')
+STORAGE_UPLOAD_PLATFORMS = ('quark', 'alipan', 'bdpan')
 
 
 def _as_int(value):
@@ -696,6 +702,110 @@ def _prepare_bili_publish(data):
         raise ValueError('no files to publish')
 
     return template_ids, live_room_id, room_data_override, file_list
+
+
+def _normalize_storage_platform(value):
+    platform = (value or '').strip()
+    if platform not in STORAGE_UPLOAD_PLATFORMS:
+        return None
+    return platform
+
+
+def _infer_storage_platform(file_ids, live_room_id):
+    """从关联直播间推断网盘平台；多个房间平台不一致则放弃。"""
+    room_ids = []
+    if live_room_id:
+        room_ids.append(live_room_id)
+    elif file_ids:
+        with db.connection_context():
+            for file_id in file_ids:
+                try:
+                    record = RecordFile.get_by_id_(file_id)
+                except RecordFile.DoesNotExist:
+                    continue
+                if record.live_room_id:
+                    room_ids.append(record.live_room_id)
+
+    if not room_ids:
+        return None
+
+    platforms = []
+    with db.connection_context():
+        for room_id in room_ids:
+            try:
+                room = LiveRoom.get_by_id_(room_id)
+            except LiveRoom.DoesNotExist:
+                continue
+            platform = _normalize_storage_platform(room.upload_storage_platform)
+            if platform:
+                platforms.append(platform)
+    unique = list(dict.fromkeys(platforms))
+    return unique[0] if len(unique) == 1 else None
+
+
+def _build_storage_publish_room_data(live_room_id, platform):
+    room_data = {'upload_storage_platform': platform}
+    if not live_room_id:
+        return room_data
+    try:
+        room = LiveRoom.get_by_id_(live_room_id)
+    except LiveRoom.DoesNotExist:
+        raise ValueError(f'live_room not found: {live_room_id}')
+    room_data.update(model_to_dict(room))
+    room_data['upload_storage_platform'] = platform
+    return room_data
+
+
+def _prepare_storage_publish(data):
+    """同步校验手动存网盘请求，返回 (platform, live_room_id, file_list)。"""
+    file_ids = data.get('file_ids')
+    videos = data.get('videos')
+    live_room_id = _as_int(data.get('live_room_id'))
+    explicit_platform = (data.get('upload_storage_platform') or '').strip()
+    if explicit_platform:
+        platform = _normalize_storage_platform(explicit_platform)
+        if not platform:
+            raise ValueError('upload_storage_platform must be quark / alipan / bdpan')
+    else:
+        platform = _infer_storage_platform(file_ids, live_room_id)
+        if not platform:
+            raise ValueError('upload_storage_platform is required (quark / alipan / bdpan)')
+    if not file_ids and not videos:
+        raise ValueError('file_ids or videos is required')
+
+    video_dir = os.path.realpath(get_video_dir())
+    min_size = int(config.get('filtering_threshold_file_size', 5)) * 1024 * 1024
+
+    if file_ids:
+        raw_items = _resolve_publish_record_files_from_ids(file_ids)
+        if live_room_id is None:
+            room_ids = []
+            with db.connection_context():
+                for item in raw_items:
+                    try:
+                        record = RecordFile.get_by_id_(item['id'])
+                    except RecordFile.DoesNotExist:
+                        continue
+                    if record.live_room_id:
+                        room_ids.append(record.live_room_id)
+            unique_rooms = list(dict.fromkeys(room_ids))
+            if len(unique_rooms) == 1:
+                live_room_id = unique_rooms[0]
+    else:
+        raw_items = [{'video': video} for video in videos]
+
+    file_list = []
+    for raw_item in raw_items:
+        raw_path = raw_item.get('video')
+        real = _validate_publish_video_path(raw_path, video_dir, min_size)
+        file_info = {'video': real}
+        if raw_item.get('id') is not None:
+            file_info['id'] = raw_item.get('id')
+        file_list.append(file_info)
+
+    if not file_list:
+        raise ValueError('no files to publish')
+    return platform, live_room_id, file_list
 
 
 def _list_submission_tasks_data(params):
@@ -1482,6 +1592,33 @@ async def publish_record_file_to_douyin(request):
         if not tasks:
             return error(1, '; '.join(f"模板 {e['douyin_upload_template_id']}: {e['error']}" for e in errors))
         return success({'tasks': tasks, 'errors': errors})
+    except ValueError as e:
+        return error(1, str(e))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
+@routes.post('/v1/RecordFile/publishStorage')
+async def publish_record_file_to_storage(request):
+    try:
+        data = await request.json()
+        platform, live_room_id, file_list = await run_db(_prepare_storage_publish, data)
+        room_data = await run_db(_build_storage_publish_room_data, live_room_id, platform)
+        result = await schedule_storage_upload(
+            platform=platform,
+            file_list=file_list,
+            room_data=room_data,
+            source=SUBMISSION_TASK_SOURCE_FILE_MANAGER,
+            priority=UploadPriority.HIGH,
+            metadata={
+                'created_from': 'record_file',
+                'upload_storage_platform': platform,
+                'file_ids': data.get('file_ids') or [],
+                'videos': data.get('videos') or [],
+            },
+        )
+        return success({'tasks': [result], 'errors': []})
     except ValueError as e:
         return error(1, str(e))
     except Exception as e:

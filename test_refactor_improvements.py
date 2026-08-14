@@ -803,6 +803,78 @@ class RecordFilePublishValidationTest(unittest.TestCase):
         self.assertEqual(real, os.path.realpath(self.good))
 
 
+class RecordFilePublishStorageTest(unittest.IsolatedAsyncioTestCase):
+    """手动存网盘：平台校验、路径组装、入队。"""
+
+    def setUp(self):
+        import luboman.web as web
+
+        self.web = web
+        self.tmp = tempfile.TemporaryDirectory()
+        self.video_dir = os.path.realpath(os.path.join(self.tmp.name, 'video'))
+        os.makedirs(self.video_dir)
+        self.video = os.path.join(self.video_dir, 'a.flv')
+        with open(self.video, 'wb') as fh:
+            fh.write(b'x' * (6 * 1024 * 1024))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_prepare_requires_platform_or_room(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.web._prepare_storage_publish({'videos': [self.video]})
+        self.assertIn('upload_storage_platform', str(ctx.exception))
+
+    def test_prepare_rejects_unknown_platform(self):
+        with self.assertRaises(ValueError):
+            self.web._prepare_storage_publish({
+                'videos': [self.video],
+                'upload_storage_platform': 'dropbox',
+            })
+
+    def test_prepare_assembles_file_list(self):
+        with patch.object(self.web, 'get_video_dir', return_value=self.video_dir), \
+             patch.object(self.web.config, 'get', return_value=5):
+            platform, live_room_id, file_list = self.web._prepare_storage_publish({
+                'videos': [self.video],
+                'upload_storage_platform': 'quark',
+                'live_room_id': 9,
+            })
+        self.assertEqual(platform, 'quark')
+        self.assertEqual(live_room_id, 9)
+        self.assertEqual(file_list, [{'video': os.path.realpath(self.video)}])
+
+    async def test_publish_storage_enqueues_task(self):
+        import luboman.web as web
+
+        scheduled = {}
+
+        async def fake_schedule(**kwargs):
+            scheduled.update(kwargs)
+            return {'task_id': 'storage-1', 'file_count': 1, 'uploader': 'quark'}
+
+        async def fake_run_db(fn, *a, **k):
+            return fn(*a, **k)
+
+        request = _FakeRequest({
+            'videos': [self.video],
+            'upload_storage_platform': 'quark',
+        })
+
+        with patch.object(web, 'get_video_dir', return_value=self.video_dir), \
+             patch.object(web.config, 'get', return_value=5), \
+             patch.object(web, 'run_db', side_effect=fake_run_db), \
+             patch.object(web, 'schedule_storage_upload', side_effect=fake_schedule):
+            response = await web.publish_record_file_to_storage(request)
+
+        body = json.loads(response.text)
+        self.assertTrue(body['success'], body)
+        self.assertEqual(body['data']['tasks'][0]['task_id'], 'storage-1')
+        self.assertEqual(scheduled['platform'], 'quark')
+        self.assertEqual(scheduled['source'], web.SUBMISSION_TASK_SOURCE_FILE_MANAGER)
+        self.assertEqual(scheduled['file_list'], [{'video': os.path.realpath(self.video)}])
+
+
 class RecordFilePublishBiliTest(unittest.IsolatedAsyncioTestCase):
     """手动发布入队：mock 调度器与上传插件解析，验证上下文、优先级与返回值。"""
 

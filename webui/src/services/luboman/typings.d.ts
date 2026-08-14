@@ -305,7 +305,7 @@ declare namespace API {
     page: number;
   }
 
-  /** RecordFile/publishBili、publishDouyin 响应 data：每个模板一个任务，单个失败不影响其他 */
+  /** RecordFile/publishBili、publishDouyin、publishStorage 响应 data：每个模板一个任务，单个失败不影响其他 */
   interface RecordFilePublishResult {
     tasks: { task_id: string; file_count: number; uploader: string }[];
     errors: {

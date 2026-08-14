@@ -788,6 +788,26 @@ async def schedule_bili_submission(
     )
 
 
+async def schedule_storage_upload(
+    platform: str,
+    file_list: List[Dict[str, Any]],
+    room_data: Optional[Dict[str, Any]] = None,
+    source: str = 'AUTO',
+    priority: UploadPriority = UploadPriority.HIGH,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """创建网盘上传任务并排入异步上传调度器。"""
+    return await schedule_submission(
+        platform=platform,
+        file_list=file_list,
+        room_data=room_data,
+        source=source,
+        priority=priority,
+        metadata=metadata,
+        template_field='storage_upload_template',
+    )
+
+
 async def schedule_douyin_submission(
     file_list: List[Dict[str, Any]],
     room_data: Optional[Dict[str, Any]] = None,

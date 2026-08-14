@@ -112,3 +112,27 @@ export async function publishRecordFileToDouyin(
     },
   );
 }
+
+/**
+ * 手动上传录像到网盘（异步排队，立即返回任务）。
+ * body：upload_storage_platform(quark/alipan/bdpan，可省略则回退房间配置)
+ *       + (file_ids | videos 二选一) + 可选 live_room_id。
+ */
+export async function publishRecordFileToStorage(
+  body: {
+    upload_storage_platform?: 'quark' | 'alipan' | 'bdpan';
+    file_ids?: number[];
+    videos?: string[];
+    live_room_id?: number;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<API.RecordFilePublishResult>(
+    REQUEST_HOST + '/v1/RecordFile/publishStorage',
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}

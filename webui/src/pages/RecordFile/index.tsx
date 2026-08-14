@@ -1,5 +1,6 @@
 import services from '@/services/luboman';
 import {
+  CloudServerOutlined,
   CloudUploadOutlined,
   DownloadOutlined,
   PlayCircleOutlined,
@@ -44,6 +45,7 @@ const {
   listRecordFileRoomSummary,
   publishRecordFileToBili,
   publishRecordFileToDouyin,
+  publishRecordFileToStorage,
 } = services.RecordFile;
 const { detectDanceClip } = services.ClipTask;
 const { listLiveRoom } = services.LiveRoom;
@@ -54,6 +56,17 @@ const ALL_ROOM_KEY = 'all';
 type RoomFilterKey = typeof ALL_ROOM_KEY | number;
 const RECORD_STATUS_RECORDING = 'RECORDING';
 const RECORD_STATUS_COMPLETED = 'COMPLETED';
+
+const STORAGE_PLATFORM_OPTIONS = [
+  { label: '夸克网盘', value: 'quark' },
+  { label: '阿里云盘', value: 'alipan' },
+  { label: '百度网盘', value: 'bdpan' },
+];
+const STORAGE_PLATFORM_LABELS: Record<string, string> = {
+  quark: '夸克网盘',
+  alipan: '阿里云盘',
+  bdpan: '百度网盘',
+};
 
 // 平台码 → 中文名（用于筛选项 + 来源展示）。Record 类型允许用字符串下标取值。
 const PLATFORM_VALUE_ENUM: Record<string, { text: string }> = {
@@ -179,7 +192,9 @@ const RecordFileList: React.FC = () => {
   const [selectedRows, setSelectedRows] = useState<API.RecordFileInfo[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishDouyinOpen, setPublishDouyinOpen] = useState(false);
+  const [publishStorageOpen, setPublishStorageOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<API.RecordFileInfo[]>([]);
+  const [storagePlatformDefault, setStoragePlatformDefault] = useState<string>();
   const [playTarget, setPlayTarget] = useState<API.RecordFileInfo>();
 
   const activeRoomId =
@@ -244,6 +259,37 @@ const RecordFileList: React.FC = () => {
     if (!rows.length) return;
     setPublishTarget(rows);
     setPublishDouyinOpen(true);
+  };
+
+  const openPublishStorage = async (rows: API.RecordFileInfo[]) => {
+    if (!rows.length) return;
+    setPublishTarget(rows);
+    let inferred: string | undefined;
+    try {
+      const list = await listLiveRoom();
+      const roomIds = new Set(
+        rows
+          .map((row) => row.live_room_id)
+          .filter((id): id is number => typeof id === 'number'),
+      );
+      const platforms = Array.from(
+        new Set(
+          (list || [])
+            .filter(
+              (room) =>
+                room.id != null &&
+                roomIds.has(room.id) &&
+                room.upload_storage_platform,
+            )
+            .map((room) => room.upload_storage_platform as string),
+        ),
+      );
+      inferred = platforms.length === 1 ? platforms[0] : undefined;
+    } catch {
+      inferred = undefined;
+    }
+    setStoragePlatformDefault(inferred);
+    setPublishStorageOpen(true);
   };
 
   const openPlayer = (row: API.RecordFileInfo) => {
@@ -390,6 +436,37 @@ const RecordFileList: React.FC = () => {
     }
   };
 
+  const handlePublishStorage = async (values: any) => {
+    const { upload_storage_platform, live_room_id } = values;
+    const target = publishTarget;
+    if (target.some((row) => !isRecordCompleted(row))) {
+      message.warning('录制中的文件不能上传网盘');
+      return false;
+    }
+    const allHaveId = target.length > 0 && target.every((r) => r.id != null);
+    try {
+      const res = await publishRecordFileToStorage({
+        upload_storage_platform,
+        live_room_id,
+        ...(allHaveId
+          ? { file_ids: target.map((r) => r.id as number) }
+          : { videos: target.map((r) => r.video) }),
+      });
+      const taskCount = res.tasks?.length ?? 0;
+      const platformName =
+        STORAGE_PLATFORM_LABELS[upload_storage_platform] ||
+        upload_storage_platform;
+      message.success(
+        `已创建 ${taskCount} 个网盘上传任务（${platformName} × ${target.length} 个文件）`,
+      );
+      clearSelection();
+      actionRef.current?.reload();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const columns: ProColumns<API.RecordFileInfo>[] = [
     // ---------- 仅筛选项（不在表格显示）----------
     {
@@ -511,7 +588,7 @@ const RecordFileList: React.FC = () => {
     {
       title: '操作',
       valueType: 'option',
-      width: 170,
+      width: 230,
       search: false,
       render: (_, r) => {
         const canOperate = r.id != null && r.exists && isRecordCompleted(r);
@@ -524,6 +601,7 @@ const RecordFileList: React.FC = () => {
             <a href={getRecordFileDownloadUrl(r)}>下载</a>
             <a onClick={() => openPublish([r])}>发布</a>
             <a onClick={() => openPublishDouyin([r])}>投抖音</a>
+            <a onClick={() => openPublishStorage([r])}>存网盘</a>
           </Space>
         );
       },
@@ -710,6 +788,18 @@ const RecordFileList: React.FC = () => {
                 onClick={() => openPublishDouyin(selectedRows)}
               >
                 发布到抖音
+                {selectedRows.length ? ` (${selectedRows.length})` : ''}
+              </Button>,
+              <Button
+                key="publishStorage"
+                icon={<CloudServerOutlined />}
+                disabled={!selectedRows.length || hasRecordingSelection}
+                title={
+                  hasRecordingSelection ? '录制中的文件不能上传网盘' : undefined
+                }
+                onClick={() => openPublishStorage(selectedRows)}
+              >
+                存到网盘
                 {selectedRows.length ? ` (${selectedRows.length})` : ''}
               </Button>,
             ]}
@@ -910,6 +1000,47 @@ const RecordFileList: React.FC = () => {
           name={['room_data', 'room_owner']}
           label="主播"
           placeholder="覆盖主播名"
+        />
+      </ModalForm>
+
+      <ModalForm
+        key={`storage-${storagePlatformDefault || 'none'}-${publishDefaultRoomId || 'none'}`}
+        title={`存到网盘（${publishTarget.length} 个文件）`}
+        width={520}
+        open={publishStorageOpen}
+        onOpenChange={setPublishStorageOpen}
+        modalProps={{ destroyOnClose: true }}
+        onFinish={handlePublishStorage}
+        initialValues={{
+          live_room_id: publishDefaultRoomId,
+          upload_storage_platform: storagePlatformDefault,
+        }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="上传为异步任务，提交后可在「投稿任务」查看进度。默认回填直播间已绑定的网盘，也可临时改选。"
+        />
+        <ProFormSelect
+          name="upload_storage_platform"
+          label="网盘"
+          rules={[{ required: true, message: '请选择网盘' }]}
+          options={STORAGE_PLATFORM_OPTIONS}
+          placeholder="选择夸克 / 阿里云盘 / 百度网盘"
+        />
+        <ProFormSelect
+          name="live_room_id"
+          label="关联直播间"
+          allowClear
+          request={async () => {
+            const list = await listLiveRoom();
+            return (list || []).map((r) => ({
+              label: r.room_name || `#${r.id}`,
+              value: r.id,
+            }));
+          }}
+          placeholder="可选，用于回填房间目录上下文"
         />
       </ModalForm>
     </>

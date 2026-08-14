@@ -31,6 +31,9 @@ ORIGIN = 'https://pan.quark.cn'
 # 签名串（auth_meta）与 OSS 请求头共用的固定 UA，逐字符敏感，勿改
 OSS_UA = 'aliyun-sdk-js/1.0.0 Chrome 145.0.0.0 on Windows 10 64-bit'
 ROOT_FID = '0'
+# urllib3 会把 timeout 元组的 connect 套到 socket.sendall 上；
+# (10, 300) 会让大分片在写到一半时被掐断。OSS 直传用单一长超时。
+OSS_TIMEOUT = 1800
 
 # 响应 Set-Cookie 里需要合并回 cookie 的续期字段
 _COOKIE_REFRESH_KEYS = ('__puus', '__pus')
@@ -366,13 +369,14 @@ class QuarkClient:
             headers['X-Oss-Hash-Ctx'] = hash_ctx_b64
 
         # OSS 直传不走 self.session，避免夸克 Cookie 泄露到 aliyuncs 域名
+        logger.info('夸克分片 %s 开始上传（%s bytes）', part_number, len(data))
         try:
             resp = requests.put(
                 self._oss_url(pre_data),
                 params={'partNumber': str(part_number), 'uploadId': pre_data['upload_id']},
                 data=data,
                 headers=headers,
-                timeout=(10, 300),
+                timeout=OSS_TIMEOUT,
             )
         except requests.RequestException as e:
             raise QuarkApiError(f'分片 {part_number} 网络错误: {e}') from e
@@ -434,7 +438,7 @@ class QuarkClient:
                     'x-oss-date': gmt,
                     'x-oss-user-agent': OSS_UA,
                 },
-                timeout=(10, 60),
+                timeout=OSS_TIMEOUT,
             )
         except requests.RequestException as e:
             raise QuarkApiError(f'commit 网络错误: {e}') from e
@@ -450,8 +454,8 @@ class QuarkClient:
         })
         time.sleep(1)
 
-    def _with_retry(self, func, desc, retries=3):
-        """指数退避重试（2/4/8s）；QuarkAuthError 不重试直接上抛。"""
+    def _with_retry(self, func, desc, retries=5):
+        """指数退避重试（2/4/8/16s）；QuarkAuthError 不重试直接上抛。"""
         for attempt in range(retries):
             try:
                 return func()
@@ -460,7 +464,7 @@ class QuarkClient:
             except QuarkApiError as e:
                 if attempt == retries - 1:
                     raise
-                wait = 2 ** (attempt + 1)
+                wait = min(2 ** (attempt + 1), 30)
                 logger.warning(f'{desc}失败（{e}），{wait}s 后重试（{attempt + 1}/{retries}）')
                 time.sleep(wait)
 
@@ -497,6 +501,10 @@ class QuarkClient:
         part_size = int((pre.get('metadata') or {}).get('part_size') or 0)
         if part_size <= 0:
             raise QuarkApiError('预上传未返回分片大小 part_size')
+        logger.info(
+            '夸克开始分片上传: %s（%s bytes，分片 %s bytes）',
+            file_name, size, part_size,
+        )
 
         etags = []
         running = _Sha1Running()

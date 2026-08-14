@@ -118,6 +118,9 @@ class QuarkClientUploadContractTest(unittest.TestCase):
         self.assertNotIn('X-Oss-Hash-Ctx', put.call_args.kwargs['headers'])
         auth_meta = client._upload_auth.call_args[0][1]
         self.assertNotIn('X-Oss-Hash-Ctx', auth_meta)
+        # 必须是单一长超时：元组 (10, 300) 的 connect=10s 会套到 sendall 上掐断大分片
+        self.assertEqual(put.call_args.kwargs['timeout'], quark_client.OSS_TIMEOUT)
+        self.assertGreaterEqual(quark_client.OSS_TIMEOUT, 600)
 
     def test_upload_file_raises_when_part_size_missing(self):
         client = QuarkClient('__pus=x; __puus=y')

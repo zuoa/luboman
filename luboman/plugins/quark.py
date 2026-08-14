@@ -50,6 +50,7 @@ class Quark(Uploader):
         for file_info in self.file_list:
             path = file_info.get('video')
             if not path or not os.path.exists(path):
+                logger.warning(f'夸克上传跳过：本地文件不存在 {path}')
                 continue
             try:
                 remote_dir = _remote_dir_of(path, root_prefix)
@@ -67,7 +68,7 @@ class Quark(Uploader):
                 return {'success': False,
                         'error_message': f'夸克网盘 Cookie 上传中途失效，请重新获取: {e}',
                         'uploaded': uploaded, 'failed': failed}
-            except (QuarkApiError, OSError) as e:
+            except (QuarkApiError, OSError, KeyError, TypeError, ValueError) as e:
                 failed.append(path)
                 logger.exception(f'夸克上传失败 {path}: {e}')
 

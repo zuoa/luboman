@@ -1,7 +1,7 @@
 """夸克网盘 API 客户端。
 
-自研实现，上传流程参照 alist drivers/quark_uc（Go）逐函数移植：
-pre（预上传）→ update/hash（秒传检测）→ 分片 PUT（阿里 OSS 签名）→ commit → finish。
+上传流程对齐 2026 年官方 PC Web（drive-pc.quark.cn）：
+pre（parallel_upload）→ 分片 PUT（OSS + X-Oss-Hash-Ctx）→ hash 确认会话 → commit → finish。
 
 仅依赖 requests，不依赖 luboman 运行时（config/DB），可独立单测。
 """
@@ -15,19 +15,21 @@ import json
 import logging
 import mimetypes
 import os
+import struct
 import time
 
 import requests
 
 logger = logging.getLogger('luboman')
 
-API = 'https://drive.quark.cn/1/clouddrive'
+# PC Web 走 drive-pc；旧 drive.quark.cn 仍能建目录，但预上传/分片会失败
+API = 'https://drive-pc.quark.cn/1/clouddrive'
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 '
-      'Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch')
+      '(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36')
 REFERER = 'https://pan.quark.cn'
+ORIGIN = 'https://pan.quark.cn'
 # 签名串（auth_meta）与 OSS 请求头共用的固定 UA，逐字符敏感，勿改
-OSS_UA = 'aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit'
+OSS_UA = 'aliyun-sdk-js/1.0.0 Chrome 145.0.0.0 on Windows 10 64-bit'
 ROOT_FID = '0'
 
 # 响应 Set-Cookie 里需要合并回 cookie 的续期字段
@@ -56,6 +58,104 @@ def _set_cookie_kv(cookie_str, name, value):
     return '; '.join(f'{k}={v}' for k, v in kv.items())
 
 
+def _oss_date():
+    """OSS V1 签名用的 GMT 日期，固定英文月份（locale 无关）。"""
+    return email.utils.formatdate(time.time(), usegmt=True)
+
+
+class _Sha1Running:
+    """可导出内部中间态的 SHA-1，供 X-Oss-Hash-Ctx 使用。
+
+    OSS 要的是处理完完整 64 字节块之后的 h0-h4，不是 finalized digest。
+    """
+
+    _H0 = (0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0)
+
+    def __init__(self):
+        self.h = list(self._H0)
+        self.buf = b''
+        self.nbytes = 0
+
+    def update(self, data):
+        if not data:
+            return
+        self.nbytes += len(data)
+        data = self.buf + data
+        offset = 0
+        end = len(data) - (len(data) % 64)
+        while offset < end:
+            self._block(data[offset:offset + 64])
+            offset += 64
+        self.buf = data[offset:]
+
+    def _block(self, block):
+        w = list(struct.unpack('>16I', block))
+        for i in range(16, 80):
+            w.append(_rol32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1))
+        a, b, c, d, e = self.h
+        for i in range(80):
+            if i < 20:
+                f = (b & c) | ((~b) & d)
+                k = 0x5A827999
+            elif i < 40:
+                f = b ^ c ^ d
+                k = 0x6ED9EBA1
+            elif i < 60:
+                f = (b & c) | (b & d) | (c & d)
+                k = 0x8F1BBCDC
+            else:
+                f = b ^ c ^ d
+                k = 0xCA62C1D6
+            temp = (_rol32(a, 5) + f + e + k + w[i]) & 0xFFFFFFFF
+            e, d, c, b, a = d, c, _rol32(b, 30), a, temp
+        self.h = [
+            (self.h[0] + a) & 0xFFFFFFFF,
+            (self.h[1] + b) & 0xFFFFFFFF,
+            (self.h[2] + c) & 0xFFFFFFFF,
+            (self.h[3] + d) & 0xFFFFFFFF,
+            (self.h[4] + e) & 0xFFFFFFFF,
+        ]
+
+    def snapshot(self):
+        """当前完整块之后的 Hash-Ctx（忽略未满 64 字节的尾巴，对齐官方实现）。"""
+        total_bits = self.nbytes * 8
+        return {
+            'hash_type': 'sha1',
+            'h0': str(self.h[0]),
+            'h1': str(self.h[1]),
+            'h2': str(self.h[2]),
+            'h3': str(self.h[3]),
+            'h4': str(self.h[4]),
+            'Nl': str(total_bits & 0xFFFFFFFF),
+            'Nh': str(total_bits >> 32),
+            'data': '',
+            'num': '0',
+        }
+
+    def hexdigest(self):
+        """标准 SHA-1 终态，仅用于单测对照 hashlib。"""
+        clone = _Sha1Running()
+        clone.h = list(self.h)
+        clone.buf = self.buf
+        clone.nbytes = self.nbytes
+        bit_len = clone.nbytes * 8
+        clone.update(b'\x80')
+        while (clone.nbytes % 64) != 56:
+            clone.update(b'\x00')
+        clone.update(struct.pack('>Q', bit_len))
+        return ''.join(f'{w:08x}' for w in clone.h)
+
+
+def _rol32(value, bits):
+    return ((value << bits) | (value >> (32 - bits))) & 0xFFFFFFFF
+
+
+def encode_hash_ctx(ctx):
+    """Hash-Ctx JSON → base64，字段顺序与官方客户端一致。"""
+    payload = json.dumps(ctx, separators=(',', ':'), ensure_ascii=True)
+    return base64.b64encode(payload.encode('ascii')).decode('ascii')
+
+
 class QuarkClient:
     def __init__(self, cookie):
         self.cookie = (cookie or '').strip()
@@ -77,6 +177,7 @@ class QuarkClient:
             'Cookie': self.cookie,
             'Accept': 'application/json, text/plain, */*',
             'Referer': REFERER,
+            'Origin': ORIGIN,
             'User-Agent': UA,
         }
         try:
@@ -197,6 +298,7 @@ class QuarkClient:
         now_ms = int(time.time() * 1000)
         return self._request('/file/upload/pre', method='POST', json_body={
             'ccp_hash_update': True,
+            'parallel_upload': True,
             'dir_name': '',
             'file_name': file_name,
             'format_type': mime,
@@ -231,15 +333,21 @@ class QuarkClient:
             upload_url = upload_url.split('://', 1)[1]
         return f"https://{pre_data['bucket']}.{upload_url}/{pre_data['obj_key']}"
 
-    def upload_part(self, pre, mime, part_number, data):
-        """上传一个分片，返回 ETag。签名串逐字符敏感，勿改动格式。"""
+    def upload_part(self, pre, mime, part_number, data, hash_ctx=None):
+        """上传一个分片，返回 ETag。签名串逐字符敏感，勿改动格式。
+
+        part_number>=2 时必须带上一分片累计的 X-Oss-Hash-Ctx，否则 OSS 会拒收。
+        """
         pre_data = pre['data']
-        gmt = email.utils.formatdate(time.time(), usegmt=True)
+        gmt = _oss_date()
+        hash_ctx_b64 = encode_hash_ctx(hash_ctx) if hash_ctx else ''
+        hash_ctx_line = f'X-Oss-Hash-Ctx:{hash_ctx_b64}\n' if hash_ctx_b64 else ''
         auth_meta = (
             f"PUT\n"
             f"\n"
             f"{mime}\n"
             f"{gmt}\n"
+            f"{hash_ctx_line}"
             f"x-oss-date:{gmt}\n"
             f"x-oss-user-agent:{OSS_UA}\n"
             f"/{pre_data['bucket']}/{pre_data['obj_key']}"
@@ -247,26 +355,35 @@ class QuarkClient:
         )
         auth_key = self._upload_auth(pre_data['auth_info'], auth_meta, pre_data['task_id'])
 
+        headers = {
+            'Authorization': auth_key,
+            'Content-Type': mime,
+            'Referer': REFERER + '/',
+            'x-oss-date': gmt,
+            'x-oss-user-agent': OSS_UA,
+        }
+        if hash_ctx_b64:
+            headers['X-Oss-Hash-Ctx'] = hash_ctx_b64
+
         # OSS 直传不走 self.session，避免夸克 Cookie 泄露到 aliyuncs 域名
         try:
             resp = requests.put(
                 self._oss_url(pre_data),
                 params={'partNumber': str(part_number), 'uploadId': pre_data['upload_id']},
                 data=data,
-                headers={
-                    'Authorization': auth_key,
-                    'Content-Type': mime,
-                    'Referer': REFERER + '/',
-                    'x-oss-date': gmt,
-                    'x-oss-user-agent': OSS_UA,
-                },
+                headers=headers,
                 timeout=(10, 300),
             )
         except requests.RequestException as e:
             raise QuarkApiError(f'分片 {part_number} 网络错误: {e}') from e
         if resp.status_code != 200:
-            raise QuarkApiError(f'分片 {part_number} 上传失败（HTTP {resp.status_code}）: {resp.text[:200]}')
-        return resp.headers['ETag']
+            raise QuarkApiError(
+                f'分片 {part_number} 上传失败（HTTP {resp.status_code}）: {resp.text[:300]}'
+            )
+        etag = resp.headers.get('ETag') or resp.headers.get('Etag')
+        if not etag:
+            raise QuarkApiError(f'分片 {part_number} 响应缺少 ETag')
+        return etag
 
     def upload_commit(self, pre, etags):
         """提交分片列表（CompleteMultipartUpload XML）。"""
@@ -280,16 +397,17 @@ class QuarkClient:
         content_md5 = base64.b64encode(hashlib.md5(body.encode()).digest()).decode()
 
         callback = pre_data['callback']
-        cb_json = json.dumps(
-            {'callbackUrl': callback['callbackUrl'], 'callbackBody': callback['callbackBody']},
-            separators=(',', ':'), ensure_ascii=False)
+        if isinstance(callback, str):
+            cb_json = callback
+        else:
+            cb_json = json.dumps(callback, separators=(',', ':'), ensure_ascii=True)
         # 对齐 Go encoding/json 的 HTML 字符转义，否则签名不匹配
         cb_json = (cb_json.replace('&', '\\u0026')
                           .replace('<', '\\u003c')
                           .replace('>', '\\u003e'))
         callback_b64 = base64.b64encode(cb_json.encode()).decode()
 
-        gmt = email.utils.formatdate(time.time(), usegmt=True)
+        gmt = _oss_date()
         auth_meta = (
             f"POST\n"
             f"{content_md5}\n"
@@ -358,17 +476,31 @@ class QuarkClient:
             for chunk in iter(lambda: f.read(1 << 20), b''):
                 md5.update(chunk)
                 sha1.update(chunk)
+        md5_hex, sha1_hex = md5.hexdigest(), sha1.hexdigest()
 
         pre = self.upload_pre(file_name, mime, size, pdir_fid)
-        task_id = pre['data']['task_id']
-
-        if self.upload_hash(md5.hexdigest(), sha1.hexdigest(), task_id):
+        pre_data = pre.get('data') or {}
+        if pre_data.get('finish'):
             logger.info(f'夸克秒传成功: {file_name}')
             self._files_cache.pop(pdir_fid, None)
             return {'rapid': True, 'parts': 0, 'file_name': file_name}
 
-        part_size = int(pre['metadata']['part_size'])  # 服务端返回，勿硬编码
+        task_id = pre_data.get('task_id')
+        if not task_id:
+            raise QuarkApiError(f'预上传未返回 task_id: {list(pre_data.keys())}')
+
+        if self.upload_hash(md5_hex, sha1_hex, task_id):
+            logger.info(f'夸克秒传成功: {file_name}')
+            self._files_cache.pop(pdir_fid, None)
+            return {'rapid': True, 'parts': 0, 'file_name': file_name}
+
+        part_size = int((pre.get('metadata') or {}).get('part_size') or 0)
+        if part_size <= 0:
+            raise QuarkApiError('预上传未返回分片大小 part_size')
+
         etags = []
+        running = _Sha1Running()
+        prev_ctx = None
         with open(local_path, 'rb') as f:
             part_number = 1
             while True:
@@ -376,9 +508,24 @@ class QuarkClient:
                 if not buf:
                     break
                 etags.append(self._with_retry(
-                    lambda buf=buf, n=part_number: self.upload_part(pre, mime, n, buf),
+                    lambda buf=buf, n=part_number, ctx=prev_ctx: self.upload_part(
+                        pre, mime, n, buf, hash_ctx=ctx),
                     f'分片 {part_number} 上传'))
+                running.update(buf)
+                prev_ctx = running.snapshot()
                 part_number += 1
+
+        if not etags:
+            raise QuarkApiError(f'文件为空，无法上传: {file_name}')
+
+        # 新协议要求 hash 在分片之后再确认一次，否则 commit 可能 NoSuchUpload
+        try:
+            if self.upload_hash(md5_hex, sha1_hex, task_id):
+                logger.info(f'夸克秒传成功: {file_name}')
+                self._files_cache.pop(pdir_fid, None)
+                return {'rapid': True, 'parts': len(etags), 'file_name': file_name}
+        except QuarkApiError as e:
+            logger.warning(f'分片后 hash 确认失败（{e}），继续 commit')
 
         self._with_retry(lambda: self.upload_commit(pre, etags), 'commit')
         self.upload_finish(pre)

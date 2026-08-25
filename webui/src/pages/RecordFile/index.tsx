@@ -4,6 +4,7 @@ import {
   CloudUploadOutlined,
   DownloadOutlined,
   PlayCircleOutlined,
+  RedoOutlined,
   ReloadOutlined,
   ScissorOutlined,
 } from '@ant-design/icons';
@@ -12,6 +13,7 @@ import {
   ModalForm,
   ProColumns,
   ProFormSelect,
+  ProFormSwitch,
   ProFormText,
   ProTable,
 } from '@ant-design/pro-components';
@@ -194,6 +196,7 @@ const RecordFileList: React.FC = () => {
   const [publishDouyinOpen, setPublishDouyinOpen] = useState(false);
   const [publishStorageOpen, setPublishStorageOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<API.RecordFileInfo[]>([]);
+  const [publishResetDefault, setPublishResetDefault] = useState(false);
   const [storagePlatformDefault, setStoragePlatformDefault] = useState<string>();
   const [playTarget, setPlayTarget] = useState<API.RecordFileInfo>();
 
@@ -249,9 +252,13 @@ const RecordFileList: React.FC = () => {
     fetchRoomSummary(true);
   }, [fetchRoomSummary]);
 
-  const openPublish = (rows: API.RecordFileInfo[]) => {
+  const openPublish = (
+    rows: API.RecordFileInfo[],
+    resetTimestamps = false,
+  ) => {
     if (!rows.length) return;
     setPublishTarget(rows);
+    setPublishResetDefault(resetTimestamps);
     setPublishOpen(true);
   };
 
@@ -344,6 +351,7 @@ const RecordFileList: React.FC = () => {
 
   const handlePublish = async (values: any) => {
     const { bili_upload_template_ids, live_room_id, room_data } = values;
+    const resetTimestamps = boolFromFormValue(values.reset_timestamps, false);
     const target = publishTarget;
     if (target.some((row) => !isRecordCompleted(row))) {
       message.warning('录制中的文件不能发布');
@@ -360,6 +368,7 @@ const RecordFileList: React.FC = () => {
       const res = await publishRecordFileToBili({
         bili_upload_template_ids,
         live_room_id,
+        reset_timestamps: resetTimestamps,
         ...(allHaveId
           ? { file_ids: target.map((r) => r.id as number) }
           : { videos: target.map((r) => r.video) }),
@@ -369,15 +378,18 @@ const RecordFileList: React.FC = () => {
       });
       const taskCount = res.tasks?.length ?? 0;
       const errCount = res.errors?.length ?? 0;
+      const resetHint = resetTimestamps
+        ? '，将先重置时间戳再上传'
+        : '';
       if (errCount > 0) {
         message.warning(
-          `已创建 ${taskCount} 个投稿任务，${errCount} 个模板失败：${res.errors
+          `已创建 ${taskCount} 个投稿任务${resetHint}，${errCount} 个模板失败：${res.errors
             .map((e) => `模板 ${e.bili_upload_template_id}(${e.error})`)
             .join('；')}`,
         );
       } else {
         message.success(
-          `已创建 ${taskCount} 个投稿任务（${bili_upload_template_ids.length} 个模板 × ${target.length} 个文件）`,
+          `已创建 ${taskCount} 个投稿任务${resetHint}（${bili_upload_template_ids.length} 个模板 × ${target.length} 个文件）`,
         );
       }
       clearSelection();
@@ -588,7 +600,7 @@ const RecordFileList: React.FC = () => {
     {
       title: '操作',
       valueType: 'option',
-      width: 230,
+      width: 280,
       search: false,
       render: (_, r) => {
         const canOperate = r.id != null && r.exists && isRecordCompleted(r);
@@ -600,6 +612,7 @@ const RecordFileList: React.FC = () => {
             <a onClick={() => openPlayer(r)}>播放</a>
             <a href={getRecordFileDownloadUrl(r)}>下载</a>
             <a onClick={() => openPublish([r])}>发布</a>
+            <a onClick={() => openPublish([r], true)}>重置投稿</a>
             <a onClick={() => openPublishDouyin([r])}>投抖音</a>
             <a onClick={() => openPublishStorage([r])}>存网盘</a>
           </Space>
@@ -779,6 +792,20 @@ const RecordFileList: React.FC = () => {
                 {selectedRows.length ? ` (${selectedRows.length})` : ''}
               </Button>,
               <Button
+                key="publishReset"
+                icon={<RedoOutlined />}
+                disabled={!selectedRows.length || hasRecordingSelection}
+                title={
+                  hasRecordingSelection
+                    ? '录制中的文件不能发布'
+                    : '先重置音频时间戳再投稿，用于补投因 ts 跳变被拒的录像'
+                }
+                onClick={() => openPublish(selectedRows, true)}
+              >
+                重置后投稿
+                {selectedRows.length ? ` (${selectedRows.length})` : ''}
+              </Button>,
+              <Button
                 key="publishDouyin"
                 icon={<CloudUploadOutlined />}
                 disabled={!selectedRows.length || hasRecordingSelection}
@@ -873,19 +900,33 @@ const RecordFileList: React.FC = () => {
       </Modal>
 
       <ModalForm
-        title={`发布到 B 站（${publishTarget.length} 个文件）`}
+        title={`${
+          publishResetDefault ? '重置后发布到 B 站' : '发布到 B 站'
+        }（${publishTarget.length} 个文件）`}
         width={560}
         open={publishOpen}
         onOpenChange={setPublishOpen}
         modalProps={{ destroyOnClose: true }}
         onFinish={handlePublish}
-        initialValues={{ live_room_id: publishDefaultRoomId }}
+        initialValues={{
+          live_room_id: publishDefaultRoomId,
+          reset_timestamps: publishResetDefault,
+        }}
       >
         <Alert
-          type="info"
+          type={publishResetDefault ? 'warning' : 'info'}
           showIcon
           style={{ marginBottom: 16 }}
-          message="投稿为异步任务，提交后立即返回任务 ID；上传完成后稍后刷新列表即可在「发布状态」查看结果。"
+          message={
+            publishResetDefault
+              ? '投稿任务会先用 ffmpeg 重置时间戳（视频 copy、音频重编码），再上传。大文件可能需要较长时间，进度可在「投稿任务」查看。'
+              : '投稿为异步任务，提交后立即返回任务 ID；上传完成后稍后刷新列表即可在「发布状态」查看结果。'
+          }
+        />
+        <ProFormSwitch
+          name="reset_timestamps"
+          label="重置时间戳后再投稿"
+          extra="直播录像音频 ts 跳变常导致 B 站审核失败。开启后会先重封装再上传，适合补投被拒稿件。"
         />
         <ProFormSelect
           name="bili_upload_template_ids"

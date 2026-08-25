@@ -1,9 +1,12 @@
-"""B站投稿前的视频预处理：片头拼接。
+"""B站投稿前的视频预处理：片头拼接、时间戳重置。
 
 片头按投稿账号（BiliAccount.intro_video_path）配置，schedule 投稿任务时对
 file_list 的每个视频文件前拼接片头，产出派生文件（不注册 RecordFile，
 与抖音版切片同一先例）。产物路径含片头路径 hash 并按 mtime 缓存复用——
 同一录像投多个账号（片头不同）互不覆盖，重试/重复投稿不重复转码。
+
+时间戳重置针对直播录像音频 DTS/PTS 跳变（B 站审核常见拒稿原因）：视频 copy、
+音频重编码为 AAC，产物落源文件同级 reset/ 目录并按 mtime 缓存。
 """
 import hashlib
 import json
@@ -196,3 +199,107 @@ def prepend_intro_to_file_list(file_list: List[Dict[str, Any]], intro_path: Opti
             logger.error('片头拼接失败，按原文件投稿: %s', video, exc_info=True)
             merged.append(item)
     return merged
+
+
+def _duration_close(src_info: Optional[Dict[str, Any]], dst: str, tolerance: float = 3.0) -> bool:
+    """重置后时长应接近源文件；无法探测时只要产物能被 ffprobe 打开就算通过。"""
+    expect = (src_info or {}).get('duration')
+    dst_info = _probe_streams(dst)
+    actual = (dst_info or {}).get('duration')
+    if not dst_info:
+        return False
+    if not expect or not actual:
+        return True
+    return abs(actual - expect) <= max(tolerance, expect * 0.02)
+
+
+def _reset_timestamps_ffmpeg(src: str, dst: str, src_info: Optional[Dict[str, Any]],
+                             reencode_video: bool = False) -> None:
+    """重置时间戳：默认视频 copy + 音频 AAC 重编码；copy 失败时全量重编码。"""
+    ffmpeg_path = config.get('ffmpeg_path', 'ffmpeg')
+    has_audio = True if src_info is None else bool(src_info.get('audio'))
+    command = [ffmpeg_path, '-y', '-fflags', '+genpts', '-i', src]
+    if reencode_video:
+        command += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18']
+        desc = '时间戳重置(全量重编码)'
+    else:
+        command += ['-c:v', 'copy']
+        desc = '时间戳重置(音频重编码)'
+    if has_audio:
+        command += [
+            '-c:a', 'aac', '-b:a', '192k',
+            '-af', 'aresample=async=1:first_pts=0',
+        ]
+    else:
+        command += ['-an']
+    command += [
+        '-avoid_negative_ts', 'make_zero',
+        '-movflags', '+faststart',
+        dst,
+    ]
+    _run_ffmpeg(command, timeout=7200, desc=desc)
+
+
+def ensure_timestamps_reset(src: str) -> str:
+    """产出（或复用）时间戳已重置的投稿文件，返回路径。失败抛异常。
+
+    直播录像常见音频 DTS/PTS 跳变，B 站审核会因此失败。视频 copy、音频重编码
+    为 AAC（aresample=async 填补缺口），统一输出 faststart mp4。产物是派生文件，
+    放源文件同级 reset/ 目录、不注册 RecordFile。已存在且不旧于源文件时复用。
+    """
+    if not src or not os.path.isfile(src):
+        raise ValueError(f'video file not found: {src}')
+
+    parent_name = os.path.basename(os.path.dirname(src))
+    stem = os.path.splitext(os.path.basename(src))[0]
+    if parent_name == 'reset' and stem.endswith('__reset'):
+        return src
+
+    base = os.path.splitext(os.path.basename(src))[0]
+    out_dir = os.path.join(os.path.dirname(src), 'reset')
+    dst = os.path.join(out_dir, f'{base}__reset.mp4')
+
+    if os.path.isfile(dst) and os.path.getsize(dst) > 0 \
+            and os.path.getmtime(dst) >= os.path.getmtime(src):
+        logger.info('复用已重置时间戳的文件: %s', dst)
+        return dst
+
+    os.makedirs(out_dir, exist_ok=True)
+    src_info = _probe_streams(src)
+
+    try:
+        _reset_timestamps_ffmpeg(src, dst, src_info, reencode_video=False)
+        if os.path.isfile(dst) and os.path.getsize(dst) > 0 and _duration_close(src_info, dst):
+            return dst
+        logger.warning('时间戳重置(音频重编码)时长校验失败，降级全量重编码: %s', dst)
+    except Exception:
+        logger.warning('时间戳重置(音频重编码)失败，降级全量重编码: %s', src, exc_info=True)
+
+    try:
+        _reset_timestamps_ffmpeg(src, dst, src_info, reencode_video=True)
+        if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
+            raise RuntimeError(f'timestamp reset produced empty file: {dst}')
+        if not _duration_close(src_info, dst):
+            raise RuntimeError(f'timestamp reset duration check failed: {dst}')
+        return dst
+    except Exception:
+        try:
+            if os.path.isfile(dst):
+                os.unlink(dst)
+        except OSError:
+            pass
+        raise
+
+
+def reset_timestamps_in_file_list(file_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """对投稿文件列表逐文件重置时间戳，返回新的 file_list。
+
+    与片头拼接不同：重置是为了过审，单文件失败必须抛异常，不能悄悄用原文件投稿。
+    """
+    reset = []
+    for item in file_list or []:
+        video = (item or {}).get('video')
+        if not video or not os.path.isfile(video):
+            raise ValueError(f'video file not found for timestamp reset: {video}')
+        reset.append({**item, 'video': ensure_timestamps_reset(video)})
+    return reset

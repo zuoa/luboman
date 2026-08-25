@@ -65,7 +65,8 @@ export function getRecordFileDownloadUrl(record: API.RecordFileInfo | number) {
 /**
  * 手动发布录像到 B 站（异步排队上传，每个模板创建一个任务，立即返回任务列表）。
  * body：bili_upload_template_ids(必填，可多选投多个账号) + (file_ids | videos 二选一) +
- *       可选 live_room_id、room_data(仅 room_name/title/url/owner/platform 生效)。
+ *       可选 live_room_id、room_data(仅 room_name/title/url/owner/platform 生效)、
+ *       reset_timestamps(投稿前重置音频/视频时间戳，修复直播录像 ts 跳变导致的审核失败)。
  */
 export async function publishRecordFileToBili(
   body: {
@@ -74,6 +75,7 @@ export async function publishRecordFileToBili(
     videos?: string[];
     live_room_id?: number;
     room_data?: Record<string, any>;
+    reset_timestamps?: boolean;
   },
   options?: { [key: string]: any },
 ) {

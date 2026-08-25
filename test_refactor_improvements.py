@@ -102,7 +102,7 @@ class AsyncUploadSchedulerRefactorTest(unittest.IsolatedAsyncioTestCase):
                 file_list=[{"video": "/tmp/not-exist.flv"}],
                 room_data={"id": 1, "room_title": "title"},
             )
-            success, uploaded_files, failed_files, error = await scheduler._perform_upload(task)
+            success, uploaded_files, failed_files, error, raw = await scheduler._perform_upload(task)
         finally:
             upload_module.upload = original_upload
 
@@ -112,6 +112,85 @@ class AsyncUploadSchedulerRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(uploaded_files, ["/tmp/not-exist.flv"])
         self.assertEqual(failed_files, [])
         self.assertIsNone(error)
+        self.assertTrue(raw)
+
+    async def test_perform_upload_resets_timestamps_when_flagged(self):
+        import luboman.core.upload as upload_module
+
+        scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
+        calls = []
+        original_upload = upload_module.upload
+
+        def fake_upload(platform, file_list, **kwargs):
+            calls.append((platform, file_list, kwargs))
+            return True
+
+        upload_module.upload = fake_upload
+        try:
+            task = AsyncUploadTask(
+                platform="biliup-rs",
+                file_list=[{"video": "/tmp/a.flv", "id": 8}],
+                room_data={"id": 1},
+                metadata={"reset_timestamps": True},
+            )
+            with patch(
+                'luboman.core.upload_prep.reset_timestamps_in_file_list',
+                return_value=[{"video": "/tmp/reset/a__reset.mp4", "id": 8}],
+            ) as reset_mock:
+                success, uploaded_files, failed_files, error, raw = await scheduler._perform_upload(task)
+        finally:
+            upload_module.upload = original_upload
+
+        self.assertTrue(success)
+        reset_mock.assert_called_once_with([{"video": "/tmp/a.flv", "id": 8}])
+        self.assertEqual(uploaded_files, ["/tmp/reset/a__reset.mp4"])
+        self.assertEqual(task.file_list, [{"video": "/tmp/reset/a__reset.mp4", "id": 8}])
+        self.assertEqual(calls[0][1], [{"video": "/tmp/reset/a__reset.mp4", "id": 8}])
+        self.assertIsNone(error)
+
+    async def test_perform_upload_skips_reset_without_flag(self):
+        import luboman.core.upload as upload_module
+
+        scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
+        original_upload = upload_module.upload
+        upload_module.upload = lambda *a, **k: True
+        try:
+            task = AsyncUploadTask(
+                platform="biliup-rs",
+                file_list=[{"video": "/tmp/a.flv"}],
+            )
+            with patch('luboman.core.upload_prep.reset_timestamps_in_file_list') as reset_mock:
+                await scheduler._perform_upload(task)
+        finally:
+            upload_module.upload = original_upload
+
+        reset_mock.assert_not_called()
+
+    async def test_perform_upload_fails_when_reset_raises(self):
+        import luboman.core.upload as upload_module
+
+        scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
+        calls = []
+        original_upload = upload_module.upload
+        upload_module.upload = lambda *a, **k: calls.append(a) or True
+        try:
+            task = AsyncUploadTask(
+                platform="biliup-rs",
+                file_list=[{"video": "/tmp/a.flv"}],
+                metadata={"reset_timestamps": True},
+            )
+            with patch(
+                'luboman.core.upload_prep.reset_timestamps_in_file_list',
+                side_effect=RuntimeError('ffmpeg timestamp reset failed'),
+            ):
+                success, uploaded_files, failed_files, error, raw = await scheduler._perform_upload(task)
+        finally:
+            upload_module.upload = original_upload
+
+        self.assertFalse(success)
+        self.assertEqual(calls, [])
+        self.assertIn('ffmpeg timestamp reset failed', error or '')
+        self.assertEqual(failed_files, ["/tmp/a.flv"])
 
     async def test_stop_cancels_pending_retry_tasks(self):
         scheduler = AsyncUploadScheduler(max_concurrent_uploads=1)
@@ -967,6 +1046,255 @@ class RecordFilePublishBiliTest(unittest.IsolatedAsyncioTestCase):
         body = json.loads(response.text)
         self.assertFalse(body['success'])
         self.assertIn('not running', body['message'])
+
+
+class RecordFilePublishResetTimestampsTest(unittest.IsolatedAsyncioTestCase):
+    """手动投稿 reset_timestamps 标志会传给 B 站调度器。"""
+
+    async def test_publish_passes_reset_timestamps_to_scheduler(self):
+        import luboman.web as web
+
+        captured = {}
+        file_list = [{'video': '/tmp/a.flv'}]
+        room_data = {'bili_upload_template': {'id': 1}}
+
+        async def fake_schedule(**kwargs):
+            captured.update(kwargs)
+            return {'task_id': 'task-reset', 'file_count': 1, 'uploader': 'biliup-rs'}
+
+        async def fake_run_db(fn, *a, **k):
+            if fn is web._prepare_bili_publish:
+                return [1], 9, {}, file_list
+            if fn is web._build_bili_publish_room_data:
+                return room_data
+            return fn(*a, **k)
+
+        request = _FakeRequest({
+            'videos': ['/tmp/a.flv'],
+            'bili_upload_template_ids': [1],
+            'reset_timestamps': True,
+        })
+
+        with patch.object(web, 'run_db', side_effect=fake_run_db), \
+             patch.object(web, 'schedule_bili_submission', side_effect=fake_schedule):
+            response = await web.publish_record_file_to_bili(request)
+
+        body = json.loads(response.text)
+        self.assertTrue(body['success'], body)
+        self.assertTrue(captured['reset_timestamps'])
+        self.assertEqual(captured['source'], web.SUBMISSION_TASK_SOURCE_FILE_MANAGER)
+        self.assertEqual(captured['file_list'], file_list)
+        self.assertEqual(captured['room_data'], room_data)
+
+    async def test_publish_defaults_reset_timestamps_off(self):
+        import luboman.web as web
+
+        captured = {}
+
+        async def fake_schedule(**kwargs):
+            captured.update(kwargs)
+            return {'task_id': 'task-plain', 'file_count': 1, 'uploader': 'biliup-rs'}
+
+        async def fake_run_db(fn, *a, **k):
+            if fn is web._prepare_bili_publish:
+                return [1], None, {}, [{'video': '/tmp/a.flv'}]
+            if fn is web._build_bili_publish_room_data:
+                return {}
+            return fn(*a, **k)
+
+        request = _FakeRequest({
+            'videos': ['/tmp/a.flv'],
+            'bili_upload_template_ids': [1],
+        })
+
+        with patch.object(web, 'run_db', side_effect=fake_run_db), \
+             patch.object(web, 'schedule_bili_submission', side_effect=fake_schedule):
+            response = await web.publish_record_file_to_bili(request)
+
+        body = json.loads(response.text)
+        self.assertTrue(body['success'], body)
+        self.assertFalse(captured['reset_timestamps'])
+
+
+class UploadPrepTimestampResetTest(unittest.TestCase):
+    """投稿前时间戳重置：缓存复用、ffmpeg 命令、失败不降级原文件。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = os.path.join(self.tmp.name, 'live.flv')
+        with open(self.src, 'wb') as fh:
+            fh.write(b'x' * 1024)
+        self.src_info = {
+            'duration': 10.0,
+            'video': {'codec_name': 'h264'},
+            'audio': {'codec_name': 'aac'},
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _dst(self):
+        return os.path.join(self.tmp.name, 'reset', 'live__reset.mp4')
+
+    def test_reuses_cached_reset_file(self):
+        from luboman.core import upload_prep
+
+        dst = self._dst()
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, 'wb') as fh:
+            fh.write(b'cached')
+        os.utime(dst, (os.path.getmtime(self.src) + 10, os.path.getmtime(self.src) + 10))
+
+        with patch.object(upload_prep, '_reset_timestamps_ffmpeg') as ffmpeg:
+            result = upload_prep.ensure_timestamps_reset(self.src)
+        self.assertEqual(result, dst)
+        ffmpeg.assert_not_called()
+
+    def test_audio_reencode_command_and_success(self):
+        from luboman.core import upload_prep
+
+        dst = self._dst()
+
+        def fake_ffmpeg(src, out, src_info, reencode_video=False):
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, 'wb') as fh:
+                fh.write(b'reset')
+            self.assertFalse(reencode_video)
+
+        with patch.object(upload_prep, '_probe_streams', side_effect=[
+            self.src_info,
+            {'duration': 10.1},
+        ]), patch.object(upload_prep, '_reset_timestamps_ffmpeg', side_effect=fake_ffmpeg):
+            result = upload_prep.ensure_timestamps_reset(self.src)
+        self.assertEqual(result, dst)
+        self.assertTrue(os.path.isfile(dst))
+
+    def test_falls_back_to_full_reencode_when_duration_mismatch(self):
+        from luboman.core import upload_prep
+
+        calls = []
+
+        def fake_ffmpeg(src, out, src_info, reencode_video=False):
+            calls.append(reencode_video)
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, 'wb') as fh:
+                fh.write(b'reset')
+
+        with patch.object(upload_prep, '_probe_streams', side_effect=[
+            self.src_info,
+            {'duration': 1.0},
+            {'duration': 10.0},
+        ]), patch.object(upload_prep, '_reset_timestamps_ffmpeg', side_effect=fake_ffmpeg):
+            result = upload_prep.ensure_timestamps_reset(self.src)
+        self.assertEqual(result, self._dst())
+        self.assertEqual(calls, [False, True])
+
+    def test_skips_already_reset_file(self):
+        from luboman.core import upload_prep
+
+        reset_dir = os.path.join(self.tmp.name, 'reset')
+        os.makedirs(reset_dir, exist_ok=True)
+        already = os.path.join(reset_dir, 'live__reset.mp4')
+        with open(already, 'wb') as fh:
+            fh.write(b'done')
+        with patch.object(upload_prep, '_reset_timestamps_ffmpeg') as ffmpeg:
+            self.assertEqual(upload_prep.ensure_timestamps_reset(already), already)
+        ffmpeg.assert_not_called()
+
+    def test_file_list_maps_videos_and_keeps_ids(self):
+        from luboman.core import upload_prep
+
+        with patch.object(upload_prep, 'ensure_timestamps_reset', return_value='/tmp/r.mp4') as ensure:
+            result = upload_prep.reset_timestamps_in_file_list([
+                {'video': self.src, 'id': 3},
+            ])
+        ensure.assert_called_once_with(self.src)
+        self.assertEqual(result, [{'video': '/tmp/r.mp4', 'id': 3}])
+
+    def test_file_list_raises_when_source_missing(self):
+        from luboman.core import upload_prep
+
+        with self.assertRaises(ValueError):
+            upload_prep.reset_timestamps_in_file_list([{'video': '/no/such.flv'}])
+
+    def test_ffmpeg_command_reencodes_audio(self):
+        from luboman.core import upload_prep
+
+        captured = {}
+
+        def fake_run(command, timeout, desc):
+            captured['command'] = command
+            captured['desc'] = desc
+
+        with patch.object(upload_prep, '_run_ffmpeg', side_effect=fake_run), \
+             patch.object(upload_prep.config, 'get', return_value='ffmpeg'):
+            upload_prep._reset_timestamps_ffmpeg(
+                self.src, self._dst(), self.src_info, reencode_video=False,
+            )
+        command = captured['command']
+        self.assertIn('-c:v', command)
+        self.assertEqual(command[command.index('-c:v') + 1], 'copy')
+        self.assertIn('-c:a', command)
+        self.assertEqual(command[command.index('-c:a') + 1], 'aac')
+        self.assertIn('aresample=async=1:first_pts=0', command)
+        self.assertEqual(captured['desc'], '时间戳重置(音频重编码)')
+
+    def test_failed_reset_deletes_partial_output(self):
+        from luboman.core import upload_prep
+
+        def fake_ffmpeg(src, out, src_info, reencode_video=False):
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, 'wb') as fh:
+                fh.write(b'bad')
+            if reencode_video:
+                raise RuntimeError('full reencode failed')
+
+        with patch.object(upload_prep, '_probe_streams', return_value=self.src_info), \
+             patch.object(upload_prep, '_reset_timestamps_ffmpeg', side_effect=fake_ffmpeg), \
+             patch.object(upload_prep, '_duration_close', return_value=False):
+            with self.assertRaises(RuntimeError):
+                upload_prep.ensure_timestamps_reset(self.src)
+        self.assertFalse(os.path.isfile(self._dst()))
+
+
+class ScheduleBiliResetTimestampsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_schedule_bili_submission_writes_reset_flag_to_metadata(self):
+        from luboman.core import async_upload
+
+        captured = {}
+
+        async def fake_schedule_submission(**kwargs):
+            captured.update(kwargs)
+            return {'task_id': 't1'}
+
+        with patch.object(async_upload, 'schedule_submission', side_effect=fake_schedule_submission), \
+             patch('luboman.core.upload.resolve_bili_uploader', return_value='biliup-rs'):
+            await async_upload.schedule_bili_submission(
+                file_list=[{'video': '/tmp/a.flv'}],
+                room_data={},
+                reset_timestamps=True,
+                metadata={'created_from': 'record_file'},
+            )
+        self.assertTrue(captured['metadata']['reset_timestamps'])
+        self.assertEqual(captured['metadata']['created_from'], 'record_file')
+        self.assertEqual(captured['file_list'], [{'video': '/tmp/a.flv'}])
+
+    async def test_schedule_bili_submission_omits_reset_flag_by_default(self):
+        from luboman.core import async_upload
+
+        captured = {}
+
+        async def fake_schedule_submission(**kwargs):
+            captured.update(kwargs)
+            return {'task_id': 't1'}
+
+        with patch.object(async_upload, 'schedule_submission', side_effect=fake_schedule_submission), \
+             patch('luboman.core.upload.resolve_bili_uploader', return_value='biliup-rs'):
+            await async_upload.schedule_bili_submission(
+                file_list=[{'video': '/tmp/a.flv'}],
+                room_data={},
+            )
+        self.assertNotIn('reset_timestamps', captured['metadata'] or {})
 
 
 class BiliUploadClipsOnlyTest(unittest.IsolatedAsyncioTestCase):

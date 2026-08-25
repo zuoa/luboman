@@ -341,6 +341,15 @@ class AsyncUploadScheduler:
         error_message = None
         
         try:
+            if (upload_task.metadata or {}).get('reset_timestamps'):
+                from luboman.core.upload_prep import reset_timestamps_in_file_list
+                logger.info(
+                    '投稿前重置时间戳: task_id=%s files=%s',
+                    upload_task.task_id, len(file_list or []),
+                )
+                file_list = await run_blocking(reset_timestamps_in_file_list, file_list)
+                upload_task.file_list = file_list
+
             # 导入上传函数
             from luboman.core.upload import upload
             
@@ -763,8 +772,13 @@ async def schedule_bili_submission(
     source: str = 'AUTO',
     priority: UploadPriority = UploadPriority.HIGH,
     metadata: Optional[Dict[str, Any]] = None,
+    reset_timestamps: bool = False,
 ) -> Dict[str, Any]:
-    """创建B站投稿任务记录并排入异步上传调度器。"""
+    """创建B站投稿任务记录并排入异步上传调度器。
+
+    reset_timestamps 只写入任务 metadata，真正的 ffmpeg 重置在上传工作器里执行，
+    避免手动投稿接口被大文件转码拖住。片头仍在入队前拼接（与自动投稿同一路径）。
+    """
     from luboman.core.upload import resolve_bili_uploader
 
     # 片头（按投稿账号配置）：schedule 单点拼接，自动/手动两条投稿链路都汇聚于此；
@@ -776,6 +790,10 @@ async def schedule_bili_submission(
     if intro_path:
         from luboman.core.upload_prep import prepend_intro_to_file_list
         file_list = await run_blocking(prepend_intro_to_file_list, file_list, intro_path)
+
+    if reset_timestamps:
+        metadata = dict(metadata or {})
+        metadata['reset_timestamps'] = True
 
     return await schedule_submission(
         platform=resolve_bili_uploader(room_data),

@@ -1533,6 +1533,7 @@ async def publish_record_file_to_bili(request):
                     room_data=room_data,
                     source=SUBMISSION_TASK_SOURCE_FILE_MANAGER,
                     priority=UploadPriority.HIGH,
+                    reset_timestamps=_as_bool(data.get('reset_timestamps'), default=False),
                     metadata={
                         'created_from': 'record_file',
                         'file_ids': data.get('file_ids') or [],

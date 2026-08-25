@@ -814,6 +814,7 @@ def _list_submission_tasks_data(params):
     page_size = min(max(1, page_size), 200)
     filters = {
         'status': (params.get('status') or '').strip() or None,
+        'publish_status': (params.get('publish_status') or '').strip() or None,
         'source': (params.get('source') or '').strip() or None,
         'platform': (params.get('platform') or '').strip() or None,
         'keyword': (params.get('keyword') or '').strip() or None,

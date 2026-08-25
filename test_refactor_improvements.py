@@ -1729,5 +1729,193 @@ class DailyBiliClipMergeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await flush_daily_bili_clip_batches(7), [])
 
 
+class BiliPublishWatchTest(unittest.TestCase):
+    """BV 号提取、公开页判定、8 小时窗口轮询。"""
+
+    def test_extract_bvid_from_nested_result(self):
+        from luboman.core.bili_publish import extract_bvid
+
+        self.assertEqual(
+            extract_bvid({'data': {'bvid': 'BV1xx411c7mD'}}),
+            'BV1xx411c7mD',
+        )
+        self.assertEqual(
+            extract_bvid({'raw_result': {'output_tail': ['ok', 'bvid: BV1yy411c7AA']}}),
+            'BV1yy411c7AA',
+        )
+        self.assertEqual(
+            extract_bvid({'result': {'raw_result': {'data': {'bvid': 'BV1zz411c7BB'}}}}),
+            'BV1zz411c7BB',
+        )
+        self.assertIsNone(extract_bvid({'success': True, 'output_tail': ['no id']}))
+
+    def test_check_bvid_published_true_false_none(self):
+        from luboman.core import bili_publish
+
+        class FakeResp:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        with patch.object(bili_publish.requests, 'get', return_value=FakeResp({
+            'code': 0, 'data': {'bvid': 'BV1xx411c7mD', 'aid': 1},
+        })):
+            self.assertTrue(bili_publish.check_bvid_published('BV1xx411c7mD'))
+
+        with patch.object(bili_publish.requests, 'get', return_value=FakeResp({
+            'code': -404, 'data': None,
+        })):
+            self.assertFalse(bili_publish.check_bvid_published('BV1xx411c7mD'))
+
+        with patch.object(bili_publish.requests, 'get', side_effect=RuntimeError('timeout')):
+            self.assertIsNone(bili_publish.check_bvid_published('BV1xx411c7mD'))
+
+        self.assertIsNone(bili_publish.check_bvid_published('not-a-bvid'))
+
+    def test_watch_marks_published_and_skips_missing_bvid(self):
+        from luboman.core import bili_publish
+        from luboman.database import db as db_module
+
+        tasks = [
+            {'task_id': 't-pub', 'bvid': 'BV1xx411c7mD', 'result': None},
+            {'task_id': 't-wait', 'bvid': 'BV1yy411c7AA', 'result': None},
+            {'task_id': 't-skip', 'bvid': None, 'result': {'ok': True}},
+        ]
+        published = []
+        checked = []
+
+        with patch.object(db_module.DB, 'list_bili_publish_watch_tasks', return_value=tasks), \
+             patch.object(db_module.DB, 'mark_submission_task_published', side_effect=lambda *a, **k: published.append(k or a)), \
+             patch.object(db_module.DB, 'mark_submission_task_publish_checked', side_effect=lambda *a, **k: checked.append(a)), \
+             patch.object(bili_publish, 'check_bvid_published', side_effect=lambda bvid: bvid == 'BV1xx411c7mD'):
+            stats = bili_publish.watch_pending_publications()
+
+        self.assertEqual(stats['published'], 1)
+        self.assertEqual(stats['checked'], 2)
+        self.assertEqual(stats['skipped'], 1)
+        self.assertEqual(published[0]['bvid'], 'BV1xx411c7mD')
+        self.assertEqual(checked[0][0], 't-wait')
+
+    def test_watch_backfills_bvid_from_result(self):
+        from luboman.core import bili_publish
+        from luboman.database import db as db_module
+
+        saved = []
+        with patch.object(db_module.DB, 'list_bili_publish_watch_tasks', return_value=[{
+            'task_id': 't1',
+            'bvid': None,
+            'result': {'raw_result': {'output_tail': ['Submit BV1aa411c7CC']}},
+        }]), patch.object(db_module.DB, 'save_submission_task_bvid', side_effect=lambda *a, **k: saved.append(a)), \
+             patch.object(db_module.DB, 'mark_submission_task_published') as mark_pub, \
+             patch.object(bili_publish, 'check_bvid_published', return_value=True):
+            stats = bili_publish.watch_pending_publications()
+
+        self.assertEqual(saved[0], ('t1', 'BV1aa411c7CC'))
+        mark_pub.assert_called_once()
+        self.assertEqual(stats['published'], 1)
+
+    def test_finish_submission_task_records_bvid_as_reviewing(self):
+        from peewee import SqliteDatabase
+        from luboman.database import models as models_module
+        from luboman.database import db as db_module
+        from luboman.database.models import SubmissionTask, RecordFile, LiveRoom
+        from luboman.database.db import (
+            DB, SUBMISSION_TASK_STATUS_SUCCESS, PUBLISH_STATUS_REVIEWING,
+        )
+
+        db_path = tempfile.mktemp(suffix='.db')
+        test_db = SqliteDatabase(db_path)
+        original = (models_module.db, db_module.db)
+        models = [LiveRoom, RecordFile, SubmissionTask]
+        models_module.db = test_db
+        db_module.db = test_db
+        for model in models:
+            model.bind(test_db)
+        test_db.connect(reuse_if_open=True)
+        test_db.create_tables(models)
+        try:
+            room = LiveRoom.create(room_url='http://t/1', room_name='A')
+            rec = RecordFile.create(
+                live_room_id=room.id, begin_time=datetime.datetime.now(),
+                video='/tmp/a.flv',
+            )
+            SubmissionTask.create(
+                task_id='t-bvid',
+                platform='biliup-rs',
+                status='RUNNING',
+                file_list=[{'video': '/tmp/a.flv', 'id': rec.id}],
+                record_file_ids=[rec.id],
+            )
+            DB.finish_submission_task(
+                't-bvid', True,
+                result={'raw_result': {'data': {'bvid': 'BV1xx411c7mD'}}},
+            )
+            task = SubmissionTask.get(SubmissionTask.task_id == 't-bvid')
+            self.assertEqual(task.status, SUBMISSION_TASK_STATUS_SUCCESS)
+            self.assertEqual(task.bvid, 'BV1xx411c7mD')
+            self.assertEqual(task.publish_status, PUBLISH_STATUS_REVIEWING)
+            rec = RecordFile.get_by_id(rec.id)
+            self.assertEqual(rec.upload_info['bvid'], 'BV1xx411c7mD')
+            self.assertEqual(rec.upload_info['publish_status'], PUBLISH_STATUS_REVIEWING)
+        finally:
+            test_db.close()
+            for model in models:
+                model.bind(original[0])
+            models_module.db = original[0]
+            db_module.db = original[1]
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+
+    def test_list_watch_tasks_excludes_published_and_expired(self):
+        from peewee import SqliteDatabase
+        from luboman.database import models as models_module
+        from luboman.database import db as db_module
+        from luboman.database.models import SubmissionTask
+        from luboman.database.db import DB, PUBLISH_STATUS_REVIEWING, PUBLISH_STATUS_PUBLISHED
+
+        db_path = tempfile.mktemp(suffix='.db')
+        test_db = SqliteDatabase(db_path)
+        original = (models_module.db, db_module.db)
+        models_module.db = test_db
+        db_module.db = test_db
+        SubmissionTask.bind(test_db)
+        test_db.connect(reuse_if_open=True)
+        test_db.create_tables([SubmissionTask])
+        try:
+            now = datetime.datetime.now()
+            SubmissionTask.create(
+                task_id='fresh', platform='biliup-rs', status='SUCCESS',
+                file_list=[], bvid='BV1aa411c7AA',
+                publish_status=PUBLISH_STATUS_REVIEWING, finished_at=now,
+            )
+            SubmissionTask.create(
+                task_id='done', platform='biliup-rs', status='SUCCESS',
+                file_list=[], bvid='BV1bb411c7BB',
+                publish_status=PUBLISH_STATUS_PUBLISHED, finished_at=now,
+            )
+            SubmissionTask.create(
+                task_id='old', platform='biliup-rs', status='SUCCESS',
+                file_list=[], bvid='BV1cc411c7CC',
+                publish_status=PUBLISH_STATUS_REVIEWING,
+                finished_at=now - datetime.timedelta(hours=9),
+            )
+            rows = DB.list_bili_publish_watch_tasks(now=now, hours=8)
+            ids = [row['task_id'] for row in rows]
+            self.assertEqual(ids, ['fresh'])
+        finally:
+            test_db.close()
+            SubmissionTask.bind(original[0])
+            models_module.db = original[0]
+            db_module.db = original[1]
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+
+
 if __name__ == "__main__":
     unittest.main()

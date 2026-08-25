@@ -161,11 +161,58 @@ function isFlvRecord(row?: API.RecordFileInfo): boolean {
   return /\.flv(?:$|\?)/i.test(path);
 }
 
-/** 防御性渲染 upload_info：尝试取 bvid 拼链接，否则仅显示「已投稿」 */
+const BILI_UPLOAD_PLATFORMS = new Set([
+  'biliup-rs',
+  'biliup',
+  'biliup_cli',
+  'biliweb',
+  'bili_web',
+  'bili-web',
+]);
+
+function extractBvid(info?: any): string | undefined {
+  if (!info) return undefined;
+  const raw =
+    info.bvid ||
+    info.data?.bvid ||
+    info.result?.bvid ||
+    info.result?.raw_result?.bvid ||
+    info.result?.raw_result?.data?.bvid ||
+    info.avid_bvid;
+  if (typeof raw === 'string' && /^BV[0-9A-Za-z]{10}$/.test(raw)) return raw;
+  return undefined;
+}
+
+function isBiliUploadInfo(info?: any): boolean {
+  if (!info) return false;
+  if (BILI_UPLOAD_PLATFORMS.has(info.platform)) return true;
+  return !!extractBvid(info);
+}
+
+/** 防御性渲染 upload_info：B 站显示审核中/已发布，其它平台仍显示已投稿。 */
 function renderPublishStatus(info?: any) {
   if (!info) return <span className={styles.muted}>未投稿</span>;
-  const bvid =
-    info?.bvid || info?.data?.bvid || info?.result?.bvid || info?.avid_bvid;
+  const bvid = extractBvid(info);
+  if (isBiliUploadInfo(info)) {
+    const published = info.publish_status === 'PUBLISHED';
+    const tag = published ? (
+      <Tag color="green">已发布</Tag>
+    ) : (
+      <Tag color="processing">审核中</Tag>
+    );
+    if (bvid) {
+      return (
+        <a
+          href={`https://www.bilibili.com/video/${bvid}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {tag}
+        </a>
+      );
+    }
+    return tag;
+  }
   const tag = <Tag color="green">已投稿</Tag>;
   if (bvid) {
     return (

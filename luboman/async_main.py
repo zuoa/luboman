@@ -291,6 +291,12 @@ class AsyncLubomanApplication:
         )
         self.timer_tasks.append(daily_clip_flush_task)
 
+        publish_watch_task = asyncio.create_task(
+            self._periodic_bili_publish_watch(),
+            name="periodic-bili-publish-watch"
+        )
+        self.timer_tasks.append(publish_watch_task)
+
         logger.info("定时任务启动完成")
     
     async def _periodic_cleanup(self):
@@ -329,6 +335,30 @@ class AsyncLubomanApplication:
                 break
             except Exception:
                 logger.exception("舞蹈切片日结冲刷失败")
+            await asyncio.sleep(600)
+
+    async def _periodic_bili_publish_watch(self):
+        """B 站投稿成功后 8 小时内每 10 分钟探测一次是否已公开。"""
+        from luboman.core.bili_publish import watch_pending_publications
+
+        await asyncio.sleep(30)
+        while self.running:
+            try:
+                if not self.running:
+                    break
+                stats = await run_blocking(watch_pending_publications)
+                if stats.get('checked') or stats.get('published'):
+                    logger.info(
+                        'B站稿件公开探测完成: 检查 %s 个，已发布 %s 个，无 BV %s 个，异常 %s 个',
+                        stats.get('checked', 0),
+                        stats.get('published', 0),
+                        stats.get('skipped', 0),
+                        stats.get('errors', 0),
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception('B站稿件公开探测失败')
             await asyncio.sleep(600)
 
     def _account_check_interval(self):

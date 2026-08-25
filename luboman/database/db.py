@@ -23,6 +23,10 @@ SUBMISSION_TASK_STATUS_RETRYING = 'RETRYING'
 SUBMISSION_TASK_STATUS_SUCCESS = 'SUCCESS'
 SUBMISSION_TASK_STATUS_FAILED = 'FAILED'
 
+PUBLISH_STATUS_REVIEWING = 'REVIEWING'
+PUBLISH_STATUS_PUBLISHED = 'PUBLISHED'
+PUBLISH_WATCH_HOURS = 8
+
 SUBMISSION_TASK_SOURCE_AUTO = 'AUTO'
 SUBMISSION_TASK_SOURCE_FILE_MANAGER = 'FILE_MANAGER'
 
@@ -42,6 +46,10 @@ BILI_CLAIM_STATUSES = (
     SUBMISSION_TASK_STATUS_RETRYING,
     SUBMISSION_TASK_STATUS_SUCCESS,
 )
+
+
+def _is_bili_submission_platform(platform):
+    return (platform or '').strip() in BILI_SUBMISSION_PLATFORMS
 
 
 def struct_time_to_datetime(date: time.struct_time):
@@ -131,6 +139,7 @@ class DB:
         cls._ensure_live_room_cover_schema()
         cls._ensure_bili_account_schema()
         cls._ensure_clip_task_schema()
+        cls._ensure_submission_task_publish_schema()
         cls.recover_interrupted_submission_tasks()
         cls.recover_interrupted_clip_tasks()
         # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
@@ -255,6 +264,28 @@ class DB:
             logger.info('ClipTask 任务来源字段就绪')
         except Exception:
             logger.warning('补齐 ClipTask 任务来源字段失败', exc_info=True)
+
+    @classmethod
+    def _ensure_submission_task_publish_schema(cls):
+        """兼容旧库：补齐投稿任务 BV 号与发布状态列。"""
+        table = SubmissionTask._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS bvid VARCHAR(32)'
+                )
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS publish_status VARCHAR(16)'
+                )
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS publish_checked_at TIMESTAMP'
+                )
+            logger.info('SubmissionTask 发布状态字段就绪')
+        except Exception:
+            logger.warning('补齐 SubmissionTask 发布状态字段失败', exc_info=True)
 
     @classmethod
     def _ensure_record_file_index(cls):
@@ -965,17 +996,34 @@ class DB:
             task.result = result
             task.updated_at = now
             task.finished_at = now
+
+            bvid = None
+            if success and _is_bili_submission_platform(task.platform):
+                from luboman.core.bili_publish import extract_bvid
+                bvid = extract_bvid(result) or extract_bvid(task.result)
+                if bvid:
+                    task.bvid = bvid
+                if task.publish_status != PUBLISH_STATUS_PUBLISHED:
+                    task.publish_status = PUBLISH_STATUS_REVIEWING
+
             task.save()
 
             record_file_ids = task.record_file_ids or []
             if success and record_file_ids:
-                RecordFile.update(upload_info={
+                upload_info = {
                     'task_id': task.task_id,
                     'platform': task.platform,
                     'status': SUBMISSION_TASK_STATUS_SUCCESS,
                     'finished_at': str(now),
                     'result': result,
-                }).where(RecordFile.id.in_(record_file_ids)).execute()
+                }
+                if _is_bili_submission_platform(task.platform):
+                    upload_info['publish_status'] = task.publish_status or PUBLISH_STATUS_REVIEWING
+                    if bvid or task.bvid:
+                        upload_info['bvid'] = bvid or task.bvid
+                RecordFile.update(upload_info=upload_info).where(
+                    RecordFile.id.in_(record_file_ids)
+                ).execute()
 
             return model_to_dict(task)
 
@@ -987,6 +1035,100 @@ class DB:
             result=result,
             error_message=error_message,
         )
+
+    @classmethod
+    def list_bili_publish_watch_tasks(cls, now=None, hours=PUBLISH_WATCH_HOURS):
+        """8 小时窗口内、尚未公开的 B 站成功投稿，供轮询探测。"""
+        now = now or datetime.now()
+        cutoff = now - timedelta(hours=hours)
+        with db.connection_context():
+            query = (
+                SubmissionTask
+                .select()
+                .where(
+                    SubmissionTask.platform.in_(list(BILI_SUBMISSION_PLATFORMS)),
+                    SubmissionTask.status == SUBMISSION_TASK_STATUS_SUCCESS,
+                    (
+                        SubmissionTask.publish_status.is_null() |
+                        (SubmissionTask.publish_status == PUBLISH_STATUS_REVIEWING)
+                    ),
+                    (
+                        (SubmissionTask.finished_at.is_null() & (SubmissionTask.created_at >= cutoff)) |
+                        (SubmissionTask.finished_at >= cutoff)
+                    ),
+                )
+                .order_by(SubmissionTask.finished_at.asc(), SubmissionTask.id.asc())
+            )
+            return [model_to_dict(item) for item in query]
+
+    @classmethod
+    def save_submission_task_bvid(cls, task_id, bvid):
+        """补写从上传结果里解析出的 BV 号，不改变已发布状态。"""
+        if not task_id or not bvid:
+            return None
+        with db.connection_context():
+            try:
+                task = SubmissionTask.get(SubmissionTask.task_id == task_id)
+            except SubmissionTask.DoesNotExist:
+                return None
+            task.bvid = bvid
+            if task.publish_status != PUBLISH_STATUS_PUBLISHED:
+                task.publish_status = PUBLISH_STATUS_REVIEWING
+            task.updated_at = datetime.now()
+            task.save()
+            cls._merge_record_files_upload_info(task.record_file_ids or [], {
+                'bvid': bvid,
+                'publish_status': task.publish_status,
+            })
+            return model_to_dict(task)
+
+    @classmethod
+    def mark_submission_task_publish_checked(cls, task_id, checked_at=None):
+        with db.connection_context():
+            try:
+                task = SubmissionTask.get(SubmissionTask.task_id == task_id)
+            except SubmissionTask.DoesNotExist:
+                return None
+            task.publish_checked_at = checked_at or datetime.now()
+            task.updated_at = datetime.now()
+            task.save()
+            return model_to_dict(task)
+
+    @classmethod
+    def mark_submission_task_published(cls, task_id, bvid=None, checked_at=None):
+        """稿件已在 B 站公开，停止探测。"""
+        with db.connection_context():
+            try:
+                task = SubmissionTask.get(SubmissionTask.task_id == task_id)
+            except SubmissionTask.DoesNotExist:
+                return None
+            now = checked_at or datetime.now()
+            if bvid:
+                task.bvid = bvid
+            task.publish_status = PUBLISH_STATUS_PUBLISHED
+            task.publish_checked_at = now
+            task.updated_at = now
+            task.save()
+            extra = {
+                'publish_status': PUBLISH_STATUS_PUBLISHED,
+            }
+            if task.bvid:
+                extra['bvid'] = task.bvid
+            cls._merge_record_files_upload_info(task.record_file_ids or [], extra)
+            return model_to_dict(task)
+
+    @classmethod
+    def _merge_record_files_upload_info(cls, record_file_ids, extra):
+        if not record_file_ids or not extra:
+            return
+        for rid in record_file_ids:
+            try:
+                rec = RecordFile.get_by_id(rid)
+            except RecordFile.DoesNotExist:
+                continue
+            info = rec.upload_info if isinstance(rec.upload_info, dict) else {}
+            rec.upload_info = {**info, **extra}
+            rec.save()
 
     @classmethod
     def recover_interrupted_submission_tasks(cls):
@@ -1016,8 +1158,34 @@ class DB:
             query = SubmissionTask.select()
 
             status = (filters.get('status') or '').strip()
-            if status:
+            publish_status = (filters.get('publish_status') or '').strip()
+            if status == PUBLISH_STATUS_REVIEWING:
+                query = query.where(
+                    SubmissionTask.platform.in_(list(BILI_SUBMISSION_PLATFORMS)),
+                    SubmissionTask.status == SUBMISSION_TASK_STATUS_SUCCESS,
+                    (
+                        SubmissionTask.publish_status.is_null() |
+                        (SubmissionTask.publish_status == PUBLISH_STATUS_REVIEWING)
+                    ),
+                )
+            elif status == PUBLISH_STATUS_PUBLISHED:
+                query = query.where(SubmissionTask.publish_status == PUBLISH_STATUS_PUBLISHED)
+            elif status:
                 query = query.where(SubmissionTask.status == status)
+
+            if publish_status == PUBLISH_STATUS_REVIEWING:
+                query = query.where(
+                    SubmissionTask.platform.in_(list(BILI_SUBMISSION_PLATFORMS)),
+                    SubmissionTask.status == SUBMISSION_TASK_STATUS_SUCCESS,
+                    (
+                        SubmissionTask.publish_status.is_null() |
+                        (SubmissionTask.publish_status == PUBLISH_STATUS_REVIEWING)
+                    ),
+                )
+            elif publish_status == PUBLISH_STATUS_PUBLISHED:
+                query = query.where(SubmissionTask.publish_status == PUBLISH_STATUS_PUBLISHED)
+            elif publish_status:
+                query = query.where(SubmissionTask.publish_status == publish_status)
 
             source = (filters.get('source') or '').strip()
             if source:
@@ -1037,7 +1205,8 @@ class DB:
                     SubmissionTask.task_id.contains(keyword) |
                     SubmissionTask.room_name.contains(keyword) |
                     SubmissionTask.uploader.contains(keyword) |
-                    SubmissionTask.bili_upload_template_name.contains(keyword)
+                    SubmissionTask.bili_upload_template_name.contains(keyword) |
+                    SubmissionTask.bvid.contains(keyword)
                 )
 
             total = query.count()
@@ -1082,10 +1251,31 @@ class DB:
                 SUBMISSION_TASK_STATUS_RUNNING,
                 SUBMISSION_TASK_STATUS_RETRYING,
             ))
+            published = (
+                SubmissionTask
+                .select()
+                .where(SubmissionTask.publish_status == PUBLISH_STATUS_PUBLISHED)
+                .count()
+            )
+            reviewing = (
+                SubmissionTask
+                .select()
+                .where(
+                    SubmissionTask.platform.in_(list(BILI_SUBMISSION_PLATFORMS)),
+                    SubmissionTask.status == SUBMISSION_TASK_STATUS_SUCCESS,
+                    (
+                        SubmissionTask.publish_status.is_null() |
+                        (SubmissionTask.publish_status == PUBLISH_STATUS_REVIEWING)
+                    ),
+                )
+                .count()
+            )
             return {
                 'by_status': by_status,
                 'by_source': by_source,
                 'active': active,
+                'reviewing': reviewing,
+                'published': published,
                 'total': sum(by_status.values()),
             }
 

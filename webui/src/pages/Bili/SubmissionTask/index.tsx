@@ -33,6 +33,8 @@ const STATUS_VALUE_ENUM = {
   PENDING: { text: '排队中' },
   RUNNING: { text: '上传中' },
   RETRYING: { text: '待重试' },
+  REVIEWING: { text: '审核中' },
+  PUBLISHED: { text: '已发布' },
   SUCCESS: { text: '成功' },
   FAILED: { text: '失败' },
 };
@@ -41,9 +43,47 @@ const STATUS_META: Record<string, { text: string; color: string }> = {
   PENDING: { text: '排队中', color: 'default' },
   RUNNING: { text: '上传中', color: 'processing' },
   RETRYING: { text: '待重试', color: 'warning' },
+  REVIEWING: { text: '审核中', color: 'processing' },
+  PUBLISHED: { text: '已发布', color: 'success' },
   SUCCESS: { text: '成功', color: 'success' },
   FAILED: { text: '失败', color: 'error' },
 };
+
+const BILI_UPLOAD_PLATFORMS = new Set([
+  'biliup-rs',
+  'biliup',
+  'biliup_cli',
+  'biliweb',
+  'bili_web',
+  'bili-web',
+]);
+
+function isBiliTask(row?: API.SubmissionTaskInfo): boolean {
+  if (!row) return false;
+  return (
+    BILI_UPLOAD_PLATFORMS.has(row.platform) ||
+    BILI_UPLOAD_PLATFORMS.has(row.uploader || '') ||
+    !!row.bvid
+  );
+}
+
+function displayStatusMeta(row: API.SubmissionTaskInfo): {
+  text: string;
+  color: string;
+} {
+  if (row.status === 'SUCCESS' && isBiliTask(row)) {
+    if (row.publish_status === 'PUBLISHED') {
+      return STATUS_META.PUBLISHED;
+    }
+    return STATUS_META.REVIEWING;
+  }
+  return (
+    STATUS_META[row.status || ''] || {
+      text: row.status || '-',
+      color: 'default',
+    }
+  );
+}
 
 const SOURCE_VALUE_ENUM = {
   AUTO: { text: '自动投稿' },
@@ -71,10 +111,7 @@ function formatJson(value: any): string {
 }
 
 function renderStatus(row: API.SubmissionTaskInfo) {
-  const meta = STATUS_META[row.status || ''] || {
-    text: row.status || '-',
-    color: 'default',
-  };
+  const meta = displayStatusMeta(row);
   return (
     <Space size={6}>
       <Tag color={meta.color}>{meta.text}</Tag>
@@ -84,6 +121,19 @@ function renderStatus(row: API.SubmissionTaskInfo) {
         </span>
       ) : null}
     </Space>
+  );
+}
+
+function renderBvid(bvid?: string | null) {
+  if (!bvid) return <span className={styles.muted}>-</span>;
+  return (
+    <a
+      href={`https://www.bilibili.com/video/${bvid}`}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {bvid}
+    </a>
   );
 }
 
@@ -132,7 +182,8 @@ const SubmissionTaskList: React.FC = () => {
     () => [
       { label: '全部任务', value: stats?.total || 0 },
       { label: '进行中', value: stats?.active || 0 },
-      { label: '成功', value: stats?.by_status?.SUCCESS || 0 },
+      { label: '审核中', value: stats?.reviewing || 0 },
+      { label: '已发布', value: stats?.published || 0 },
       { label: '失败', value: stats?.by_status?.FAILED || 0 },
     ],
     [stats],
@@ -178,6 +229,13 @@ const SubmissionTaskList: React.FC = () => {
           {row.task_id}
         </Typography.Text>
       ),
+    },
+    {
+      title: 'BV 号',
+      dataIndex: 'bvid',
+      width: 140,
+      search: false,
+      render: (_, row) => renderBvid(row.bvid),
     },
     {
       title: '房间 / 模板',
@@ -332,6 +390,16 @@ const SubmissionTaskList: React.FC = () => {
                   key: 'status',
                   label: '状态',
                   children: renderStatus(detail),
+                },
+                {
+                  key: 'bvid',
+                  label: 'BV 号',
+                  children: renderBvid(detail.bvid),
+                },
+                {
+                  key: 'publish_checked_at',
+                  label: '最近探测',
+                  children: formatDate(detail.publish_checked_at),
                 },
                 {
                   key: 'source',

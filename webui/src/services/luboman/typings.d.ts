@@ -321,7 +321,11 @@ declare namespace API {
     | 'RETRYING'
     | 'SUCCESS'
     | 'FAILED'
+    | 'REVIEWING'
+    | 'PUBLISHED'
     | string;
+
+  type SubmissionPublishStatus = 'REVIEWING' | 'PUBLISHED' | string;
 
   type SubmissionTaskSource = 'AUTO' | 'FILE_MANAGER' | string;
 
@@ -354,6 +358,9 @@ declare namespace API {
     error_message?: string | null;
     result?: any | null;
     metadata?: Record<string, any> | null;
+    bvid?: string | null;
+    publish_status?: SubmissionPublishStatus | null;
+    publish_checked_at?: string | null;
     created_at?: string;
     updated_at?: string | null;
     started_at?: string | null;
@@ -370,6 +377,8 @@ declare namespace API {
     by_status: Record<string, number>;
     by_source: Record<string, number>;
     active: number;
+    reviewing?: number;
+    published?: number;
     total: number;
   }
 

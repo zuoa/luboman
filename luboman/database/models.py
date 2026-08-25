@@ -208,6 +208,9 @@ class SubmissionTask(BaseModel):
     error_message = TextField(null=True)
     result = JSONField(null=True)
     metadata = JSONField(null=True)
+    bvid = CharField(null=True, index=True)  # B 站稿件 BV 号，投稿成功后从返回值解析
+    publish_status = CharField(null=True, index=True)  # REVIEWING 审核中 / PUBLISHED 已发布
+    publish_checked_at = DateTimeField(null=True)  # 最近一次公开页探测时间
     created_at = DateTimeField(default=get_current_time, index=True)
     updated_at = DateTimeField(null=True)
     started_at = DateTimeField(null=True)

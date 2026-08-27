@@ -1916,6 +1916,68 @@ class BiliPublishWatchTest(unittest.TestCase):
             except OSError:
                 pass
 
+    def test_ensure_submission_task_publish_schema_before_create_table(self):
+        """旧表缺 bvid 时，先补列再 create_table，避免 Peewee 对不存在的列建索引。"""
+        from peewee import SqliteDatabase
+        from luboman.database import models as models_module
+        from luboman.database import db as db_module
+        from luboman.database.models import SubmissionTask
+        from luboman.database.db import DB
+
+        db_path = tempfile.mktemp(suffix='.db')
+        test_db = SqliteDatabase(db_path)
+        original = (models_module.db, db_module.db)
+        models_module.db = test_db
+        db_module.db = test_db
+        SubmissionTask.bind(test_db)
+        test_db.connect(reuse_if_open=True)
+        test_db.execute_sql('''
+            CREATE TABLE submissiontask (
+                id INTEGER PRIMARY KEY,
+                task_id VARCHAR(255) NOT NULL,
+                source VARCHAR(255),
+                platform VARCHAR(255),
+                status VARCHAR(255),
+                priority VARCHAR(255),
+                file_list TEXT,
+                file_count INTEGER,
+                record_file_ids TEXT,
+                live_room_id INTEGER,
+                room_name VARCHAR(255),
+                room_platform VARCHAR(255),
+                bili_upload_template_id INTEGER,
+                bili_upload_template_name VARCHAR(255),
+                uploader VARCHAR(255),
+                retry_count INTEGER,
+                max_retries INTEGER,
+                error_message TEXT,
+                result TEXT,
+                metadata TEXT,
+                created_at DATETIME,
+                updated_at DATETIME,
+                started_at DATETIME,
+                finished_at DATETIME
+            )
+        ''')
+        try:
+            cols_before = {c.name for c in test_db.get_columns('submissiontask')}
+            self.assertNotIn('bvid', cols_before)
+            DB._ensure_submission_task_publish_schema()
+            SubmissionTask.create_table(safe=True)
+            cols = {c.name for c in test_db.get_columns('submissiontask')}
+            self.assertIn('bvid', cols)
+            self.assertIn('publish_status', cols)
+            self.assertIn('publish_checked_at', cols)
+        finally:
+            test_db.close()
+            SubmissionTask.bind(original[0])
+            models_module.db = original[0]
+            db_module.db = original[1]
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

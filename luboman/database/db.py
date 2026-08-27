@@ -130,6 +130,9 @@ class DB:
         DouyinAccount.create_table(safe=True)
         DouyinUploadTemplate.create_table(safe=True)
         RecordFile.create_table(safe=True)
+        # 旧库必须先补列再 create_table：Peewee 不会给已存在的表加列，但仍会给
+        # index=True 的字段建索引，缺 bvid 时会直接 ERROR column does not exist。
+        cls._ensure_submission_task_publish_schema()
         SubmissionTask.create_table(safe=True)
         ClipTask.create_table(safe=True)
         cls._ensure_record_file_schema()
@@ -139,7 +142,6 @@ class DB:
         cls._ensure_live_room_cover_schema()
         cls._ensure_bili_account_schema()
         cls._ensure_clip_task_schema()
-        cls._ensure_submission_task_publish_schema()
         cls.recover_interrupted_submission_tasks()
         cls.recover_interrupted_clip_tasks()
         # 兼容已有库：补建 (live_room_id, begin_time) 复合索引（create_table 的 safe=True
@@ -267,22 +269,34 @@ class DB:
 
     @classmethod
     def _ensure_submission_task_publish_schema(cls):
-        """兼容旧库：补齐投稿任务 BV 号与发布状态列。"""
+        """兼容旧库：补齐投稿任务 BV 号与发布状态列及索引。
+
+        必须在 SubmissionTask.create_table(safe=True) 之前调用。Peewee 对已存在
+        的表不会补列，但仍会给 index=True 的字段执行 CREATE INDEX；旧表缺列时
+        会报 column "bvid" does not exist，后续补列也走不到。
+        """
         table = SubmissionTask._meta.table_name
+        if not SubmissionTask.table_exists():
+            return
+        columns = {
+            'bvid': 'VARCHAR(32)',
+            'publish_status': 'VARCHAR(16)',
+            'publish_checked_at': 'TIMESTAMP',
+        }
+        indexes = ('bvid', 'publish_status')
         try:
             with db.atomic():
-                db.execute_sql(
-                    f'ALTER TABLE "{table}" '
-                    'ADD COLUMN IF NOT EXISTS bvid VARCHAR(32)'
-                )
-                db.execute_sql(
-                    f'ALTER TABLE "{table}" '
-                    'ADD COLUMN IF NOT EXISTS publish_status VARCHAR(16)'
-                )
-                db.execute_sql(
-                    f'ALTER TABLE "{table}" '
-                    'ADD COLUMN IF NOT EXISTS publish_checked_at TIMESTAMP'
-                )
+                existing = {c.name for c in db.get_columns(table)}
+                for name, ddl in columns.items():
+                    if name not in existing:
+                        db.execute_sql(
+                            f'ALTER TABLE "{table}" ADD COLUMN {name} {ddl}'
+                        )
+                for name in indexes:
+                    db.execute_sql(
+                        f'CREATE INDEX IF NOT EXISTS "{table}_{name}" '
+                        f'ON "{table}" ("{name}")'
+                    )
             logger.info('SubmissionTask 发布状态字段就绪')
         except Exception:
             logger.warning('补齐 SubmissionTask 发布状态字段失败', exc_info=True)

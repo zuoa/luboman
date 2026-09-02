@@ -39,8 +39,10 @@ declare namespace API {
     bili_upload_template_ids?: number[] | null;
     /** 关联的抖音投稿模板 id 列表（账号绑定在模板上） */
     douyin_upload_template_ids?: number[] | null;
-    /** B 站充电等级 id */
+    /** 旧：房间级充电档位 ID，仅兼容；档位以投稿账号 upower_level_id 为准 */
     bili_upower_level_id?: string;
+    /** 0 关闭 / 1 开启：该直播间 B 站投稿走充电专属视频 */
+    bili_upower_enabled?: 0 | 1;
     /** 网盘上传平台：bdpan / alipan / quark */
     upload_storage_platform?: string;
     /** 直播流封装格式，默认 flv */
@@ -101,6 +103,25 @@ declare namespace API {
     state_active?: 0 | 1;
     /** 片头视频服务器路径；该账号所有 B 站投稿的每个视频前拼接，空则不处理 */
     intro_video_path?: string | null;
+    /** 该账号默认充电专属档位 ID */
+    upower_level_id?: string | null;
+  }
+
+  /** B 站账号充电档位 */
+  interface BiliUpowerLevel {
+    id: string;
+    name?: string;
+    price?: number | null;
+    privilege_type?: number | null;
+    exclusive_ok?: boolean;
+    label?: string;
+  }
+
+  interface BiliUpowerLevelsResult {
+    levels: BiliUpowerLevel[];
+    selected_id?: string | null;
+    mid?: number | null;
+    message?: string;
   }
 
   /** 文件上传结果（/v1/Upload/cover、/v1/Upload/intro） */

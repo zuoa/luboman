@@ -79,6 +79,7 @@ class BiliAccount(BaseModel):
     bili_cookies = TextField(null=True)  # B站cookie
     state_active = IntegerField(default=1)  # 状态, 0为未激活, 1为激活
     intro_video_path = CharField(null=True)  # 片头视频路径，该账号所有B站投稿的每个视频文件前拼接；为空不处理
+    upower_level_id = CharField(null=True)  # 该账号默认充电专属档位 ID（B站 snowflake）
 
 
 class DouyinAccount(BaseModel):
@@ -149,7 +150,8 @@ class LiveRoom(BaseModel):
     bili_upload_template_id = IntegerField(null=True)  # 旧单模板字段，仅兼容保留（回退用），以 bili_upload_template_ids 为准
     bili_upload_template_ids = JSONField(null=True)  # B站投稿模板id列表，一份录播可投稿到多个账号（账号绑定在模板上）
     douyin_upload_template_ids = JSONField(null=True)  # 抖音投稿模板id列表（账号绑定在模板上）
-    bili_upower_level_id = CharField(null=True)  # B站充电专属等级ID
+    bili_upower_level_id = CharField(null=True)  # 旧：房间级充电档位 ID，仅兼容回退；档位以投稿账号 upower_level_id 为准
+    bili_upower_enabled = IntegerField(default=0)  # 该房间 B 站投稿是否走充电专属, 0关 1开
     upload_storage_platform = CharField(null=True)  # 上传网盘类型
     stream_video_format = CharField(null=True, default="flv")  # 视频格式
     last_living_time = DateTimeField(null=True)  # 最近直播时间

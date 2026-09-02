@@ -1,6 +1,7 @@
 import logging
 import os
 
+from luboman.core.bili_upower import resolve_bili_upower
 from luboman.core.decorators import PluginTool
 from luboman.core.upload import BiliBili, Data
 from luboman.core.upload import Uploader, resolve_bili_cover_path
@@ -42,9 +43,10 @@ class BiliWebUploader(Uploader):
             tags = ['录播Man']
         video.set_tag(tags)
 
-        if self.room_data.get('bili_upower_level_id'):
-            video.upower_level_id = self.room_data.get('bili_upower_level_id')
-            video.charging_pay = 1
+        upower = resolve_bili_upower(self.room_data, template_info)
+        if upower:
+            video.charging_pay = upower['charging_pay']
+            video.upower_level_id = upower['upower_level_id']
 
         lines = template_info.get('lines', 'AUTO')
         tasks = template_info.get('threads', 5)

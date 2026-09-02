@@ -30,6 +30,7 @@ from luboman.core.runtime import (
     start_room_runtime,
     stop_room_runtime,
 )
+from luboman.core.bili_upower import fetch_upower_levels
 from luboman.core.upload import BiliBili, Data
 from luboman.core.utils import get_public_dir, get_video_dir
 from luboman.database.db import (
@@ -234,6 +235,14 @@ def _disable_bili_account(bili_account_id):
         raise ValueError("id is required")
 
     return DB.update_bili_account({"id": bili_account_id, "state_active": 0})
+
+
+def _list_bili_account_upower_levels(account_id):
+    try:
+        account = BiliAccount.get_by_id_(account_id)
+    except BiliAccount.DoesNotExist:
+        raise ValueError("bili_account not found")
+    return fetch_upower_levels(model_to_dict(account))
 
 
 def _create_bili_upload_template(data):
@@ -662,6 +671,15 @@ def _build_bili_publish_room_data(bili_upload_template_id, live_room_id, room_da
     room_data['bili_upload_template'] = template_info
     # 覆盖为本次实际使用的模板id，避免沿用房间旧单模板列导致 SubmissionTask 记录错模板
     room_data['bili_upload_template_id'] = template_info['id']
+    return room_data
+
+
+def _apply_bili_publish_upower(room_data, enabled_raw):
+    """手动投稿时可覆盖本次是否走充电专属；关掉时清掉房间旧档位，避免回退成仍开启。"""
+    enabled = 1 if _as_bool(enabled_raw) else 0
+    room_data['bili_upower_enabled'] = enabled
+    if enabled != 1:
+        room_data['bili_upower_level_id'] = None
     return room_data
 
 
@@ -1105,6 +1123,19 @@ async def update_bili_account(request):
         return error(1, str(e))
 
 
+@routes.post("/v1/BiliAccount/upowerLevels")
+async def list_bili_account_upower_levels(request):
+    data = await request.json()
+    account_id = data.get('id')
+    if not account_id:
+        return error(1, "id is required")
+    try:
+        return success(await run_db(_list_bili_account_upower_levels, account_id))
+    except Exception as e:
+        logger.error(e)
+        return error(1, str(e))
+
+
 @routes.post("/v1/BiliAccount/del")
 async def del_bili_account(request):
     data = await request.json()
@@ -1529,6 +1560,10 @@ async def publish_record_file_to_bili(request):
                 room_data = await run_db(
                     _build_bili_publish_room_data, template_id, live_room_id, room_data_override
                 )
+                if 'bili_upower_enabled' in data:
+                    room_data = _apply_bili_publish_upower(
+                        room_data, data.get('bili_upower_enabled')
+                    )
                 result = await schedule_bili_submission(
                     file_list=file_list,
                     room_data=room_data,

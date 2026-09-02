@@ -269,7 +269,8 @@ const LiveCoverPreview: React.FC = () => {
  * 后端 update_live_room 仅更新以下字段（白名单合并）：
  * room_name, room_url, custom_filename, bili_upload_template_id, bili_upload_template_ids,
  * upload_storage_platform, stream_video_format, active_state, active_begin, active_end,
- * auto_dance_clip, bili_upload_clips_only, cover_mode, custom_cover_path。
+ * auto_dance_clip, bili_upload_clips_only, cover_mode, custom_cover_path,
+ * bili_upower_enabled。
  * bili_upload_clips_only 同时作用于 B 站与网盘整录。
  * 故新建/编辑表单仅暴露这些可编辑字段；投稿模板为多选（一份录播可投多个账号）。
  */
@@ -302,6 +303,11 @@ const RoomFormFields: React.FC = () => (
       placeholder="选择 B 站投稿模板（可多选，每个模板绑定一个账号）"
       fieldProps={{ mode: 'multiple' }}
       allowClear
+    />
+    <ProFormSwitch
+      name="bili_upower_enabled"
+      label="充电投稿"
+      extra="开启后，该直播间的 B 站投稿发成充电专属视频；档位在对应投稿账号的「充电」里选。账号未选档位则仍发普通稿。"
     />
     <ProFormSelect
       name="douyin_upload_template_ids"
@@ -785,7 +791,7 @@ const LiveRoomList: React.FC = () => {
         open={createOpen}
         onOpenChange={setCreateOpen}
         modalProps={{ destroyOnClose: true }}
-        initialValues={{ active_state: true, auto_dance_clip: false, bili_upload_clips_only: false, cover_mode: '' }}
+        initialValues={{ active_state: true, auto_dance_clip: false, bili_upload_clips_only: false, bili_upower_enabled: false, cover_mode: '' }}
         onFinish={async (values) => {
           if (values.cover_mode === 'custom' && !values.custom_cover_path) {
             message.warning('请选择「自定义上传」后上传封面图片，或改用其他封面模式');
@@ -796,6 +802,7 @@ const LiveRoomList: React.FC = () => {
             active_state: values.active_state ? 1 : 0,
             auto_dance_clip: values.auto_dance_clip ? 1 : 0,
             bili_upload_clips_only: values.bili_upload_clips_only ? 1 : 0,
+            bili_upower_enabled: values.bili_upower_enabled ? 1 : 0,
           });
           fetchData();
           return true;
@@ -819,6 +826,9 @@ const LiveRoomList: React.FC = () => {
                 active_state: editing.active_state === 1,
                 auto_dance_clip: editing.auto_dance_clip === 1,
                 bili_upload_clips_only: editing.bili_upload_clips_only === 1,
+                bili_upower_enabled:
+                  editing.bili_upower_enabled === 1 ||
+                  !!editing.bili_upower_level_id,
                 // 多选字段：null 归一为 undefined；兼容只有旧单模板字段的历史数据
                 bili_upload_template_ids:
                   editing.bili_upload_template_ids ??
@@ -844,6 +854,7 @@ const LiveRoomList: React.FC = () => {
             active_state: values.active_state ? 1 : 0,
             auto_dance_clip: values.auto_dance_clip ? 1 : 0,
             bili_upload_clips_only: values.bili_upload_clips_only ? 1 : 0,
+            bili_upower_enabled: values.bili_upower_enabled ? 1 : 0,
           });
           fetchData();
           return true;

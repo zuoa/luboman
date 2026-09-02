@@ -5,6 +5,7 @@ import shlex
 import subprocess
 from typing import Any, Dict, Iterable, List, Optional
 
+from luboman.core.bili_upower import resolve_bili_upower
 from luboman.core.decorators import PluginTool
 from luboman.core.upload import Uploader, resolve_bili_cover_path
 from luboman.core.utils import format_live_prop_text
@@ -279,9 +280,9 @@ class BiliupCliUploader(Uploader):
         if isinstance(template_extra, dict):
             extra_fields.update(template_extra)
 
-        upower_level_id = self.room_data.get('bili_upower_level_id')
-        if upower_level_id:
-            extra_fields.setdefault('charging_pay', 1)
-            extra_fields.setdefault('upower_level_id', upower_level_id)
+        upower = resolve_bili_upower(self.room_data, template_info)
+        if upower:
+            extra_fields.setdefault('charging_pay', upower['charging_pay'])
+            extra_fields.setdefault('upower_level_id', upower['upower_level_id'])
 
         return extra_fields

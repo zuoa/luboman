@@ -394,6 +394,26 @@ class WebApiRefactorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["data"], 1)
         self.assertEqual(calls, [("_update_bili_account", ({"id": 9, "state_active": 1},))])
 
+    async def test_bili_account_upower_levels_route_uses_db_executor(self):
+        original_run_db = web_module.run_db
+        calls = []
+
+        async def fake_run_db(func, *args, **kwargs):
+            calls.append((func.__name__, args))
+            return {'levels': [], 'selected_id': None}
+
+        web_module.run_db = fake_run_db
+        try:
+            missing = await web_module.list_bili_account_upower_levels(self._Request({}))
+            response = await web_module.list_bili_account_upower_levels(self._Request({"id": 9}))
+        finally:
+            web_module.run_db = original_run_db
+
+        self.assertFalse(self._response_json(missing)["success"])
+        data = self._response_json(response)
+        self.assertTrue(data["success"])
+        self.assertEqual(calls, [("_list_bili_account_upower_levels", (9,))])
+
 
 @unittest.skipIf(AsyncDatabaseManager is None, "database dependencies are not installed")
 class AsyncDatabaseManagerRefactorTest(unittest.TestCase):
@@ -560,6 +580,8 @@ class DeploymentRefactorTest(unittest.TestCase):
 
         self.assertIn('@routes.post("/v1/BiliAccount/update")', source)
         self.assertIn("await run_db(_update_bili_account, data)", source)
+        self.assertIn('@routes.post("/v1/BiliAccount/upowerLevels")', source)
+        self.assertIn("await run_db(_list_bili_account_upower_levels, account_id)", source)
 
     def test_web_crud_uses_db_helpers(self):
         source = Path(__file__).with_name("luboman").joinpath("web", "__init__.py").read_text(encoding="utf-8")
@@ -1114,6 +1136,58 @@ class RecordFilePublishResetTimestampsTest(unittest.IsolatedAsyncioTestCase):
         body = json.loads(response.text)
         self.assertTrue(body['success'], body)
         self.assertFalse(captured['reset_timestamps'])
+
+    async def test_publish_applies_upower_override(self):
+        import luboman.web as web
+
+        captured = {}
+        room_data = {
+            'bili_upower_enabled': 1,
+            'bili_upower_level_id': 'old-room-level',
+            'bili_upload_template': {
+                'id': 1,
+                'bili_account': {'upower_level_id': '952390697301177415'},
+            },
+        }
+
+        async def fake_schedule(**kwargs):
+            captured.update(kwargs)
+            return {'task_id': 'task-upower', 'file_count': 1, 'uploader': 'biliup-rs'}
+
+        async def fake_run_db(fn, *a, **k):
+            if fn is web._prepare_bili_publish:
+                return [1], 9, {}, [{'video': '/tmp/a.flv'}]
+            if fn is web._build_bili_publish_room_data:
+                return dict(room_data)
+            return fn(*a, **k)
+
+        request = _FakeRequest({
+            'videos': ['/tmp/a.flv'],
+            'bili_upload_template_ids': [1],
+            'bili_upower_enabled': False,
+        })
+
+        with patch.object(web, 'run_db', side_effect=fake_run_db), \
+             patch.object(web, 'schedule_bili_submission', side_effect=fake_schedule):
+            response = await web.publish_record_file_to_bili(request)
+
+        body = json.loads(response.text)
+        self.assertTrue(body['success'], body)
+        self.assertEqual(captured['room_data']['bili_upower_enabled'], 0)
+        self.assertIsNone(captured['room_data']['bili_upower_level_id'])
+
+        request_on = _FakeRequest({
+            'videos': ['/tmp/a.flv'],
+            'bili_upload_template_ids': [1],
+            'bili_upower_enabled': True,
+        })
+        with patch.object(web, 'run_db', side_effect=fake_run_db), \
+             patch.object(web, 'schedule_bili_submission', side_effect=fake_schedule):
+            response_on = await web.publish_record_file_to_bili(request_on)
+        body_on = json.loads(response_on.text)
+        self.assertTrue(body_on['success'], body_on)
+        self.assertEqual(captured['room_data']['bili_upower_enabled'], 1)
+        self.assertEqual(captured['room_data']['bili_upower_level_id'], 'old-room-level')
 
 
 class UploadPrepTimestampResetTest(unittest.TestCase):
@@ -1977,6 +2051,153 @@ class BiliPublishWatchTest(unittest.TestCase):
                 os.remove(db_path)
             except OSError:
                 pass
+
+
+class BiliUpowerDbTest(unittest.TestCase):
+    def setUp(self):
+        from peewee import SqliteDatabase
+        import luboman.database.db as db_module
+        from luboman.database.models import BiliAccount, LiveRoom
+
+        self.db_module = db_module
+        self.original_db = db_module.db
+        self.models = [LiveRoom, BiliAccount]
+        tmp = tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False)
+        self.db_path = tmp.name
+        tmp.close()
+        self.test_db = SqliteDatabase(self.db_path)
+        self.bind_ctx = self.test_db.bind_ctx(self.models)
+        self.bind_ctx.__enter__()
+        db_module.db = self.test_db
+        self.test_db.create_tables(self.models)
+
+    def tearDown(self):
+        self.test_db.drop_tables(self.models)
+        self.db_module.db = self.original_db
+        self.bind_ctx.__exit__(None, None, None)
+        self.test_db.close()
+        os.unlink(self.db_path)
+
+    def test_account_upower_level_and_room_switch(self):
+        account = DB.create_bili_account({
+            "account_name": "Uploader",
+            "bili_cookies": "SESSDATA=x;",
+        })
+        self.assertEqual(DB.update_bili_account({
+            "id": account["id"],
+            "upower_level_id": "952390697301177415",
+            "ignored": "x",
+        }), 1)
+        self.assertEqual(DB.list_bili_account()[0]["upower_level_id"], "952390697301177415")
+        self.assertEqual(DB.update_bili_account({"id": account["id"], "upower_level_id": ""}), 1)
+        self.assertIsNone(DB.list_bili_account()[0]["upower_level_id"])
+
+        room = DB.create_live_room({
+            "room_url": "https://example.test/upower",
+            "room_name": "Upower",
+            "bili_upower_level_id": "old-room-level",
+        })
+        self.assertEqual(DB.update_live_room({
+            "id": room["id"],
+            "bili_upower_enabled": 1,
+        }), 1)
+        self.assertEqual(DB.get_live_room_data(room["id"])["bili_upower_enabled"], 1)
+        self.assertEqual(DB.update_live_room({"id": room["id"], "bili_upower_enabled": 0}), 1)
+        closed = DB.get_live_room_data(room["id"])
+        self.assertEqual(closed["bili_upower_enabled"], 0)
+        self.assertIsNone(closed["bili_upower_level_id"])
+
+
+class BiliUpowerResolveTest(unittest.TestCase):
+    def test_resolve_bili_upower_uses_account_level_when_room_enabled(self):
+        from luboman.core.bili_upower import resolve_bili_upower
+
+        self.assertIsNone(resolve_bili_upower({'bili_upower_enabled': 0}, {
+            'bili_account': {'upower_level_id': '952390697301177415'},
+        }))
+        self.assertEqual(
+            resolve_bili_upower({'bili_upower_enabled': 1}, {
+                'bili_account': {'upower_level_id': '952390697301177415'},
+            }),
+            {'charging_pay': 1, 'upower_level_id': '952390697301177415'},
+        )
+
+    def test_resolve_bili_upower_legacy_room_level_still_enables(self):
+        from luboman.core.bili_upower import resolve_bili_upower
+
+        self.assertEqual(
+            resolve_bili_upower({
+                'bili_upower_enabled': 0,
+                'bili_upower_level_id': 'old-room-level',
+            }, {'bili_account': {}}),
+            {'charging_pay': 1, 'upower_level_id': 'old-room-level'},
+        )
+        self.assertEqual(
+            resolve_bili_upower({
+                'bili_upower_enabled': 1,
+                'bili_upower_level_id': 'old-room-level',
+            }, {'bili_account': {'upower_level_id': 'account-level'}}),
+            {'charging_pay': 1, 'upower_level_id': 'account-level'},
+        )
+
+    def test_resolve_bili_upower_skips_when_enabled_without_level(self):
+        from luboman.core.bili_upower import resolve_bili_upower
+
+        self.assertIsNone(resolve_bili_upower(
+            {'bili_upower_enabled': 1},
+            {'bili_account': {}},
+        ))
+
+    def test_normalize_levels_skips_six_yuan_and_short_ids(self):
+        from luboman.core.bili_upower import _normalize_levels, _walk_level_dicts
+
+        payload = {
+            'data': {
+                'list': [
+                    {
+                        'id': '952390697301177415',
+                        'name': '视频补给箱',
+                        'privilege_type': 20,
+                        'price': 3000,
+                    },
+                    {
+                        'id': 10,
+                        'name': '为TA充电',
+                        'privilege_type': 10,
+                        'price': 600,
+                    },
+                    {
+                        'privilege_id': '888888888888888888',
+                        'title': '高档',
+                        'privilege_type': 50,
+                        'price': 12800,
+                    },
+                    {
+                        'id': '111111111111111111',
+                        'name': '为TA充电',
+                        'privilege_type': 10,
+                        'price': 600,
+                    },
+                ]
+            }
+        }
+        levels = _normalize_levels(_walk_level_dicts(payload))
+        ids = [item['id'] for item in levels]
+        self.assertEqual(ids, [
+            '952390697301177415',
+            '888888888888888888',
+            '111111111111111111',
+        ])
+        self.assertEqual(levels[0]['price'], 30)
+        self.assertTrue(levels[0]['exclusive_ok'])
+        self.assertEqual(levels[1]['price'], 128)
+        self.assertFalse(levels[2]['exclusive_ok'])
+
+    def test_fetch_upower_levels_requires_cookie(self):
+        from luboman.core.bili_upower import fetch_upower_levels
+
+        with self.assertRaises(ValueError):
+            fetch_upower_levels({'id': 1})
 
 
 if __name__ == "__main__":

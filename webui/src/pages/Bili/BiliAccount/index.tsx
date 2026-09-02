@@ -25,6 +25,7 @@ import {
   Modal,
   Popconfirm,
   QRCode,
+  Select,
   Space,
   Tag,
   Upload,
@@ -41,6 +42,7 @@ const {
   startBiliupLogin,
   getBiliupLoginStatus,
   stopBiliupLogin,
+  listBiliAccountUpowerLevels,
 } = services.BiliAccount;
 const { uploadIntro } = services.Upload;
 
@@ -76,6 +78,12 @@ const BiliAccountList: React.FC = () => {
   // 片头设置 Modal（独立小弹窗，与登录 Modal 状态机隔离）
   const [introAccount, setIntroAccount] = useState<API.BiliAccountInfo>();
   const [introUploading, setIntroUploading] = useState(false);
+  const [upowerAccount, setUpowerAccount] = useState<API.BiliAccountInfo>();
+  const [upowerLevels, setUpowerLevels] = useState<API.BiliUpowerLevel[]>([]);
+  const [upowerSelectedId, setUpowerSelectedId] = useState<string | undefined>();
+  const [upowerLoading, setUpowerLoading] = useState(false);
+  const [upowerSaving, setUpowerSaving] = useState(false);
+  const [upowerHint, setUpowerHint] = useState<string>();
 
   const handleRemoveIntro = async () => {
     if (!introAccount?.id) return;
@@ -83,6 +91,51 @@ const BiliAccountList: React.FC = () => {
     message.success('片头已移除');
     setIntroAccount(undefined);
     actionRef.current?.reload();
+  };
+
+  const openUpowerModal = async (record: API.BiliAccountInfo) => {
+    setUpowerAccount(record);
+    setUpowerLevels([]);
+    setUpowerSelectedId(record.upower_level_id || undefined);
+    setUpowerHint(undefined);
+    if (!record.id) return;
+    setUpowerLoading(true);
+    try {
+      const result = await listBiliAccountUpowerLevels(
+        { id: record.id },
+        { skipErrorHandler: true },
+      );
+      setUpowerLevels(result.levels || []);
+      setUpowerSelectedId(
+        result.selected_id || record.upower_level_id || undefined,
+      );
+      if (!result.levels?.length) {
+        setUpowerHint(
+          result.message ||
+            '未拉取到充电档位。请确认账号已开通充电计划，且存在非 6 元档。',
+        );
+      }
+    } catch (e) {
+      setUpowerHint((e as Error)?.message || '拉取充电档位失败');
+    } finally {
+      setUpowerLoading(false);
+    }
+  };
+
+  const handleSaveUpower = async () => {
+    if (!upowerAccount?.id) return;
+    setUpowerSaving(true);
+    try {
+      await updateBiliAccount({
+        id: upowerAccount.id,
+        upower_level_id: upowerSelectedId || '',
+      });
+      message.success(upowerSelectedId ? '充电档位已保存' : '已清除充电档位');
+      setUpowerAccount(undefined);
+      actionRef.current?.reload();
+    } finally {
+      setUpowerSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -292,6 +345,17 @@ const BiliAccountList: React.FC = () => {
               ),
           },
           {
+            title: '充电档位',
+            dataIndex: 'upower_level_id',
+            width: 100,
+            render: (_, r) =>
+              r.upower_level_id ? (
+                <Tag color="gold">已设置</Tag>
+              ) : (
+                <Tag>未设置</Tag>
+              ),
+          },
+          {
             title: '状态',
             dataIndex: 'state_active',
             width: 90,
@@ -306,7 +370,7 @@ const BiliAccountList: React.FC = () => {
             title: '操作',
             dataIndex: 'option',
             valueType: 'option',
-            width: 260,
+            width: 300,
             render: (_, record) => (
               <Space>
                 <a onClick={() => record.id && handleCheckLogin(record.id)}>
@@ -314,6 +378,7 @@ const BiliAccountList: React.FC = () => {
                 </a>
                 <a onClick={() => openReloginModal(record)}>重新登录</a>
                 <a onClick={() => setIntroAccount(record)}>片头</a>
+                <a onClick={() => openUpowerModal(record)}>充电</a>
                 <Popconfirm
                   title="确认删除该账号？"
                   description="将停用该账号（state_active 置 0）"
@@ -548,6 +613,58 @@ const BiliAccountList: React.FC = () => {
               </Popconfirm>
             ) : null}
           </Space>
+        </Space>
+      </Modal>
+
+      <Modal
+        title={`充电档位${upowerAccount?.account_name ? ` - ${upowerAccount.account_name}` : ''}`}
+        open={!!upowerAccount}
+        onCancel={() => setUpowerAccount(undefined)}
+        onOk={handleSaveUpower}
+        confirmLoading={upowerSaving}
+        okText="保存"
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13 }}>
+            选择该账号发充电专属视频时使用的档位。直播间需另外打开「充电投稿」才会生效；6 元档不能发专属视频。
+          </div>
+          <Select
+            allowClear
+            showSearch
+            loading={upowerLoading}
+            placeholder={upowerLoading ? '正在拉取档位…' : '选择充电档位'}
+            value={upowerSelectedId}
+            onChange={(value) => setUpowerSelectedId(value)}
+            options={(() => {
+              const options = (upowerLevels || []).map((level) => ({
+                label: level.label || level.name || level.id,
+                value: level.id,
+                disabled: level.exclusive_ok === false,
+              }));
+              if (
+                upowerSelectedId &&
+                !options.some((item) => item.value === upowerSelectedId)
+              ) {
+                options.unshift({
+                  label: `已保存档位 ${upowerSelectedId}`,
+                  value: upowerSelectedId,
+                  disabled: false,
+                });
+              }
+              return options;
+            })()}
+            optionFilterProp="label"
+            style={{ width: '100%' }}
+          />
+          {upowerHint ? (
+            <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13 }}>
+              {upowerHint}
+              {upowerAccount?.upower_level_id
+                ? ` 当前已保存档位 ID：${upowerAccount.upower_level_id}`
+                : ''}
+            </div>
+          ) : null}
         </Space>
       </Modal>
     </>

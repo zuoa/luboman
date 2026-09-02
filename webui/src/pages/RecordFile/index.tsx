@@ -244,6 +244,7 @@ const RecordFileList: React.FC = () => {
   const [publishStorageOpen, setPublishStorageOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<API.RecordFileInfo[]>([]);
   const [publishResetDefault, setPublishResetDefault] = useState(false);
+  const [publishUpowerDefault, setPublishUpowerDefault] = useState(false);
   const [storagePlatformDefault, setStoragePlatformDefault] = useState<string>();
   const [playTarget, setPlayTarget] = useState<API.RecordFileInfo>();
 
@@ -299,13 +300,35 @@ const RecordFileList: React.FC = () => {
     fetchRoomSummary(true);
   }, [fetchRoomSummary]);
 
-  const openPublish = (
+  const openPublish = async (
     rows: API.RecordFileInfo[],
     resetTimestamps = false,
   ) => {
     if (!rows.length) return;
     setPublishTarget(rows);
     setPublishResetDefault(resetTimestamps);
+    const roomIds = Array.from(
+      new Set(
+        rows
+          .map((row) => row.live_room_id)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    const defaultRoomId =
+      activeRoomId != null
+        ? activeRoomId
+        : roomIds.length === 1
+          ? roomIds[0]
+          : undefined;
+    try {
+      const list = await listLiveRoom({ skipErrorHandler: true });
+      const room = (list || []).find((item) => item.id === defaultRoomId);
+      setPublishUpowerDefault(
+        room?.bili_upower_enabled === 1 || !!room?.bili_upower_level_id,
+      );
+    } catch {
+      setPublishUpowerDefault(false);
+    }
     setPublishOpen(true);
   };
 
@@ -399,6 +422,7 @@ const RecordFileList: React.FC = () => {
   const handlePublish = async (values: any) => {
     const { bili_upload_template_ids, live_room_id, room_data } = values;
     const resetTimestamps = boolFromFormValue(values.reset_timestamps, false);
+    const upowerEnabled = boolFromFormValue(values.bili_upower_enabled, false);
     const target = publishTarget;
     if (target.some((row) => !isRecordCompleted(row))) {
       message.warning('录制中的文件不能发布');
@@ -416,6 +440,7 @@ const RecordFileList: React.FC = () => {
         bili_upload_template_ids,
         live_room_id,
         reset_timestamps: resetTimestamps,
+        bili_upower_enabled: upowerEnabled,
         ...(allHaveId
           ? { file_ids: target.map((r) => r.id as number) }
           : { videos: target.map((r) => r.video) }),
@@ -951,6 +976,7 @@ const RecordFileList: React.FC = () => {
           publishResetDefault ? '重置后发布到 B 站' : '发布到 B 站'
         }（${publishTarget.length} 个文件）`}
         width={560}
+        key={`bili-publish-${publishDefaultRoomId || 'none'}-${publishResetDefault}-${publishUpowerDefault}`}
         open={publishOpen}
         onOpenChange={setPublishOpen}
         modalProps={{ destroyOnClose: true }}
@@ -958,6 +984,7 @@ const RecordFileList: React.FC = () => {
         initialValues={{
           live_room_id: publishDefaultRoomId,
           reset_timestamps: publishResetDefault,
+          bili_upower_enabled: publishUpowerDefault,
         }}
       >
         <Alert
@@ -974,6 +1001,11 @@ const RecordFileList: React.FC = () => {
           name="reset_timestamps"
           label="重置时间戳后再投稿"
           extra="直播录像音频 ts 跳变常导致 B 站审核失败。开启后会先重封装再上传，适合补投被拒稿件。"
+        />
+        <ProFormSwitch
+          name="bili_upower_enabled"
+          label="充电投稿"
+          extra="开启后本次发成充电专属视频，档位用投稿账号里选的；账号未选档位则仍发普通稿。默认跟随关联直播间的充电开关。"
         />
         <ProFormSelect
           name="bili_upload_template_ids"

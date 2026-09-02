@@ -140,6 +140,7 @@ class DB:
         cls._ensure_live_room_bili_template_ids_schema()
         cls._ensure_live_room_douyin_template_ids_schema()
         cls._ensure_live_room_cover_schema()
+        cls._ensure_live_room_upower_schema()
         cls._ensure_bili_account_schema()
         cls._ensure_clip_task_schema()
         cls.recover_interrupted_submission_tasks()
@@ -240,14 +241,32 @@ class DB:
             logger.warning('补齐 LiveRoom 投稿封面字段失败', exc_info=True)
 
     @classmethod
+    def _ensure_live_room_upower_schema(cls):
+        """兼容旧库：补齐 LiveRoom 充电投稿开关列。"""
+        table = LiveRoom._meta.table_name
+        try:
+            with db.atomic():
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS bili_upower_enabled INTEGER NOT NULL DEFAULT 0'
+                )
+            logger.info('LiveRoom 充电投稿开关字段就绪')
+        except Exception:
+            logger.warning('补齐 LiveRoom 充电投稿开关字段失败', exc_info=True)
+
+    @classmethod
     def _ensure_bili_account_schema(cls):
-        """兼容旧库：补齐 BiliAccount 片头视频列（新字段，无需回填）。"""
+        """兼容旧库：补齐 BiliAccount 片头视频列和充电档位列。"""
         table = BiliAccount._meta.table_name
         try:
             with db.atomic():
                 db.execute_sql(
                     f'ALTER TABLE "{table}" '
                     'ADD COLUMN IF NOT EXISTS intro_video_path VARCHAR(255)'
+                )
+                db.execute_sql(
+                    f'ALTER TABLE "{table}" '
+                    'ADD COLUMN IF NOT EXISTS upower_level_id VARCHAR(64)'
                 )
             logger.info('BiliAccount 片头字段就绪')
         except Exception:
@@ -420,9 +439,13 @@ class DB:
         with db.connection_context():
             update_columns = [
                 "account_name", "account_avatar", "bili_cookies_filepath",
-                "bili_cookies", "state_active", "intro_video_path"
+                "bili_cookies", "state_active", "intro_video_path",
+                "upower_level_id",
             ]
             update_data = cls.filter_model_data(BiliAccount, data, update_columns)
+
+            if "upower_level_id" in update_data and not update_data["upower_level_id"]:
+                update_data["upower_level_id"] = None
 
             if not update_data:
                 return 0
@@ -516,6 +539,7 @@ class DB:
                               "upload_storage_platform",
                               "stream_video_format", "active_state", "active_begin", "active_end", "ffmpeg_options",
                               "patron", "patron_link", "notify_platform", "notify_token", "bili_upower_level_id",
+                              "bili_upower_enabled",
                               "auto_dance_clip", "bili_upload_clips_only", "cover_mode", "custom_cover_path"]
             update_data = cls.filter_model_data(LiveRoom, data, update_columns)
 
@@ -540,6 +564,16 @@ class DB:
                 update_data["douyin_upload_template_ids"] = resolve_room_douyin_template_ids(
                     {'douyin_upload_template_ids': update_data["douyin_upload_template_ids"]}
                 )
+
+            if "bili_upower_enabled" in update_data:
+                try:
+                    enabled = 1 if int(update_data["bili_upower_enabled"] or 0) == 1 else 0
+                except (TypeError, ValueError):
+                    enabled = 1 if update_data["bili_upower_enabled"] else 0
+                update_data["bili_upower_enabled"] = enabled
+                if enabled != 1:
+                    # 关掉充电投稿时清掉房间旧档位，避免 resolve_bili_upower 把旧数据当成仍开启
+                    update_data["bili_upower_level_id"] = None
 
             update_data["gmt_updated"] = datetime.now()
 

@@ -101,6 +101,21 @@ export async function stopBiliupLogin(
   );
 }
 
+/** 拉取该投稿账号在 B 站开通的充电档位列表 */
+export async function listBiliAccountUpowerLevels(
+  body: { id: number },
+  options?: { [key: string]: any },
+) {
+  return request<API.BiliUpowerLevelsResult>(
+    REQUEST_HOST + '/v1/BiliAccount/upowerLevels',
+    {
+      method: 'POST',
+      data: body,
+      ...(options || {}),
+    },
+  );
+}
+
 /** 删除 B 站账号（后端软删除，置 state_active=0） */
 export async function delBiliAccount(
   id: number,
